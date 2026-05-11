@@ -1,0 +1,36 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{A46FB469-E994-4BE9-938D-347CDCD16D78}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RCMM", "src\RCMM\RCMM.csproj", "{8FEE2465-E58B-4E9D-BDD4-1E4B96E30932}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "test", "test", "{C7F8E26A-EDB9-448F-ABA6-51FCFB0BC9FA}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RCMM.Tests", "test\RCMM.Tests\RCMM.Tests.csproj", "{F62FFA9E-9D4E-4F12-9D77-9FB04AA25703}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{8FEE2465-E58B-4E9D-BDD4-1E4B96E30932}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{8FEE2465-E58B-4E9D-BDD4-1E4B96E30932}.Debug|Any CPU.Build.0 = Debug|x64
+		{8FEE2465-E58B-4E9D-BDD4-1E4B96E30932}.Release|Any CPU.ActiveCfg = Release|x64
+		{8FEE2465-E58B-4E9D-BDD4-1E4B96E30932}.Release|Any CPU.Build.0 = Release|x64
+		{F62FFA9E-9D4E-4F12-9D77-9FB04AA25703}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F62FFA9E-9D4E-4F12-9D77-9FB04AA25703}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F62FFA9E-9D4E-4F12-9D77-9FB04AA25703}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F62FFA9E-9D4E-4F12-9D77-9FB04AA25703}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{8FEE2465-E58B-4E9D-BDD4-1E4B96E30932} = {A46FB469-E994-4BE9-938D-347CDCD16D78}
+		{F62FFA9E-9D4E-4F12-9D77-9FB04AA25703} = {C7F8E26A-EDB9-448F-ABA6-51FCFB0BC9FA}
+	EndGlobalSection
+EndGlobal
