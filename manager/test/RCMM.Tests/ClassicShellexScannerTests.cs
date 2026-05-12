@@ -11,7 +11,7 @@ public class ClassicShellexScannerTests
     public void Scan_returns_empty_when_no_handlers_key()
     {
         var reg = new FakeRegistry();
-        var sut = new ClassicShellexScanner(reg, new ClsidResolver(reg));
+        var sut = new ClassicShellexScanner(reg, new ClsidResolver(reg), new FakeFileVersionReader());
         Assert.Empty(sut.Scan(Scope.Files));
     }
 
@@ -21,7 +21,7 @@ public class ClassicShellexScannerTests
         var reg = new FakeRegistry();
         reg.SetValue(RegistryHive.ClassesRoot, @"*\shellex\ContextMenuHandlers\WinRARShell", "", "{ABC}");
         reg.SetValue(RegistryHive.ClassesRoot, @"CLSID\{ABC}", "", "WinRAR Shell");
-        var sut = new ClassicShellexScanner(reg, new ClsidResolver(reg));
+        var sut = new ClassicShellexScanner(reg, new ClsidResolver(reg), new FakeFileVersionReader());
 
         var entries = sut.Scan(Scope.Files).ToList();
         Assert.Single(entries);
@@ -35,7 +35,7 @@ public class ClassicShellexScannerTests
     {
         var reg = new FakeRegistry();
         reg.CreateKey(RegistryHive.ClassesRoot, @"*\shellex\ContextMenuHandlers\{XYZ}");
-        var sut = new ClassicShellexScanner(reg, new ClsidResolver(reg));
+        var sut = new ClassicShellexScanner(reg, new ClsidResolver(reg), new FakeFileVersionReader());
 
         Assert.Equal("{XYZ}", sut.Scan(Scope.Files).Single().Clsid);
     }
@@ -46,7 +46,7 @@ public class ClassicShellexScannerTests
         var reg = new FakeRegistry();
         reg.SetValue(RegistryHive.ClassesRoot, @"*\shellex\ContextMenuHandlers\Foo", "", "{ABC}");
         reg.SetValue(RegistryHive.CurrentUser, @"Software\Classes\*\shellex\ContextMenuHandlers\Foo", "", "");
-        var sut = new ClassicShellexScanner(reg, new ClsidResolver(reg));
+        var sut = new ClassicShellexScanner(reg, new ClsidResolver(reg), new FakeFileVersionReader());
 
         Assert.True(sut.Scan(Scope.Files).Single().IsHidden);
     }

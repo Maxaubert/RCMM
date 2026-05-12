@@ -23,9 +23,10 @@ public sealed partial class MainWindow : Window
 
         var registry = new Win32Registry();
         var resolver = new ClsidResolver(registry);
+        var files = new Win32FileVersionReader();
         var scanner = new EntryScanner(
             new ClassicVerbScanner(registry),
-            new ClassicShellexScanner(registry, resolver));
+            new ClassicShellexScanner(registry, resolver, files));
         var hide = new HideService(registry);
         ViewModel = new MainViewModel(scanner, hide);
 

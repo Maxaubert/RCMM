@@ -13,7 +13,7 @@ public class MainViewModelTests
         var reg = new FakeRegistry();
         var scanner = new EntryScanner(
             new ClassicVerbScanner(reg),
-            new ClassicShellexScanner(reg, new ClsidResolver(reg)));
+            new ClassicShellexScanner(reg, new ClsidResolver(reg), new FakeFileVersionReader()));
         var hide = new HideService(reg);
         return (new MainViewModel(scanner, hide), reg);
     }

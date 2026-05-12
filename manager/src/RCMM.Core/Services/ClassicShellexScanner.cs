@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using RCMM.Core.Models;
 
@@ -7,11 +8,13 @@ public sealed class ClassicShellexScanner
 {
     private readonly IRegistry _reg;
     private readonly ClsidResolver _clsids;
+    private readonly IFileVersionReader _files;
 
-    public ClassicShellexScanner(IRegistry reg, ClsidResolver clsids)
+    public ClassicShellexScanner(IRegistry reg, ClsidResolver clsids, IFileVersionReader files)
     {
         _reg = reg;
         _clsids = clsids;
+        _files = files;
     }
 
     public IEnumerable<ContextMenuEntry> Scan(Scope scope)
@@ -27,7 +30,11 @@ public sealed class ClassicShellexScanner
                         LooksLikeClsid(name) ? name : defaultVal ?? name;
 
             var resolved = _clsids.Resolve(clsid);
-            var display = resolved?.DefaultName ?? name;
+            var version = resolved?.DllPath is { } dll ? _files.Read(dll) : new FileVersion(null, null, null);
+
+            var display = PickDisplay(version.FileDescription, resolved?.DefaultName, name);
+            var source = version.CompanyName ?? "Unknown";
+            var isBuiltIn = LooksMicrosoft(version.CompanyName);
 
             var maskPath = @"Software\Classes\" + scope.ToRegistryRoot() + @"\shellex\ContextMenuHandlers\" + name;
             var hidden = _reg.KeyExists(RegistryHive.CurrentUser, maskPath);
@@ -36,17 +43,29 @@ public sealed class ClassicShellexScanner
             {
                 Id = $"{scope}/shellex/{name}",
                 DisplayName = display,
-                Source = "Unknown",
+                Source = source,
                 Scope = scope,
                 Kind = EntryKind.ShellExtension,
                 RegistryPath = path,
                 OriginalKeyName = name,
-                IsBuiltIn = false,
+                IsBuiltIn = isBuiltIn,
                 IsHidden = hidden,
-                Clsid = clsid
+                Clsid = clsid,
+                IconPath = resolved?.DllPath
             };
         }
     }
+
+    private static string PickDisplay(string? fileDescription, string? defaultName, string fallback)
+    {
+        if (!string.IsNullOrWhiteSpace(fileDescription)) return fileDescription!;
+        if (!string.IsNullOrWhiteSpace(defaultName)) return defaultName!;
+        return fallback;
+    }
+
+    private static bool LooksMicrosoft(string? company)
+        => !string.IsNullOrEmpty(company) &&
+           company.IndexOf("Microsoft", StringComparison.OrdinalIgnoreCase) >= 0;
 
     private static bool LooksLikeClsid(string? s)
         => !string.IsNullOrEmpty(s) && s.StartsWith('{') && s.EndsWith('}');

@@ -16,7 +16,7 @@ public class EntryScannerTests
 
         var sut = new EntryScanner(
             new ClassicVerbScanner(reg),
-            new ClassicShellexScanner(reg, new ClsidResolver(reg)));
+            new ClassicShellexScanner(reg, new ClsidResolver(reg), new FakeFileVersionReader()));
 
         var all = sut.ScanAll().ToList();
         Assert.Equal(2, all.Count);
@@ -33,7 +33,7 @@ public class EntryScannerTests
 
         var sut = new EntryScanner(
             new ClassicVerbScanner(reg),
-            new ClassicShellexScanner(reg, new ClsidResolver(reg)));
+            new ClassicShellexScanner(reg, new ClsidResolver(reg), new FakeFileVersionReader()));
 
         var files = sut.ScanScope(Scope.Files).ToList();
         Assert.Single(files);
