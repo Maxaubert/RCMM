@@ -15,6 +15,7 @@ public sealed partial class MainWindow : Window
     public MainViewModel ViewModel { get; }
 
     private Windows.UI.ViewManagement.UISettings? _uiSettings;
+    private WindowMinSize? _minSize;
 
     public MainWindow()
     {
@@ -31,7 +32,7 @@ public sealed partial class MainWindow : Window
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         TryRemoveWindowBorder();
-        WindowMinSize.Apply(WinRT.Interop.WindowNative.GetWindowHandle(this), 600, 480);
+        _minSize = WindowMinSize.Apply(WinRT.Interop.WindowNative.GetWindowHandle(this), 600, 480);
 
         HookThemeChange();
         ViewModel.PropertyChanged += OnVmPropertyChanged;
