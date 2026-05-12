@@ -33,6 +33,8 @@ public sealed class ClassicShellexScanner
             var version = resolved?.DllPath is { } dll ? _files.Read(dll) : new FileVersion(null, null, null);
 
             var display = PickDisplay(version.FileDescription, resolved?.DefaultName, name);
+            if (display is null) continue;   // no real display name; drop
+
             var source = version.CompanyName ?? "Unknown";
             var isBuiltIn = LooksMicrosoft(version.CompanyName);
 
@@ -56,11 +58,13 @@ public sealed class ClassicShellexScanner
         }
     }
 
-    private static string PickDisplay(string? fileDescription, string? defaultName, string fallback)
+    private static string? PickDisplay(string? fileDescription, string? defaultName, string keyName)
     {
-        if (!string.IsNullOrWhiteSpace(fileDescription)) return fileDescription!;
-        if (!string.IsNullOrWhiteSpace(defaultName)) return defaultName!;
-        return fallback;
+        if (!string.IsNullOrWhiteSpace(fileDescription)) return fileDescription!.Trim();
+        if (!string.IsNullOrWhiteSpace(defaultName) &&
+            !string.Equals(defaultName, keyName, StringComparison.OrdinalIgnoreCase))
+            return defaultName!.Trim();
+        return null;
     }
 
     private static bool LooksMicrosoft(string? company)

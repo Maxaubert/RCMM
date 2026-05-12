@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -24,8 +26,9 @@ public sealed partial class MainWindow : Window
         var registry = new Win32Registry();
         var resolver = new ClsidResolver(registry);
         var files = new Win32FileVersionReader();
+        var mui = new Win32MuiStringResolver();
         var scanner = new EntryScanner(
-            new ClassicVerbScanner(registry),
+            new ClassicVerbScanner(registry, mui),
             new ClassicShellexScanner(registry, resolver, files));
         var hide = new HideService(registry);
         ViewModel = new MainViewModel(scanner, hide);
@@ -39,6 +42,7 @@ public sealed partial class MainWindow : Window
         ViewModel.PropertyChanged += OnVmPropertyChanged;
         ViewModel.PendingChanges.CollectionChanged += (_, __) => RefreshFooter();
         ViewModel.Rescan();
+        LoadIconsForAllEntries();
         RefreshFooter();
 
         ContentFrame.Navigate(typeof(ScopePage), ViewModel);
@@ -62,7 +66,39 @@ public sealed partial class MainWindow : Window
         ViewModel.ApplyPending();
         if (needsRestart) new ExplorerRestart().Restart();
         ViewModel.Rescan();
+        LoadIconsForAllEntries();
         RefreshFooter();
+    }
+
+    private void LoadIconsForAllEntries()
+    {
+        foreach (var row in ViewModel.AllEntries)
+        {
+            var path = row.Entry.IconPath ?? ExtractExeFromCommand(row.Entry.CommandLine);
+            if (string.IsNullOrEmpty(path)) continue;
+            var rowRef = row;
+            _ = Task.Run(async () =>
+            {
+                var bmp = await IconHelper.LoadIconAsync(path);
+                if (bmp != null)
+                {
+                    DispatcherQueue.TryEnqueue(() => rowRef.Icon = bmp);
+                }
+            });
+        }
+    }
+
+    private static string? ExtractExeFromCommand(string? cmd)
+    {
+        if (string.IsNullOrWhiteSpace(cmd)) return null;
+        cmd = cmd.Trim();
+        if (cmd.StartsWith('"'))
+        {
+            var end = cmd.IndexOf('"', 1);
+            if (end > 1) return cmd[1..end];
+        }
+        var space = cmd.IndexOf(' ');
+        return space > 0 ? cmd[..space] : cmd;
     }
 
     private void TryRemoveWindowBorder()

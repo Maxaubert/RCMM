@@ -7,16 +7,21 @@ namespace RCMM.Tests;
 
 public class EntryScannerTests
 {
+    private static EntryScanner MakeSut(FakeRegistry reg)
+        => new EntryScanner(
+            new ClassicVerbScanner(reg, new FakeMuiStringResolver()),
+            new ClassicShellexScanner(reg, new ClsidResolver(reg), new FakeFileVersionReader()));
+
     [Fact]
     public void ScanAll_combines_verbs_and_shellex_across_scopes()
     {
         var reg = new FakeRegistry();
         reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\foo", "", "Foo");
         reg.SetValue(RegistryHive.ClassesRoot, @"Directory\shellex\ContextMenuHandlers\Bar", "", "{X}");
+        // Provide a CLSID DefaultName for Bar so it is not dropped.
+        reg.SetValue(RegistryHive.ClassesRoot, @"CLSID\{X}", "", "Bar Extension");
 
-        var sut = new EntryScanner(
-            new ClassicVerbScanner(reg),
-            new ClassicShellexScanner(reg, new ClsidResolver(reg), new FakeFileVersionReader()));
+        var sut = MakeSut(reg);
 
         var all = sut.ScanAll().ToList();
         Assert.Equal(2, all.Count);
@@ -31,12 +36,25 @@ public class EntryScannerTests
         reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\a", "", "A");
         reg.SetValue(RegistryHive.ClassesRoot, @"Directory\shell\b", "", "B");
 
-        var sut = new EntryScanner(
-            new ClassicVerbScanner(reg),
-            new ClassicShellexScanner(reg, new ClsidResolver(reg), new FakeFileVersionReader()));
+        var sut = MakeSut(reg);
 
         var files = sut.ScanScope(Scope.Files).ToList();
         Assert.Single(files);
         Assert.Equal("A", files[0].DisplayName);
+    }
+
+    [Fact]
+    public void ScanAll_covers_AllObjects_and_Folder_scopes()
+    {
+        var reg = new FakeRegistry();
+        reg.SetValue(RegistryHive.ClassesRoot, @"AllFilesystemObjects\shell\OpenTerm", "", "Open in Terminal");
+        reg.SetValue(RegistryHive.ClassesRoot, @"Folder\shellex\ContextMenuHandlers\FolderExt", "", "{Q}");
+        reg.SetValue(RegistryHive.ClassesRoot, @"CLSID\{Q}", "", "Folder Extension");
+
+        var sut = MakeSut(reg);
+
+        var all = sut.ScanAll().ToList();
+        Assert.Contains(all, e => e.Scope == Scope.AllObjects && e.DisplayName == "Open in Terminal");
+        Assert.Contains(all, e => e.Scope == Scope.Folder && e.DisplayName == "Folder Extension");
     }
 }

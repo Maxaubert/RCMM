@@ -29,11 +29,12 @@
                 <DataTemplate x:DataType="vm:EntryRowViewModel">
                     <Grid Padding="6,8" ColumnSpacing="14">
                         <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="28"/>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <StackPanel>
+                        <Image Width="24" Height="24" Source="{x:Bind Icon, Converter={StaticResource ObjectToImageSourceConverter}, Mode=OneWay}" VerticalAlignment="Center"/>
+                        <StackPanel Grid.Column="1">
                             <StackPanel Orientation="Horizontal" Spacing="6">
                                 <Border CornerRadius="3" Padding="4,1" Background="#22808080"
                                         Visibility="{x:Bind IsBuiltIn, Converter={StaticResource BoolToVisibilityConverter}}">
@@ -47,7 +48,7 @@
                                 <Run Text="{x:Bind KindLabel}"/>
                             </TextBlock>
                         </StackPanel>
-                        <ToggleSwitch Grid.Column="1" IsOn="{x:Bind IsHidden, Mode=TwoWay, Converter={StaticResource InvertBoolConverter}}"
+                        <ToggleSwitch Grid.Column="2" IsOn="{x:Bind IsHidden, Mode=TwoWay, Converter={StaticResource InvertBoolConverter}}"
                                       OnContent="" OffContent=""/>
                     </Grid>
                 </DataTemplate>

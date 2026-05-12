@@ -10,7 +10,7 @@ namespace RCMM.Core.ViewModels;
 public sealed class MainViewModel : ObservableObject
 {
     private static readonly Scope[] AllScopes =
-        { Scope.Files, Scope.Folders, Scope.Drives, Scope.Background };
+        { Scope.Files, Scope.Folders, Scope.Drives, Scope.Background, Scope.AllObjects, Scope.Folder };
 
     private readonly EntryScanner _scanner;
     private readonly HideService _hideService;

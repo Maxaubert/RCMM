@@ -8,7 +8,7 @@ namespace RCMM.Core.Services;
 public sealed class EntryScanner
 {
     private static readonly Scope[] AllScopes =
-        { Scope.Files, Scope.Folders, Scope.Drives, Scope.Background };
+        { Scope.Files, Scope.Folders, Scope.Drives, Scope.Background, Scope.AllObjects, Scope.Folder };
 
     private readonly ClassicVerbScanner _verbs;
     private readonly ClassicShellexScanner _shellex;

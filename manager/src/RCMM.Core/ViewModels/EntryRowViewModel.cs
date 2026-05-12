@@ -6,6 +6,7 @@ namespace RCMM.Core.ViewModels;
 public sealed class EntryRowViewModel : ObservableObject
 {
     private bool _isHidden;
+    private object? _icon;
     public ContextMenuEntry Entry { get; }
     public Action<EntryRowViewModel, bool>? HiddenChanged;
 
@@ -33,5 +34,11 @@ public sealed class EntryRowViewModel : ObservableObject
             if (SetField(ref _isHidden, value))
                 HiddenChanged?.Invoke(this, value);
         }
+    }
+
+    public object? Icon
+    {
+        get => _icon;
+        set => SetField(ref _icon, value);
     }
 }

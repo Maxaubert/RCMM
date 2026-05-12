@@ -12,7 +12,7 @@ public class MainViewModelTests
     {
         var reg = new FakeRegistry();
         var scanner = new EntryScanner(
-            new ClassicVerbScanner(reg),
+            new ClassicVerbScanner(reg, new FakeMuiStringResolver()),
             new ClassicShellexScanner(reg, new ClsidResolver(reg), new FakeFileVersionReader()));
         var hide = new HideService(reg);
         return (new MainViewModel(scanner, hide), reg);
@@ -67,6 +67,8 @@ public class MainViewModelTests
     {
         var (vm, reg) = BuildSut();
         reg.SetValue(RegistryHive.ClassesRoot, @"*\shellex\ContextMenuHandlers\X", "", "{Y}");
+        // Give the handler a resolvable CLSID DefaultName so it is not dropped.
+        reg.SetValue(RegistryHive.ClassesRoot, @"CLSID\{Y}", "", "X Extension");
         vm.Rescan();
 
         vm.GetScope(Scope.Files).Entries.First().IsHidden = true;
@@ -92,6 +94,8 @@ public class MainViewModelTests
     {
         var (vm, reg) = BuildSut();
         reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\OpenWith", "", "Open with");
+        // Handler whose CLSID DefaultName is a DLL path — PickDisplay will return the path string,
+        // but EntryFilters.IsLikelyUserVisible will reject it (contains backslash).
         reg.SetValue(RegistryHive.ClassesRoot, @"*\shellex\ContextMenuHandlers\Junk", "", "{B41DB860-8EE4-11D2-9906-E49FADC173CA}");
         reg.SetValue(RegistryHive.ClassesRoot, @"CLSID\{B41DB860-8EE4-11D2-9906-E49FADC173CA}", "", @"C:\Windows\System32\shell32.dll");
         vm.Rescan();

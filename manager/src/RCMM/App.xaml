@@ -25,6 +25,7 @@
             </ResourceDictionary.ThemeDictionaries>
             <local:InvertBoolConverter x:Key="InvertBoolConverter"/>
             <local:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
+            <local:ObjectToImageSourceConverter x:Key="ObjectToImageSourceConverter"/>
         </ResourceDictionary>
     </Application.Resources>
 </Application>
