@@ -1,21 +1,62 @@
-# RCMM — Right-Click Menu Manager
+<div align="center">
+  <img src="manager/src/RCMM/Assets/icon.png" alt="RCMM" width="128">
 
-A Windows 11 utility for curating your right-click menu. v0.1 (this build) covers
-hiding entries in the classic ("Show more options") menu.
+  # RCMM
 
-## Build
+  Right-Click Menu Manager. Show or hide entries in the Windows Explorer right-click menu. No admin required.
 
-Requires .NET 8 SDK and Windows App SDK.
+  [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square)](https://github.com/Maxaubert/RCMM)
+</div>
+
+---
+
+## What it does
+
+Captures every entry that appears when you right-click in Windows Explorer. Built-in shell verbs like Cut, Copy, Paste, Send to, Share, plus third-party additions from VLC, WinRAR, Notepad++, Visual Studio, AMD Software, and so on. Toggle any of them off and they disappear from the menu. Toggle back on to bring them back. Apply restarts Explorer and the changes take effect immediately.
+
+Works without admin rights, writes to the per-user HKCU shadow of the shell registry instead of HKCR.
+
+## Use
+
+1. Open **RCMM**.
+2. Click **Show / hide** on the landing screen.
+3. Pick **Application specific** for entries added by installed programs, or **Windows specific** for built-in shell verbs.
+4. Toggle entries off (or on) using the switch on each row. Click anywhere on a row to flip it.
+5. Click **Apply** in the footer. Explorer restarts and the menu updates.
+
+## Install
+
+No installer yet, build from source for now. Releases will land at https://github.com/Maxaubert/RCMM/releases when ready.
+
+## Build from source
+
+Requirements:
+
+- Windows 10 or 11
+- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
+- Windows App SDK (restored automatically from NuGet on build)
 
 ```powershell
-dotnet build manager/RCMM.sln
-dotnet run --project manager/src/RCMM/RCMM.csproj
+git clone https://github.com/Maxaubert/RCMM.git
+cd RCMM
+dotnet build manager\src\RCMM\RCMM.csproj
 ```
 
-## Status
+Output: `manager\src\RCMM\bin\Debug\net8.0-windows10.0.19041.0\RCMM.exe`.
 
-- [x] Foundation + classic-menu hide/unhide (Plan 1)
-- [x] Capture-based classic menu (Plan 2) — list mirrors actual right-click menu
-- [ ] Modern Win11 menu hide (Plan 3)
-- [ ] Add custom items (Plan 4)
-- [ ] Backup snapshot + Undo all (Plan 5)
+## How it works
+
+One process, no service. WinUI 3 / .NET 8 desktop app.
+
+- Walks every shell-relevant registry hive (HKCR merged view, HKCU shadow, `CommandStore`, `PackagedCom`) to enumerate candidate entries.
+- Verifies each one by binding `IContextMenu` and `IExplorerCommand` against a sample file or folder, so registry-only ghosts that never actually appear in the menu get filtered out.
+- Resolves icons via `ExtractIconEx`, packaged-app `DllPath`, `IExplorerCommand::GetIcon`, and `CommandStore` Icon hints.
+- Hides entries by writing to one of three places, depending on the entry type:
+  - Classic shell verbs: `LegacyDisable` under `HKCU\Software\Classes\...` (no admin needed).
+  - Classic shellex handlers: blocked CLSID under `HKCU\Software\Classes\CLSID\...`.
+  - Packaged-COM extensions: `HKCU\Software\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked`.
+- After Apply, restarts Explorer so the new state takes effect.
+
+## License
+
+MIT (see [LICENSE](LICENSE) once added).
