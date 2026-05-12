@@ -7,30 +7,29 @@ public sealed class EntryRowViewModel : ObservableObject
 {
     private bool _isHidden;
     private object? _icon;
-    public ContextMenuEntry Entry { get; }
+
+    public MenuEntry Entry { get; }
     public Action<EntryRowViewModel, bool>? HiddenChanged;
 
-    public EntryRowViewModel(ContextMenuEntry entry)
+    public EntryRowViewModel(MenuEntry entry)
     {
         Entry = entry;
         _isHidden = entry.IsHidden;
     }
 
     public string DisplayName => Entry.DisplayName;
-    public string Source => Entry.Source;
-    public string KindLabel => Entry.Kind switch
-    {
-        EntryKind.ShellVerb      => "Verb",
-        EntryKind.ShellExtension => "Shell extension",
-        _ => "?"
-    };
+    public string Source => string.IsNullOrEmpty(Entry.Source) ? "Unknown" : Entry.Source!;
+    public string KindLabel => Entry.IsSubmenu ? "Submenu" : "Item";
     public bool IsBuiltIn => Entry.IsBuiltIn;
+    public bool CanHide => Entry.CanHide;
+    public byte[]? IconBytes => Entry.IconBytes;
 
     public bool IsHidden
     {
         get => _isHidden;
         set
         {
+            if (!CanHide) return;
             if (SetField(ref _isHidden, value))
                 HiddenChanged?.Invoke(this, value);
         }

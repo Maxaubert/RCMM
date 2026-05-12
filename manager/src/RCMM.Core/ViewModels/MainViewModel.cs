@@ -3,35 +3,43 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using RCMM.Core.Models;
 using RCMM.Core.Services;
-using RCMM.Core.Util;
 
 namespace RCMM.Core.ViewModels;
 
 public sealed class MainViewModel : ObservableObject
 {
-    private static readonly Scope[] AllScopes =
-        { Scope.Files, Scope.Folders, Scope.Drives, Scope.Background, Scope.AllObjects, Scope.Folder };
-
-    private readonly EntryScanner _scanner;
+    private readonly IContextMenuCaptureService _capture;
+    private readonly TargetProvider _targets;
+    private readonly VerbToRegistryMapper _mapper;
     private readonly HideService _hideService;
-    private readonly Dictionary<Scope, ScopeListViewModel> _scopes;
-    private readonly Dictionary<string, PendingChange> _pending = new();
+    private readonly IRegistry _reg;
+
+    private readonly Dictionary<string, IReadOnlyList<HideTarget>> _pendingHide = new();
+    private readonly Dictionary<string, IReadOnlyList<HideTarget>> _pendingUnhide = new();
+    private readonly List<EntryRowViewModel> _allRows = new();
     private bool _showBuiltIns = true;
 
-    public ObservableCollection<PendingChange> PendingChanges { get; } = new();
     public ObservableCollection<EntryRowViewModel> AllEntries { get; } = new();
+    public ObservableCollection<string> PendingChangeIds { get; } = new();
 
-    public MainViewModel(EntryScanner scanner, HideService hideService)
+    public MainViewModel(
+        IContextMenuCaptureService capture,
+        TargetProvider targets,
+        VerbToRegistryMapper mapper,
+        HideService hideService,
+        IRegistry reg)
     {
-        _scanner = scanner;
+        _capture = capture;
+        _targets = targets;
+        _mapper = mapper;
         _hideService = hideService;
-        _scopes = AllScopes.ToDictionary(s => s, s => new ScopeListViewModel(s));
+        _reg = reg;
     }
 
-    public ScopeListViewModel GetScope(Scope scope) => _scopes[scope];
-
     public bool RequiresExplorerRestart
-        => _pending.Values.Any(p => p.RequiresExplorerRestart);
+        => _pendingHide.Values.Concat(_pendingUnhide.Values)
+                       .SelectMany(t => t)
+                       .Any(t => t.Kind == HideKind.HkcuMask);
 
     public bool ShowBuiltIns
     {
@@ -39,81 +47,145 @@ public sealed class MainViewModel : ObservableObject
         set
         {
             if (SetField(ref _showBuiltIns, value))
-                RebuildAllEntries();
+                FilterIntoAllEntries();
         }
     }
 
     public void Rescan()
     {
-        foreach (var scope in AllScopes)
-            _scopes[scope].Entries.Clear();
+        var captures = _capture.CaptureAll(_targets.GetTargets());
+        var merged = MergeCaptures(captures);
 
-        foreach (var entry in _scanner.ScanAll())
+        _allRows.Clear();
+        foreach (var item in merged)
         {
-            var row = new EntryRowViewModel(entry);
-            row.HiddenChanged = OnRowToggled;
-            _scopes[entry.Scope].Entries.Add(row);
+            var hideTargets = ResolveHideTargets(item);
+            var iconPath = ResolveIconPath(item, hideTargets);
+            var isHidden = AllTargetsHidden(hideTargets);
+            var entry = new MenuEntry
+            {
+                Id = ComputeId(item),
+                DisplayName = item.DisplayName,
+                Source = null,
+                IconBytes = item.IconBytes,
+                IconPath = iconPath,
+                HideTargets = hideTargets,
+                IsBuiltIn = false,
+                IsHidden = isHidden,
+                IsSubmenu = item.IsSubmenu
+            };
+            var row = new EntryRowViewModel(entry) { HiddenChanged = OnRowToggled };
+            _allRows.Add(row);
         }
 
-        RebuildAllEntries();
-
-        _pending.Clear();
-        PendingChanges.Clear();
+        FilterIntoAllEntries();
+        _pendingHide.Clear();
+        _pendingUnhide.Clear();
+        PendingChangeIds.Clear();
         Raise(nameof(RequiresExplorerRestart));
     }
 
-    private void RebuildAllEntries()
+    private void FilterIntoAllEntries()
     {
         AllEntries.Clear();
-        var seen = new HashSet<string>();
-        foreach (var scope in AllScopes)
+        foreach (var row in _allRows)
         {
-            foreach (var row in _scopes[scope].Entries)
+            if (row.IsBuiltIn && !_showBuiltIns) continue;
+            AllEntries.Add(row);
+        }
+    }
+
+    private static IEnumerable<CapturedItem> MergeCaptures(IEnumerable<CapturedItem> captures)
+    {
+        var seen = new HashSet<string>();
+        foreach (var item in captures)
+        {
+            if (item.IsSeparator) continue;
+            var key = MergeKey(item);
+            if (seen.Add(key)) yield return item;
+        }
+    }
+
+    private static string MergeKey(CapturedItem item)
+    {
+        if (!string.IsNullOrEmpty(item.Verb)) return "verb:" + item.Verb!.ToLowerInvariant();
+        if (!string.IsNullOrEmpty(item.OwnerClsid)) return "clsid:" + item.OwnerClsid!.ToLowerInvariant();
+        return "name:" + item.DisplayName.ToLowerInvariant();
+    }
+
+    private static string ComputeId(CapturedItem item) => MergeKey(item);
+
+    private IReadOnlyList<HideTarget> ResolveHideTargets(CapturedItem item)
+    {
+        var result = new List<HideTarget>();
+        if (!string.IsNullOrEmpty(item.Verb))
+            result.AddRange(_mapper.MapVerb(item.Verb!));
+        if (!string.IsNullOrEmpty(item.OwnerClsid))
+            result.AddRange(_mapper.MapClsid(item.OwnerClsid!));
+        return result;
+    }
+
+    private string? ResolveIconPath(CapturedItem item, IReadOnlyList<HideTarget> targets)
+    {
+        foreach (var target in targets)
+        {
+            if (target.Kind != HideKind.LegacyDisable) continue;
+            var icon = _reg.GetValue(target.Hive, target.Path, "Icon") as string;
+            if (!string.IsNullOrWhiteSpace(icon)) return icon;
+            var cmd = _reg.GetValue(target.Hive, target.Path + @"\command", "") as string;
+            if (!string.IsNullOrWhiteSpace(cmd)) return cmd;
+        }
+        return null;
+    }
+
+    private bool AllTargetsHidden(IReadOnlyList<HideTarget> targets)
+    {
+        if (targets.Count == 0) return false;
+        foreach (var t in targets)
+        {
+            if (t.Kind == HideKind.LegacyDisable)
             {
-                if (!EntryFilters.IsLikelyUserVisible(row.Entry.DisplayName)) continue;
-                if (row.Entry.IsBuiltIn && !_showBuiltIns) continue;
-                var dedupeKey = $"{row.Entry.Kind}:{row.Entry.OriginalKeyName}";
-                if (!seen.Add(dedupeKey)) continue;
-                AllEntries.Add(row);
+                if (_reg.GetValue(t.Hive, t.Path, t.ValueName ?? "LegacyDisable") == null) return false;
+            }
+            else
+            {
+                if (!_reg.KeyExists(t.Hive, t.Path)) return false;
             }
         }
+        return true;
     }
 
     private void OnRowToggled(EntryRowViewModel row, bool isHidden)
     {
-        var action = isHidden ? PendingAction.Hide : PendingAction.Unhide;
-        // If the row's new state matches the underlying entry, drop the pending change.
-        if (isHidden == row.Entry.IsHidden)
+        var id = row.Entry.Id;
+        if (isHidden == AllTargetsHidden(row.Entry.HideTargets))
         {
-            if (_pending.Remove(row.Entry.Id, out var stale))
-                PendingChanges.Remove(stale);
+            _pendingHide.Remove(id);
+            _pendingUnhide.Remove(id);
+            PendingChangeIds.Remove(id);
+        }
+        else if (isHidden)
+        {
+            _pendingHide[id] = row.Entry.HideTargets;
+            _pendingUnhide.Remove(id);
+            if (!PendingChangeIds.Contains(id)) PendingChangeIds.Add(id);
         }
         else
         {
-            var change = new PendingChange(row.Entry.Id, action,
-                HideService.RequiresExplorerRestart(row.Entry.Kind));
-            if (_pending.TryGetValue(row.Entry.Id, out var existing))
-                PendingChanges.Remove(existing);
-            _pending[row.Entry.Id] = change;
-            PendingChanges.Add(change);
+            _pendingUnhide[id] = row.Entry.HideTargets;
+            _pendingHide.Remove(id);
+            if (!PendingChangeIds.Contains(id)) PendingChangeIds.Add(id);
         }
         Raise(nameof(RequiresExplorerRestart));
     }
 
     public void ApplyPending()
     {
-        foreach (var change in _pending.Values.ToList())
-        {
-            var entry = AllScopes
-                .SelectMany(s => _scopes[s].Entries)
-                .First(r => r.Entry.Id == change.EntryId)
-                .Entry;
-
-            if (change.Action == PendingAction.Hide) _hideService.Hide(entry);
-            else _hideService.Unhide(entry);
-        }
-        _pending.Clear();
-        PendingChanges.Clear();
+        foreach (var (_, targets) in _pendingHide) _hideService.Hide(targets);
+        foreach (var (_, targets) in _pendingUnhide) _hideService.Unhide(targets);
+        _pendingHide.Clear();
+        _pendingUnhide.Clear();
+        PendingChangeIds.Clear();
         Raise(nameof(RequiresExplorerRestart));
     }
 }
