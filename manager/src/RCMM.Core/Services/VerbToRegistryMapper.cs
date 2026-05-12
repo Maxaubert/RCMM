@@ -32,6 +32,26 @@ public sealed class VerbToRegistryMapper
                 @"Software\Classes\" + hkcrPath,
                 "LegacyDisable");
         }
+
+        // SystemFileAssociations\<ext-or-type>\shell\<verb> registers verbs that only
+        // apply to files of a given extension or perceived type (image, audio, …).
+        // This is where things like ShareXImageEditor live. We enumerate all subkeys
+        // once and check each for the verb; for verbs not registered under any SFA
+        // bucket it's a cheap KeyExists per bucket.
+        const string sfaRoot = "SystemFileAssociations";
+        if (_reg.KeyExists(RegistryHive.ClassesRoot, sfaRoot))
+        {
+            foreach (var sfa in _reg.GetSubKeyNames(RegistryHive.ClassesRoot, sfaRoot))
+            {
+                var hkcrPath = sfaRoot + "\\" + sfa + @"\shell\" + verb;
+                if (!_reg.KeyExists(RegistryHive.ClassesRoot, hkcrPath)) continue;
+                yield return new HideTarget(
+                    HideKind.LegacyDisable,
+                    RegistryHive.CurrentUser,
+                    @"Software\Classes\" + hkcrPath,
+                    "LegacyDisable");
+            }
+        }
     }
 
     public IEnumerable<HideTarget> MapClsid(string clsid)

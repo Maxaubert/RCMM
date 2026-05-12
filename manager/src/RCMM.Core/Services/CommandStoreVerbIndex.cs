@@ -65,12 +65,20 @@ public sealed class CommandStoreVerbIndex
             }
             if (clsids.Count == 0) continue;
 
-            // Index the raw key name plus a normalised form so callers can match
-            // captured verbs like "copyaspath" or "Windows.ModernShare" against
-            // either "Windows.copyaspath" or just "copyaspath".
+            // Index by every label a caller might present:
+            //   - raw key name                         (Windows.share)
+            //   - key name with "Windows." stripped    (share)
+            //   - last dot-separated segment           (extract from Windows.CompressedFile.extract)
+            //   - the VerbName value if present        (opencontaining, format, ...)
             Index(map, name, clsids);
             if (name.StartsWith("Windows.", StringComparison.OrdinalIgnoreCase))
                 Index(map, name.Substring("Windows.".Length), clsids);
+            var lastDot = name.LastIndexOf('.');
+            if (lastDot >= 0 && lastDot < name.Length - 1)
+                Index(map, name.Substring(lastDot + 1), clsids);
+            if (_reg.GetValue(RegistryHive.LocalMachine, path, "VerbName") is string verbName
+                && !string.IsNullOrWhiteSpace(verbName))
+                Index(map, verbName, clsids);
         }
 
         Log.Info(Cat, $"CommandStoreVerbIndex entries={map.Count}");

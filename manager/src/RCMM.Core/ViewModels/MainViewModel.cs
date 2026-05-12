@@ -123,7 +123,8 @@ public sealed class MainViewModel : ObservableObject
         var merged = MergeCaptures(allItems).ToList();
         Log.Info("rescan", $"captured={allItems.Count} mergedUnique={merged.Count}");
         var nameIndex = _shellexIndex.BuildNameToClsidMap();
-        Log.Debug("rescan", $"shellexNameIndex entries={nameIndex.Count}");
+        var wordIndex = _shellexIndex.BuildClsidWordIndex();
+        Log.Debug("rescan", $"shellexNameIndex entries={nameIndex.Count} wordIndexClsids={wordIndex.Count}");
 
         int rowsWithHide = 0;
         int rowsBuiltIn = 0;
@@ -131,10 +132,17 @@ public sealed class MainViewModel : ObservableObject
         foreach (var item in merged)
         {
             var effectiveItem = item;
-            if (string.IsNullOrEmpty(effectiveItem.Verb) && string.IsNullOrEmpty(effectiveItem.OwnerClsid))
+            if (string.IsNullOrEmpty(effectiveItem.OwnerClsid))
             {
                 if (nameIndex.TryGetValue(effectiveItem.DisplayName, out var clsid))
                     effectiveItem = effectiveItem with { OwnerClsid = clsid };
+                else
+                {
+                    // Fuzzy: link "Restore previous versions" to "Previous Versions Property Page",
+                    // "Uninstall with Revo Uninstaller Pro" to "Revo Uninstaller Pro Extension", etc.
+                    var fuzzy = _shellexIndex.FuzzyMatch(effectiveItem.DisplayName, wordIndex);
+                    if (fuzzy != null) effectiveItem = effectiveItem with { OwnerClsid = fuzzy };
+                }
             }
 
             var hideTargets = ResolveHideTargets(effectiveItem);
