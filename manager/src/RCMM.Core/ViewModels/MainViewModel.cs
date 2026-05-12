@@ -29,6 +29,8 @@ public sealed class MainViewModel : ObservableObject
         new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _packagedDllByClsid =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _observedClsids =
+        new(StringComparer.OrdinalIgnoreCase);
 
 
     private readonly Dictionary<string, IReadOnlyList<HideTarget>> _pendingHide = new();
@@ -153,6 +155,19 @@ public sealed class MainViewModel : ObservableObject
         }
         var nameIndex = _shellexIndex.BuildNameToClsidMap();
         var wordIndex = _shellexIndex.BuildClsidWordIndex();
+        // Track which CLSIDs we know are "active" — either attached to a live
+        // capture, or the invoker recorded the handler emitting menu items during
+        // its probe. Registry-derived rows whose CLSID is neither are filtered out
+        // by FilterIntoAllEntries as they correspond to shellexes that don't
+        // contribute to any sample right-click menu (Launches Sync Center,
+        // Work Folders, Client Side Caching UI, etc.).
+        _observedClsids.Clear();
+        if (_shellexInvoker != null)
+        {
+            // Force probe so emitted names are available now.
+            _shellexInvoker.BuildDisplayNameToClsidMap();
+        }
+
         // Pre-merge pass:
         //   (a) Attach OwnerClsid to live captures so the merge's clsid-key dedup
         //       collapses a live "Scan for deleted files" with the registry-derived
@@ -189,6 +204,16 @@ public sealed class MainViewModel : ObservableObject
                 if (!string.IsNullOrWhiteSpace(emitted))
                     item = item with { DisplayName = emitted! };
             }
+
+            // A CLSID counts as "observed" only when it's attached to a *live*
+            // captured menu item (TargetPath is a real path, not a "<registry:..>"
+            // or "<packaged:..>" placeholder). Invoker emissions don't qualify
+            // because some shellexes (Work Folders, Client Side Caching UI,
+            // Launches Sync Center, …) emit informational items during a probe
+            // but never contribute to the actual right-click menu the user sees.
+            if (!string.IsNullOrEmpty(item.OwnerClsid) && !item.TargetPath.StartsWith("<"))
+                _observedClsids.Add(item.OwnerClsid!);
+
             allItems[i] = item;
         }
 
@@ -285,14 +310,21 @@ public sealed class MainViewModel : ObservableObject
         foreach (var row in _allRows)
         {
             if (row.IsBuiltIn && !_showBuiltIns) continue;
-            // Hide registry-only rows whose DisplayName is a technical class label —
-            // "Windows Shell Common Dll", "Microsoft Security Client Shell Extension",
-            // "Portable Devices Shell Extension", etc. These don't correspond to any
-            // option the user sees in their right-click menu; they're the technical
-            // names of installed shellex CLSIDs. The hide-target plumbing keeps them
-            // suppressible through whichever friendly-named row was deduped with
-            // them — if any.
+            // Hide rows whose DisplayName is a technical class label — those are
+            // FileDescriptions like "Windows Shell Common Dll" / "Microsoft Security
+            // Client Shell Extension" that don't correspond to a real menu option.
             if (LooksTechnical(row.Entry.DisplayName)) continue;
+            // Hide CLSID-keyed rows that are neither packaged nor "observed" — i.e.,
+            // shellexes whose handler wasn't attached to any live capture AND didn't
+            // emit anything during invoker probing. These are conditional handlers
+            // ("Launches Sync Center.", "Work Folders", "Client Side Caching UI",
+            // BitLocker variants) that never appear in standard right-click menus.
+            if (row.Entry.Id.StartsWith("clsid:", StringComparison.Ordinal))
+            {
+                var clsid = row.Entry.Id.Substring("clsid:".Length);
+                if (!_packagedClsids.Contains(clsid) && !_observedClsids.Contains(clsid))
+                    continue;
+            }
             AllEntries.Add(row);
         }
     }
