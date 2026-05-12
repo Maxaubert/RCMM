@@ -19,11 +19,14 @@ public sealed class MainViewModel : ObservableObject
     private readonly ShellexNameIndex _shellexIndex;
     private readonly EntryScanner? _registryScanner;
     private readonly PackagedShellExtScanner? _packagedScanner;
+    private readonly CommandStoreVerbIndex? _commandStore;
+    private readonly ShellexKeyNameIndex? _shellexKey;
 
     private readonly HashSet<string> _packagedClsids =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _packagedPublishers =
         new(StringComparer.OrdinalIgnoreCase);
+
 
     private readonly Dictionary<string, IReadOnlyList<HideTarget>> _pendingHide = new();
     private readonly Dictionary<string, IReadOnlyList<HideTarget>> _pendingUnhide = new();
@@ -42,7 +45,9 @@ public sealed class MainViewModel : ObservableObject
         IFileVersionReader files,
         ShellexNameIndex shellexIndex,
         EntryScanner? registryScanner = null,
-        PackagedShellExtScanner? packagedScanner = null)
+        PackagedShellExtScanner? packagedScanner = null,
+        CommandStoreVerbIndex? commandStore = null,
+        ShellexKeyNameIndex? shellexKey = null)
     {
         _capture = capture;
         _targets = targets;
@@ -53,6 +58,8 @@ public sealed class MainViewModel : ObservableObject
         _shellexIndex = shellexIndex;
         _registryScanner = registryScanner;
         _packagedScanner = packagedScanner;
+        _commandStore = commandStore;
+        _shellexKey = shellexKey;
     }
 
     public bool RequiresExplorerRestart
@@ -200,13 +207,30 @@ public sealed class MainViewModel : ObservableObject
     {
         var result = new List<HideTarget>();
         if (!string.IsNullOrEmpty(item.Verb))
+        {
             result.AddRange(_mapper.MapVerb(item.Verb!));
+
+            // Windows' built-in verbs (Share, Open with, Copy as path, …) live in
+            // CommandStore — they don't have a per-scope <scope>\shell\<verb> key so
+            // MapVerb finds nothing. The hide path is to block every handler CLSID
+            // CommandStore lists for the verb via the Shell Extensions\Blocked list.
+            if (_commandStore != null)
+                foreach (var c in _commandStore.LookupClsids(item.Verb!))
+                    result.Add(HideService.BlockedShellExtTarget(c));
+        }
         if (!string.IsNullOrEmpty(item.OwnerClsid))
         {
             result.AddRange(_mapper.MapClsid(item.OwnerClsid!));
             if (_packagedClsids.Contains(item.OwnerClsid!))
                 result.Add(HideService.BlockedShellExtTarget(item.OwnerClsid!));
         }
+
+        // Items captured live with no verb and no CLSID (e.g. "Send to", "Open with")
+        // can sometimes be matched to their shellex handler by display-name similarity
+        // to the shellex registration key name.
+        if (result.Count == 0 && _shellexKey != null && !string.IsNullOrEmpty(item.DisplayName))
+            result.AddRange(_shellexKey.MapDisplayName(item.DisplayName));
+
         return result;
     }
 
@@ -231,6 +255,11 @@ public sealed class MainViewModel : ObservableObject
             switch (t.Kind)
             {
                 case HideKind.LegacyDisable:
+                    // LegacyDisable writes go to HKCU\Software\Classes\..., but it's
+                    // also valid for an admin to have written it into HKLM directly.
+                    // Read the merged HKCR view so both surface as "hidden".
+                    var hkcrPath = HkcrPathFor(t);
+                    if (hkcrPath != null && _reg.GetValue(RegistryHive.ClassesRoot, hkcrPath, t.ValueName ?? "LegacyDisable") != null) break;
                     if (_reg.GetValue(t.Hive, t.Path, t.ValueName ?? "LegacyDisable") == null) return false;
                     break;
                 case HideKind.HkcuMask:
@@ -244,10 +273,26 @@ public sealed class MainViewModel : ObservableObject
         return true;
     }
 
+    /// <summary>
+    /// Maps an HKCU\Software\Classes\... HideTarget path back to its HKCR equivalent
+    /// so we can read the merged view (HKLM ∪ HKCU) when checking hide state.
+    /// </summary>
+    private static string? HkcrPathFor(HideTarget t)
+    {
+        if (t.Hive == RegistryHive.CurrentUser
+            && t.Path.StartsWith(@"Software\Classes\", StringComparison.OrdinalIgnoreCase))
+        {
+            return t.Path.Substring(@"Software\Classes\".Length);
+        }
+        return null;
+    }
+
     private void OnRowToggled(EntryRowViewModel row, bool isHidden)
     {
         var id = row.Entry.Id;
-        if (isHidden == AllTargetsHidden(row.Entry.HideTargets))
+        var currentlyHidden = AllTargetsHidden(row.Entry.HideTargets);
+        Log.Debug("toggle", $"id='{id}' name='{row.Entry.DisplayName}' newIsHidden={isHidden} currentlyHidden={currentlyHidden} targets={row.Entry.HideTargets.Count}");
+        if (isHidden == currentlyHidden)
         {
             _pendingHide.Remove(id);
             _pendingUnhide.Remove(id);
@@ -273,11 +318,17 @@ public sealed class MainViewModel : ObservableObject
         Log.Info("apply", $"begin hide={_pendingHide.Count} unhide={_pendingUnhide.Count}");
         foreach (var (id, targets) in _pendingHide)
         {
+            Log.Debug("apply", $"hide id='{id}' targets={targets.Count}");
+            foreach (var t in targets)
+                Log.Debug("apply", $"  hide  kind={t.Kind} hive={t.Hive} path='{t.Path}' value='{t.ValueName}'");
             try { _hideService.Hide(targets); }
             catch (Exception ex) { Log.Error("apply", $"hide id={id} failed", ex); }
         }
         foreach (var (id, targets) in _pendingUnhide)
         {
+            Log.Debug("apply", $"unhide id='{id}' targets={targets.Count}");
+            foreach (var t in targets)
+                Log.Debug("apply", $"  unhide kind={t.Kind} hive={t.Hive} path='{t.Path}' value='{t.ValueName}'");
             try { _hideService.Unhide(targets); }
             catch (Exception ex) { Log.Error("apply", $"unhide id={id} failed", ex); }
         }

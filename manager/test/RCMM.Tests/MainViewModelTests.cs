@@ -130,8 +130,10 @@ public class MainViewModelTests : System.IDisposable
         vm.AllEntries[0].IsHidden = true;
         vm.ApplyPending();
 
-        Assert.Equal("", reg.GetValue(RegistryHive.ClassesRoot, @"*\shell\foo", "LegacyDisable"));
-        Assert.Equal("", reg.GetValue(RegistryHive.ClassesRoot, @"Directory\shell\foo", "LegacyDisable"));
+        // Apply now writes to the per-user HKCU\Software\Classes shadow so it
+        // doesn't need admin. The merged HKCR view picks LegacyDisable up from there.
+        Assert.Equal("", reg.GetValue(RegistryHive.CurrentUser, @"Software\Classes\*\shell\foo", "LegacyDisable"));
+        Assert.Equal("", reg.GetValue(RegistryHive.CurrentUser, @"Software\Classes\Directory\shell\foo", "LegacyDisable"));
     }
 
     [Fact]

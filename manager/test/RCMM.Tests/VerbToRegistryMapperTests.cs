@@ -29,8 +29,10 @@ public class VerbToRegistryMapperTests
 
         Assert.Single(targets);
         Assert.Equal(HideKind.LegacyDisable, targets[0].Kind);
-        Assert.Equal(RegistryHive.ClassesRoot, targets[0].Hive);
-        Assert.Equal(@"*\shell\git_shell", targets[0].Path);
+        // Writes go to per-user HKCU\Software\Classes; the HKCR discovery key
+        // is converted to its per-user shadow so Apply doesn't need admin.
+        Assert.Equal(RegistryHive.CurrentUser, targets[0].Hive);
+        Assert.Equal(@"Software\Classes\*\shell\git_shell", targets[0].Path);
         Assert.Equal("LegacyDisable", targets[0].ValueName);
     }
 
@@ -46,9 +48,10 @@ public class VerbToRegistryMapperTests
         var targets = sut.MapVerb("open").ToList();
 
         Assert.Equal(3, targets.Count);
-        Assert.Contains(targets, t => t.Path == @"*\shell\open");
-        Assert.Contains(targets, t => t.Path == @"Directory\shell\open");
-        Assert.Contains(targets, t => t.Path == @"Drive\shell\open");
+        Assert.All(targets, t => Assert.Equal(RegistryHive.CurrentUser, t.Hive));
+        Assert.Contains(targets, t => t.Path == @"Software\Classes\*\shell\open");
+        Assert.Contains(targets, t => t.Path == @"Software\Classes\Directory\shell\open");
+        Assert.Contains(targets, t => t.Path == @"Software\Classes\Drive\shell\open");
     }
 
     [Fact]

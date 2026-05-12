@@ -18,17 +18,19 @@ public sealed class VerbToRegistryMapper
 
     public IEnumerable<HideTarget> MapVerb(string verb)
     {
+        // We READ from HKCR (the merged view) to find verb registrations that exist
+        // anywhere, but we WRITE into HKCU\Software\Classes — the per-user override
+        // of HKCR. The merged HKCR view picks up LegacyDisable from there, so the
+        // verb is suppressed for this user without needing admin to write HKLM.
         foreach (var scope in AllScopes)
         {
-            var root = scope.ToRegistryRoot() + @"\shell\" + verb;
-            if (_reg.KeyExists(RegistryHive.ClassesRoot, root))
-            {
-                yield return new HideTarget(
-                    HideKind.LegacyDisable,
-                    RegistryHive.ClassesRoot,
-                    root,
-                    "LegacyDisable");
-            }
+            var hkcrPath = scope.ToRegistryRoot() + @"\shell\" + verb;
+            if (!_reg.KeyExists(RegistryHive.ClassesRoot, hkcrPath)) continue;
+            yield return new HideTarget(
+                HideKind.LegacyDisable,
+                RegistryHive.CurrentUser,
+                @"Software\Classes\" + hkcrPath,
+                "LegacyDisable");
         }
     }
 

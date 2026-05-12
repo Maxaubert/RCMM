@@ -38,8 +38,10 @@ public sealed partial class MainWindow : Window
         var shellexScanner = new ClassicShellexScanner(registry, resolver, files);
         var entryScanner = new EntryScanner(verbScanner, shellexScanner);
         var packagedScanner = new PackagedShellExtScanner(registry, mui);
+        var commandStore = new CommandStoreVerbIndex(registry);
+        var shellexKeyIndex = new ShellexKeyNameIndex(registry);
 
-        ViewModel = new MainViewModel(capture, targets, mapper, hide, registry, files, shellexIndex, entryScanner, packagedScanner);
+        ViewModel = new MainViewModel(capture, targets, mapper, hide, registry, files, shellexIndex, entryScanner, packagedScanner, commandStore, shellexKeyIndex);
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
@@ -70,9 +72,12 @@ public sealed partial class MainWindow : Window
 
     private void ApplyButton_Click(object sender, RoutedEventArgs e)
     {
-        var needsRestart = ViewModel.RequiresExplorerRestart;
+        // Always restart Explorer after an Apply. LegacyDisable shows up immediately
+        // for new menus, but rows that were already-rendered keep their cached state,
+        // and shellex masks / Blocked-list entries definitely need a fresh Explorer.
+        // Cheaper to always restart than to confuse the user with "nothing happened".
         ViewModel.ApplyPending();
-        if (needsRestart) new ExplorerRestart().Restart();
+        new ExplorerRestart().Restart();
         ViewModel.Rescan();
         LoadIconsForAllEntries();
         RefreshFooter();
