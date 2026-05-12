@@ -1,0 +1,72 @@
+using System.Linq;
+using RCMM.Core.Models;
+using RCMM.Core.Services;
+using Xunit;
+
+namespace RCMM.Tests;
+
+public class VerbToRegistryMapperTests
+{
+    [Fact]
+    public void Map_verb_finds_no_targets_when_unregistered()
+    {
+        var reg = new FakeRegistry();
+        var sut = new VerbToRegistryMapper(reg);
+
+        var targets = sut.MapVerb("nonexistent").ToList();
+
+        Assert.Empty(targets);
+    }
+
+    [Fact]
+    public void Map_verb_finds_single_registry_location()
+    {
+        var reg = new FakeRegistry();
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\git_shell", "", "Open Git Bash here");
+        var sut = new VerbToRegistryMapper(reg);
+
+        var targets = sut.MapVerb("git_shell").ToList();
+
+        Assert.Single(targets);
+        Assert.Equal(HideKind.LegacyDisable, targets[0].Kind);
+        Assert.Equal(RegistryHive.ClassesRoot, targets[0].Hive);
+        Assert.Equal(@"*\shell\git_shell", targets[0].Path);
+        Assert.Equal("LegacyDisable", targets[0].ValueName);
+    }
+
+    [Fact]
+    public void Map_verb_finds_all_scope_root_locations()
+    {
+        var reg = new FakeRegistry();
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\open", "", "Open");
+        reg.SetValue(RegistryHive.ClassesRoot, @"Directory\shell\open", "", "Open");
+        reg.SetValue(RegistryHive.ClassesRoot, @"Drive\shell\open", "", "Open");
+        var sut = new VerbToRegistryMapper(reg);
+
+        var targets = sut.MapVerb("open").ToList();
+
+        Assert.Equal(3, targets.Count);
+        Assert.Contains(targets, t => t.Path == @"*\shell\open");
+        Assert.Contains(targets, t => t.Path == @"Directory\shell\open");
+        Assert.Contains(targets, t => t.Path == @"Drive\shell\open");
+    }
+
+    [Fact]
+    public void Map_clsid_finds_shellex_handler_locations_via_default_or_keyname_match()
+    {
+        var reg = new FakeRegistry();
+        // Handler registered with CLSID in default value:
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shellex\ContextMenuHandlers\WinRAR", "", "{ABC}");
+        // Handler registered with CLSID as key name:
+        reg.CreateKey(RegistryHive.ClassesRoot, @"Directory\shellex\ContextMenuHandlers\{ABC}");
+        var sut = new VerbToRegistryMapper(reg);
+
+        var targets = sut.MapClsid("{ABC}").ToList();
+
+        Assert.Equal(2, targets.Count);
+        Assert.All(targets, t => Assert.Equal(HideKind.HkcuMask, t.Kind));
+        Assert.All(targets, t => Assert.Equal(RegistryHive.CurrentUser, t.Hive));
+        Assert.Contains(targets, t => t.Path == @"Software\Classes\*\shellex\ContextMenuHandlers\WinRAR");
+        Assert.Contains(targets, t => t.Path == @"Software\Classes\Directory\shellex\ContextMenuHandlers\{ABC}");
+    }
+}
