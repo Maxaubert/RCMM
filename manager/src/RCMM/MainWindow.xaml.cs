@@ -40,7 +40,7 @@ public sealed partial class MainWindow : Window
         ViewModel.Rescan();
         RefreshFooter();
 
-        ContentFrame.Navigate(typeof(LandingPage), ViewModel);
+        ContentFrame.Navigate(typeof(ScopePage), ViewModel);
     }
 
     private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -51,16 +51,7 @@ public sealed partial class MainWindow : Window
 
     private void RefreshFooter()
     {
-        var total = 0;
-        foreach (var scope in new[] {
-            RCMM.Core.Models.Scope.Files,
-            RCMM.Core.Models.Scope.Folders,
-            RCMM.Core.Models.Scope.Drives,
-            RCMM.Core.Models.Scope.Background })
-        {
-            total += ViewModel.GetScope(scope).Entries.Count;
-        }
-        StatusLabel.Text = $"{total} entries · {ViewModel.PendingChanges.Count} pending";
+        StatusLabel.Text = $"{ViewModel.AllEntries.Count} entries · {ViewModel.PendingChanges.Count} pending";
         ApplyButton.IsEnabled = ViewModel.PendingChanges.Count > 0;
     }
 

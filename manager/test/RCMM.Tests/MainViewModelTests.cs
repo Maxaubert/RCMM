@@ -73,4 +73,45 @@ public class MainViewModelTests
 
         Assert.True(vm.RequiresExplorerRestart);
     }
+
+    [Fact]
+    public void AllEntries_combines_user_visible_entries_across_scopes()
+    {
+        var (vm, reg) = BuildSut();
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\Open Git Bash here", "", "Open Git Bash here");
+        reg.SetValue(RegistryHive.ClassesRoot, @"Directory\shell\Edit with Notepad", "", "Edit with Notepad");
+        vm.Rescan();
+
+        Assert.Equal(2, vm.AllEntries.Count);
+        Assert.Contains(vm.AllEntries, r => r.DisplayName == "Open Git Bash here");
+        Assert.Contains(vm.AllEntries, r => r.DisplayName == "Edit with Notepad");
+    }
+
+    [Fact]
+    public void AllEntries_filters_out_clsid_and_path_display_names()
+    {
+        var (vm, reg) = BuildSut();
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\OpenWith", "", "Open with");
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shellex\ContextMenuHandlers\Junk", "", "{B41DB860-8EE4-11D2-9906-E49FADC173CA}");
+        reg.SetValue(RegistryHive.ClassesRoot, @"CLSID\{B41DB860-8EE4-11D2-9906-E49FADC173CA}", "", @"C:\Windows\System32\shell32.dll");
+        vm.Rescan();
+
+        // The user-visible "Open with" verb makes it through; the path/CLSID handler does not.
+        Assert.Single(vm.AllEntries);
+        Assert.Equal("Open with", vm.AllEntries[0].DisplayName);
+    }
+
+    [Fact]
+    public void AllEntries_dedupes_same_kind_and_key_across_scopes()
+    {
+        var (vm, reg) = BuildSut();
+        // Same handler registered under both Files and Folders scopes.
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shellex\ContextMenuHandlers\WinRAR", "", "{ABC}");
+        reg.SetValue(RegistryHive.ClassesRoot, @"Directory\shellex\ContextMenuHandlers\WinRAR", "", "{ABC}");
+        reg.SetValue(RegistryHive.ClassesRoot, @"CLSID\{ABC}", "", "WinRAR Shell");
+        vm.Rescan();
+
+        Assert.Single(vm.AllEntries);
+        Assert.Equal("WinRAR Shell", vm.AllEntries[0].DisplayName);
+    }
 }

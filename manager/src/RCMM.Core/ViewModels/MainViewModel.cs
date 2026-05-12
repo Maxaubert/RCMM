@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using RCMM.Core.Models;
 using RCMM.Core.Services;
+using RCMM.Core.Util;
 
 namespace RCMM.Core.ViewModels;
 
@@ -17,6 +18,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly Dictionary<string, PendingChange> _pending = new();
 
     public ObservableCollection<PendingChange> PendingChanges { get; } = new();
+    public ObservableCollection<EntryRowViewModel> AllEntries { get; } = new();
 
     public MainViewModel(EntryScanner scanner, HideService hideService)
     {
@@ -34,12 +36,19 @@ public sealed class MainViewModel : ObservableObject
     {
         foreach (var scope in AllScopes)
             _scopes[scope].Entries.Clear();
+        AllEntries.Clear();
 
+        var seen = new HashSet<string>();
         foreach (var entry in _scanner.ScanAll())
         {
             var row = new EntryRowViewModel(entry);
             row.HiddenChanged = OnRowToggled;
             _scopes[entry.Scope].Entries.Add(row);
+
+            if (!EntryFilters.IsLikelyUserVisible(entry.DisplayName)) continue;
+            var dedupeKey = $"{entry.Kind}:{entry.OriginalKeyName}";
+            if (!seen.Add(dedupeKey)) continue;
+            AllEntries.Add(row);
         }
 
         _pending.Clear();
