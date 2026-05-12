@@ -154,4 +154,31 @@ public class ClassicVerbScannerTests
         var entry = sut.Scan(Scope.Files).Single();
         Assert.False(entry.IsBuiltIn);
     }
+
+    [Fact]
+    public void Scan_marks_verb_as_builtin_when_MUIVerb_references_a_bare_system_dll()
+    {
+        var reg = new FakeRegistry();
+        var mui = new FakeMuiStringResolver();
+        mui.Map["@efscore.dll,-101"] = "File ownership";
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\UpdateEncryptionSettingsWork", "MUIVerb", "@efscore.dll,-101");
+        var sut = MakeSut(reg, mui);
+
+        var entry = sut.Scan(Scope.Files).Single();
+        Assert.True(entry.IsBuiltIn);
+        Assert.Equal("Windows", entry.Source);
+    }
+
+    [Fact]
+    public void Scan_does_not_mark_thirdparty_full_path_MUIVerb_as_builtin()
+    {
+        var reg = new FakeRegistry();
+        var mui = new FakeMuiStringResolver();
+        mui.Map[@"@C:\Program Files\Vendor\res.dll,-1"] = "Vendor Action";
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\Vendor", "MUIVerb", @"@C:\Program Files\Vendor\res.dll,-1");
+        var sut = MakeSut(reg, mui);
+
+        var entry = sut.Scan(Scope.Files).Single();
+        Assert.False(entry.IsBuiltIn);
+    }
 }

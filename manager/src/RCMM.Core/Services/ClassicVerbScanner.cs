@@ -41,7 +41,9 @@ public sealed class ClassicVerbScanner
 
             var isBuiltIn = LooksWindowsPath(commandLine)
                             || LooksWindowsPath(icon)
-                            || LooksWindowsPath(muiVerbHint);
+                            || LooksWindowsPath(muiVerbHint)
+                            || LooksBareSystemMuiReference(muiVerbHint)
+                            || LooksBareSystemMuiReference(rawDisplay);
 
             yield return new ContextMenuEntry
             {
@@ -62,6 +64,25 @@ public sealed class ClassicVerbScanner
 
     private static string StripAccelerator(string s)
         => s.Replace("&&", "￾").Replace("&", "").Replace("￾", "&");
+
+    /// <summary>
+    /// True when the value is an MUI indirect-string reference whose DLL is a bare
+    /// filename (no path). Bare DLL names only resolve via Windows' system search
+    /// path (System32/SysWOW64/PATH), so a successful registration here almost
+    /// always points at a Windows system component (e.g. "@efscore.dll,-101").
+    /// </summary>
+    private static bool LooksBareSystemMuiReference(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw) || raw[0] != '@') return false;
+        var s = raw[1..].Trim();
+        var comma = s.LastIndexOf(',');
+        if (comma > 0 && comma > s.LastIndexOf('\\')) s = s[..comma];
+        if (s.Contains('\\') || s.Contains('/')) return false;
+        if (s.IndexOf('%') >= 0) return false;
+        return s.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
+            || s.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+            || s.EndsWith(".mui", StringComparison.OrdinalIgnoreCase);
+    }
 
     private static bool LooksWindowsPath(string? raw)
     {
