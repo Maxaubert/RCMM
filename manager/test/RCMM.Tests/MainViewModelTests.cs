@@ -30,7 +30,10 @@ public class MainViewModelTests : System.IDisposable
         var cap = new FakeContextMenuCaptureService();
         var mapper = new VerbToRegistryMapper(reg);
         var hide = new HideService(reg);
-        var vm = new MainViewModel(cap, _targets, mapper, hide, reg);
+        var files = new FakeFileVersionReader();
+        var resolver = new ClsidResolver(reg);
+        var shellexIndex = new ShellexNameIndex(reg, resolver, files);
+        var vm = new MainViewModel(cap, _targets, mapper, hide, reg, files, shellexIndex);
         return (vm, reg, cap);
     }
 
@@ -147,5 +150,24 @@ public class MainViewModelTests : System.IDisposable
         vm.AllEntries[0].IsHidden = true;
 
         Assert.True(vm.RequiresExplorerRestart);
+    }
+
+    [Fact]
+    public void Shellex_item_without_Verb_is_hideable_when_DisplayName_matches_a_registered_handler()
+    {
+        var (vm, reg, cap) = BuildSut();
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shellex\ContextMenuHandlers\WinRAR", "", "{ABC}");
+        reg.SetValue(RegistryHive.ClassesRoot, @"CLSID\{ABC}", "", "WinRAR Shell");
+
+        var target = FirstFileTarget();
+        cap.Map[target] = new List<CapturedItem>
+        {
+            new() { TargetPath = target, Position = 0, DisplayName = "WinRAR Shell", Verb = null, OwnerClsid = null }
+        };
+
+        vm.Rescan();
+
+        Assert.Single(vm.AllEntries);
+        Assert.True(vm.AllEntries[0].CanHide);
     }
 }

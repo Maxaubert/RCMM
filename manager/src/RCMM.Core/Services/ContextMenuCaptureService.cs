@@ -36,7 +36,7 @@ public sealed class ContextMenuCaptureService : IContextMenuCaptureService
         { IsBackground = true };
         t.SetApartmentState(ApartmentState.STA);
         t.Start();
-        done.Wait();
+        done.Wait(TimeSpan.FromSeconds(30));
 
         return result;
     }

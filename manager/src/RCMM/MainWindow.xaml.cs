@@ -28,8 +28,11 @@ public sealed partial class MainWindow : Window
         var targets = new TargetProvider();
         var mapper = new VerbToRegistryMapper(registry);
         var hide = new HideService(registry);
+        var files = new Win32FileVersionReader();
+        var resolver = new ClsidResolver(registry);
+        var shellexIndex = new ShellexNameIndex(registry, resolver, files);
 
-        ViewModel = new MainViewModel(capture, targets, mapper, hide, registry);
+        ViewModel = new MainViewModel(capture, targets, mapper, hide, registry, files, shellexIndex);
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
@@ -13,6 +14,8 @@ public sealed class MainViewModel : ObservableObject
     private readonly VerbToRegistryMapper _mapper;
     private readonly HideService _hideService;
     private readonly IRegistry _reg;
+    private readonly IFileVersionReader _files;
+    private readonly ShellexNameIndex _shellexIndex;
 
     private readonly Dictionary<string, IReadOnlyList<HideTarget>> _pendingHide = new();
     private readonly Dictionary<string, IReadOnlyList<HideTarget>> _pendingUnhide = new();
@@ -27,13 +30,17 @@ public sealed class MainViewModel : ObservableObject
         TargetProvider targets,
         VerbToRegistryMapper mapper,
         HideService hideService,
-        IRegistry reg)
+        IRegistry reg,
+        IFileVersionReader files,
+        ShellexNameIndex shellexIndex)
     {
         _capture = capture;
         _targets = targets;
         _mapper = mapper;
         _hideService = hideService;
         _reg = reg;
+        _files = files;
+        _shellexIndex = shellexIndex;
     }
 
     public bool RequiresExplorerRestart
@@ -55,24 +62,33 @@ public sealed class MainViewModel : ObservableObject
     {
         var captures = _capture.CaptureAll(_targets.GetTargets());
         var merged = MergeCaptures(captures);
+        var nameIndex = _shellexIndex.BuildNameToClsidMap();
 
         _allRows.Clear();
         foreach (var item in merged)
         {
-            var hideTargets = ResolveHideTargets(item);
-            var iconPath = ResolveIconPath(item, hideTargets);
+            var effectiveItem = item;
+            if (string.IsNullOrEmpty(effectiveItem.Verb) && string.IsNullOrEmpty(effectiveItem.OwnerClsid))
+            {
+                if (nameIndex.TryGetValue(effectiveItem.DisplayName, out var clsid))
+                    effectiveItem = effectiveItem with { OwnerClsid = clsid };
+            }
+
+            var hideTargets = ResolveHideTargets(effectiveItem);
+            var iconPath = ResolveIconPath(effectiveItem, hideTargets);
             var isHidden = AllTargetsHidden(hideTargets);
+            var (source, isBuiltIn) = ResolveSourceAndBuiltIn(effectiveItem, hideTargets);
             var entry = new MenuEntry
             {
-                Id = ComputeId(item),
-                DisplayName = item.DisplayName,
-                Source = null,
-                IconBytes = item.IconBytes,
+                Id = ComputeId(effectiveItem),
+                DisplayName = effectiveItem.DisplayName,
+                Source = source,
+                IconBytes = effectiveItem.IconBytes,
                 IconPath = iconPath,
                 HideTargets = hideTargets,
-                IsBuiltIn = false,
+                IsBuiltIn = isBuiltIn,
                 IsHidden = isHidden,
-                IsSubmenu = item.IsSubmenu
+                IsSubmenu = effectiveItem.IsSubmenu
             };
             var row = new EntryRowViewModel(entry) { HiddenChanged = OnRowToggled };
             _allRows.Add(row);
@@ -187,5 +203,62 @@ public sealed class MainViewModel : ObservableObject
         _pendingUnhide.Clear();
         PendingChangeIds.Clear();
         Raise(nameof(RequiresExplorerRestart));
+    }
+
+    private (string? source, bool isBuiltIn) ResolveSourceAndBuiltIn(CapturedItem item, IReadOnlyList<HideTarget> targets)
+    {
+        string? exePath = null;
+        string? clsidForFile = item.OwnerClsid;
+
+        foreach (var t in targets)
+        {
+            if (t.Kind != HideKind.LegacyDisable) continue;
+            var cmd = _reg.GetValue(t.Hive, t.Path + @"\command", "") as string;
+            if (!string.IsNullOrWhiteSpace(cmd))
+            {
+                exePath = ExtractExe(cmd);
+                break;
+            }
+        }
+
+        // For shellex items, look up the DLL via the CLSID.
+        string? dllPath = null;
+        if (clsidForFile != null)
+        {
+            dllPath = _reg.GetValue(RegistryHive.ClassesRoot, $@"CLSID\{clsidForFile}\InprocServer32", "") as string;
+        }
+
+        var probe = exePath ?? dllPath;
+        if (string.IsNullOrEmpty(probe)) return (null, false);
+
+        var info = _files.Read(probe);
+        var company = info.CompanyName;
+        bool builtIn = (company != null && company.IndexOf("Microsoft", StringComparison.OrdinalIgnoreCase) >= 0)
+                        || LooksWindowsPath(probe);
+        return (company, builtIn);
+    }
+
+    private static string? ExtractExe(string cmd)
+    {
+        cmd = cmd.Trim();
+        if (cmd.StartsWith('"'))
+        {
+            var end = cmd.IndexOf('"', 1);
+            if (end > 1) return cmd[1..end];
+        }
+        var space = cmd.IndexOf(' ');
+        return space > 0 ? cmd[..space] : cmd;
+    }
+
+    private static bool LooksWindowsPath(string raw)
+    {
+        try
+        {
+            var s = Environment.ExpandEnvironmentVariables(raw).ToLowerInvariant();
+            var winDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows).ToLowerInvariant();
+            if (winDir.Length > 0 && s.StartsWith(winDir + "\\")) return true;
+            return s.Contains(@"\windows\system32\") || s.Contains(@"\windows\syswow64\");
+        }
+        catch { return false; }
     }
 }
