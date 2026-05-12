@@ -21,6 +21,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly PackagedShellExtScanner? _packagedScanner;
     private readonly CommandStoreVerbIndex? _commandStore;
     private readonly ShellexKeyNameIndex? _shellexKey;
+    private readonly ShellexInvoker? _shellexInvoker;
 
     private readonly HashSet<string> _packagedClsids =
         new(StringComparer.OrdinalIgnoreCase);
@@ -47,7 +48,8 @@ public sealed class MainViewModel : ObservableObject
         EntryScanner? registryScanner = null,
         PackagedShellExtScanner? packagedScanner = null,
         CommandStoreVerbIndex? commandStore = null,
-        ShellexKeyNameIndex? shellexKey = null)
+        ShellexKeyNameIndex? shellexKey = null,
+        ShellexInvoker? shellexInvoker = null)
     {
         _capture = capture;
         _targets = targets;
@@ -60,6 +62,7 @@ public sealed class MainViewModel : ObservableObject
         _packagedScanner = packagedScanner;
         _commandStore = commandStore;
         _shellexKey = shellexKey;
+        _shellexInvoker = shellexInvoker;
     }
 
     public bool RequiresExplorerRestart
@@ -124,7 +127,11 @@ public sealed class MainViewModel : ObservableObject
         Log.Info("rescan", $"captured={allItems.Count} mergedUnique={merged.Count}");
         var nameIndex = _shellexIndex.BuildNameToClsidMap();
         var wordIndex = _shellexIndex.BuildClsidWordIndex();
-        Log.Debug("rescan", $"shellexNameIndex entries={nameIndex.Count} wordIndexClsids={wordIndex.Count}");
+        // Heaviest lookup last so cheaper resolvers win: instantiate each shellex
+        // handler and ask what it emits. Catches Recuva / Library Location / PlayTo,
+        // which have no name overlap with their FileDescription. Cached per-process.
+        var invokerMap = _shellexInvoker?.BuildDisplayNameToClsidMap();
+        Log.Debug("rescan", $"shellexNameIndex entries={nameIndex.Count} wordIndexClsids={wordIndex.Count} invokerNames={invokerMap?.Count ?? 0}");
 
         int rowsWithHide = 0;
         int rowsBuiltIn = 0;
@@ -141,7 +148,10 @@ public sealed class MainViewModel : ObservableObject
                     // Fuzzy: link "Restore previous versions" to "Previous Versions Property Page",
                     // "Uninstall with Revo Uninstaller Pro" to "Revo Uninstaller Pro Extension", etc.
                     var fuzzy = _shellexIndex.FuzzyMatch(effectiveItem.DisplayName, wordIndex);
-                    if (fuzzy != null) effectiveItem = effectiveItem with { OwnerClsid = fuzzy };
+                    if (fuzzy != null)
+                        effectiveItem = effectiveItem with { OwnerClsid = fuzzy };
+                    else if (invokerMap != null && invokerMap.TryGetValue(effectiveItem.DisplayName, out var invokerClsid))
+                        effectiveItem = effectiveItem with { OwnerClsid = invokerClsid };
                 }
             }
 
@@ -228,8 +238,15 @@ public sealed class MainViewModel : ObservableObject
         }
         if (!string.IsNullOrEmpty(item.OwnerClsid))
         {
+            int before = result.Count;
             result.AddRange(_mapper.MapClsid(item.OwnerClsid!));
-            if (_packagedClsids.Contains(item.OwnerClsid!))
+            bool packaged = _packagedClsids.Contains(item.OwnerClsid!);
+            bool noClassicMatch = result.Count == before;
+            // Packaged extensions always also get the Blocked-list target. For classic
+            // shellex CLSIDs whose registration lives outside our standard six scopes
+            // (PlayTo on Stack.Audio/Image/Video, etc.), the Blocked list is the
+            // universal fallback — Explorer honours it for any shell extension CLSID.
+            if (packaged || noClassicMatch)
                 result.Add(HideService.BlockedShellExtTarget(item.OwnerClsid!));
         }
 

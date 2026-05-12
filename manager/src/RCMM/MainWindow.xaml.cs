@@ -40,8 +40,9 @@ public sealed partial class MainWindow : Window
         var packagedScanner = new PackagedShellExtScanner(registry, mui);
         var commandStore = new CommandStoreVerbIndex(registry);
         var shellexKeyIndex = new ShellexKeyNameIndex(registry);
+        var shellexInvoker = new ShellexInvoker(registry, targets);
 
-        ViewModel = new MainViewModel(capture, targets, mapper, hide, registry, files, shellexIndex, entryScanner, packagedScanner, commandStore, shellexKeyIndex);
+        ViewModel = new MainViewModel(capture, targets, mapper, hide, registry, files, shellexIndex, entryScanner, packagedScanner, commandStore, shellexKeyIndex, shellexInvoker);
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);

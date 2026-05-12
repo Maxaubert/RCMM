@@ -14,6 +14,9 @@ internal static class ShellInterop
     internal static readonly Guid IID_IContextMenu3 = new("BCFCE0A0-EC17-11D0-8D10-00A0C90F2719");
     internal static readonly Guid BHID_SFUIObject = new("3981E224-F559-11D3-8E3A-00C04F6837D5");
     internal static readonly Guid BHID_SFObject = new("3981E225-F559-11D3-8E3A-00C04F6837D5");
+    internal static readonly Guid BHID_DataObject = new("B8C0BD9F-ED24-455C-83E6-D5390C4FE8C4");
+    internal static readonly Guid IID_IShellExtInit = new("000214E8-0000-0000-C000-000000000046");
+    internal static readonly Guid IID_IDataObject = new("0000010E-0000-0000-C000-000000000046");
 
     // === SHCreateItemFromParsingName ===
     [DllImport("shell32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
@@ -88,6 +91,27 @@ internal static class ShellInterop
         [PreserveSig] int GetCommandString(IntPtr idCmd, uint uType, IntPtr pReserved,
                                             IntPtr pszName, uint cchMax);
     }
+
+    // === IShellExtInit ===
+    [ComImport, Guid("000214E8-0000-0000-C000-000000000046"),
+     InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IShellExtInit
+    {
+        [PreserveSig] int Initialize(IntPtr pidlFolder, IntPtr lpdobj, IntPtr hkeyProgID);
+    }
+
+    // === CoCreateInstance ===
+    [DllImport("ole32.dll")]
+    internal static extern int CoCreateInstance(
+        ref Guid rclsid,
+        IntPtr pUnkOuter,
+        uint dwClsContext,
+        ref Guid riid,
+        out IntPtr ppv);
+
+    internal const uint CLSCTX_INPROC_SERVER = 0x1;
+    internal const uint CLSCTX_LOCAL_SERVER = 0x4;
+    internal const uint CLSCTX_INPROC_HANDLER = 0x2;
 
     // === HMENU ===
     [DllImport("user32.dll", SetLastError = true)]
