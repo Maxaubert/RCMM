@@ -100,20 +100,43 @@ public sealed class MainViewModel : ObservableObject
         _packagedDllByClsid.Clear();
         if (_packagedScanner != null)
         {
+            // Register packaged CLSIDs with the invoker BEFORE the packaged scan so
+            // it can probe IExplorerCommand for the friendly title (e.g.
+            // "AMD Software: Adrenalin Edition" instead of "Catalyst Context Menu
+            // extension") which we then use as the row's DisplayName.
+            var pkgList = _packagedScanner.Scan().ToList();
+            if (_shellexInvoker != null)
+                foreach (var pkg in pkgList)
+                    _shellexInvoker.RegisterExtraClsid(pkg.Clsid);
+            _shellexInvoker?.BuildDisplayNameToClsidMap(); // forces probe so titles are ready
+
             int pos = 0;
             int packagedAdded = 0;
-            foreach (var pkg in _packagedScanner.Scan())
+            foreach (var pkg in pkgList)
             {
                 _packagedClsids.Add(pkg.Clsid);
                 if (!_packagedPublishers.ContainsKey(pkg.Clsid))
                     _packagedPublishers[pkg.Clsid] = pkg.PublisherDisplayName;
                 if (pkg.DllPath != null && !_packagedDllByClsid.ContainsKey(pkg.Clsid))
                     _packagedDllByClsid[pkg.Clsid] = pkg.DllPath;
+
+                // Display name priority:
+                //   1. IExplorerCommand::GetTitle — the exact menu text the shell renders.
+                //   2. PublisherDisplayName ("AMD Software", "Notepad++", "WinRAR") —
+                //      recognisable to the user, way cleaner than the technical
+                //      class label ("Catalyst Context Menu extension",
+                //      "WindowsTerminalShellExt").
+                //   3. Registry-reported DisplayName as a last resort.
+                var liveTitle = _shellexInvoker?.LookupTitle(pkg.Clsid);
+                var display = !string.IsNullOrWhiteSpace(liveTitle) ? liveTitle!
+                            : LooksTechnical(pkg.DisplayName) ? pkg.PublisherDisplayName
+                            : pkg.DisplayName;
+
                 allItems.Add(new CapturedItem
                 {
                     TargetPath = $"<packaged:{pkg.PackageFullName}>",
                     Position = pos++,
-                    DisplayName = pkg.DisplayName,
+                    DisplayName = display,
                     OwnerClsid = pkg.Clsid,
                     IsSeparator = false,
                     IsSubmenu = false
@@ -128,10 +151,49 @@ public sealed class MainViewModel : ObservableObject
             allItems.AddRange(_registryScanner.ScanAsCaptures());
             Log.Info("rescan", $"liveCaptured={liveCount} packaged+registry={allItems.Count - liveCount}");
         }
-        var merged = MergeCaptures(allItems).ToList();
-        Log.Info("rescan", $"captured={allItems.Count} mergedUnique={merged.Count}");
         var nameIndex = _shellexIndex.BuildNameToClsidMap();
         var wordIndex = _shellexIndex.BuildClsidWordIndex();
+        // Pre-merge pass:
+        //   (a) Attach OwnerClsid to live captures so the merge's clsid-key dedup
+        //       collapses a live "Scan for deleted files" with the registry-derived
+        //       "Recuva shell extensions" row (same CLSID).
+        //   (b) For any item whose DisplayName is a technical FileDescription
+        //       label and whose CLSID was probed, replace DisplayName with the
+        //       first emitted menu text. "Microsoft Security Client Shell
+        //       Extension" → "Scan with Microsoft Defender…" when Defender's
+        //       handler emitted that text during the invoker run.
+        for (int i = 0; i < allItems.Count; i++)
+        {
+            var item = allItems[i];
+            if (string.IsNullOrEmpty(item.OwnerClsid))
+            {
+                if (nameIndex.TryGetValue(item.DisplayName, out var nameClsid))
+                    item = item with { OwnerClsid = nameClsid };
+                else
+                {
+                    var fuzzy = _shellexIndex.FuzzyMatch(item.DisplayName, wordIndex);
+                    if (fuzzy != null) item = item with { OwnerClsid = fuzzy };
+                    else
+                    {
+                        var invMap = _shellexInvoker?.BuildDisplayNameToClsidMap();
+                        if (invMap != null && invMap.TryGetValue(item.DisplayName, out var invClsid))
+                            item = item with { OwnerClsid = invClsid };
+                    }
+                }
+            }
+
+            if (!string.IsNullOrEmpty(item.OwnerClsid) && LooksTechnical(item.DisplayName))
+            {
+                var emitted = _shellexInvoker?.LookupEmittedNames(item.OwnerClsid)
+                    .FirstOrDefault(n => !string.IsNullOrWhiteSpace(n) && !LooksTechnical(n));
+                if (!string.IsNullOrWhiteSpace(emitted))
+                    item = item with { DisplayName = emitted! };
+            }
+            allItems[i] = item;
+        }
+
+        var merged = MergeCaptures(allItems).ToList();
+        Log.Info("rescan", $"captured={allItems.Count} mergedUnique={merged.Count}");
 
         // Feed the invoker every handler CLSID we know about — verb
         // ExplorerCommandHandlers / VerbHandlers, CommandStore handlers, packaged
@@ -173,23 +235,7 @@ public sealed class MainViewModel : ObservableObject
         _allRows.Clear();
         foreach (var item in merged)
         {
-            var effectiveItem = item;
-            if (string.IsNullOrEmpty(effectiveItem.OwnerClsid))
-            {
-                if (nameIndex.TryGetValue(effectiveItem.DisplayName, out var clsid))
-                    effectiveItem = effectiveItem with { OwnerClsid = clsid };
-                else
-                {
-                    // Fuzzy: link "Restore previous versions" to "Previous Versions Property Page",
-                    // "Uninstall with Revo Uninstaller Pro" to "Revo Uninstaller Pro Extension", etc.
-                    var fuzzy = _shellexIndex.FuzzyMatch(effectiveItem.DisplayName, wordIndex);
-                    if (fuzzy != null)
-                        effectiveItem = effectiveItem with { OwnerClsid = fuzzy };
-                    else if (invokerMap != null && invokerMap.TryGetValue(effectiveItem.DisplayName, out var invokerClsid))
-                        effectiveItem = effectiveItem with { OwnerClsid = invokerClsid };
-                }
-            }
-
+            var effectiveItem = item;  // pre-attached above
             var hideTargets = ResolveHideTargets(effectiveItem);
             var iconPath = ResolveIconPath(effectiveItem, hideTargets);
             var isHidden = AllTargetsHidden(hideTargets);
@@ -212,6 +258,13 @@ public sealed class MainViewModel : ObservableObject
             if (isBuiltIn) rowsBuiltIn++;
         }
 
+        // Second-pass dedup: a registry-derived or packaged row whose technical
+        // DisplayName has been renamed via IExplorerCommand::GetTitle (or that
+        // simply coincides with a live captured row) now shares its display name
+        // with the live row. Collapse them — keep the live row (prefer the one
+        // with a Verb), union the hide targets.
+        DeduplicateRowsByDisplayName();
+
         FilterIntoAllEntries();
         _pendingHide.Clear();
         _pendingUnhide.Clear();
@@ -232,8 +285,80 @@ public sealed class MainViewModel : ObservableObject
         foreach (var row in _allRows)
         {
             if (row.IsBuiltIn && !_showBuiltIns) continue;
+            // Hide registry-only rows whose DisplayName is a technical class label —
+            // "Windows Shell Common Dll", "Microsoft Security Client Shell Extension",
+            // "Portable Devices Shell Extension", etc. These don't correspond to any
+            // option the user sees in their right-click menu; they're the technical
+            // names of installed shellex CLSIDs. The hide-target plumbing keeps them
+            // suppressible through whichever friendly-named row was deduped with
+            // them — if any.
+            if (LooksTechnical(row.Entry.DisplayName)) continue;
             AllEntries.Add(row);
         }
+    }
+
+    /// <summary>
+    /// Walks <see cref="_allRows"/>, groups by case-insensitive DisplayName, and
+    /// collapses each group into a single row. The winner is the row most likely
+    /// to be what the user actually sees in their menu — preferring rows with a
+    /// classic Verb (live capture), then rows with a non-Unknown Source, then the
+    /// first. Hide targets from every dropped row are concatenated onto the
+    /// winner so toggling it suppresses every underlying handler at once.
+    /// </summary>
+    private void DeduplicateRowsByDisplayName()
+    {
+        if (_allRows.Count < 2) return;
+        var groups = new Dictionary<string, List<EntryRowViewModel>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var r in _allRows)
+        {
+            if (!groups.TryGetValue(r.Entry.DisplayName, out var list))
+                groups[r.Entry.DisplayName] = list = new();
+            list.Add(r);
+        }
+
+        int collapsed = 0;
+        foreach (var (_, group) in groups)
+        {
+            if (group.Count < 2) continue;
+            var winner = PickDedupWinner(group);
+            var unionTargets = new List<HideTarget>(winner.Entry.HideTargets);
+            var seen = new HashSet<(HideKind, RegistryHive, string, string?)>(
+                winner.Entry.HideTargets.Select(t => (t.Kind, t.Hive, t.Path, t.ValueName)));
+            foreach (var r in group)
+            {
+                if (ReferenceEquals(r, winner)) continue;
+                foreach (var t in r.Entry.HideTargets)
+                    if (seen.Add((t.Kind, t.Hive, t.Path, t.ValueName)))
+                        unionTargets.Add(t);
+                _allRows.Remove(r);
+                collapsed++;
+            }
+
+            // Rebuild the winner's MenuEntry with merged hide targets so the toggle
+            // semantics (CanHide, IsHidden) reflect the combined state.
+            var newEntry = winner.Entry with
+            {
+                HideTargets = unionTargets,
+                IsHidden = AllTargetsHidden(unionTargets)
+            };
+            var idx = _allRows.IndexOf(winner);
+            var rebuilt = new EntryRowViewModel(newEntry) { HiddenChanged = OnRowToggled };
+            // Preserve any icon already loaded on the winner.
+            rebuilt.Icon = winner.Icon;
+            _allRows[idx] = rebuilt;
+        }
+        if (collapsed > 0) Log.Info("rescan", $"dedupeByDisplayName collapsed={collapsed}");
+    }
+
+    private static EntryRowViewModel PickDedupWinner(List<EntryRowViewModel> group)
+    {
+        // Prefer a row whose Id key is a "verb:..." entry — that came from a live
+        // captured menu item and is the closest to what the user actually sees.
+        var live = group.FirstOrDefault(r => r.Entry.Id.StartsWith("verb:", StringComparison.Ordinal));
+        if (live != null) return live;
+        // Otherwise prefer one with a resolved (non-Unknown) source.
+        var named = group.FirstOrDefault(r => !string.IsNullOrEmpty(r.Entry.Source));
+        return named ?? group[0];
     }
 
     private static IEnumerable<CapturedItem> MergeCaptures(IEnumerable<CapturedItem> captures)
@@ -455,6 +580,35 @@ public sealed class MainViewModel : ObservableObject
 
     private static bool LooksLikeClsid(string s)
         => !string.IsNullOrEmpty(s) && s.Length >= 38 && s.StartsWith('{') && s.EndsWith('}');
+
+    /// <summary>
+    /// Heuristic for a "technical" DisplayName the user wouldn't recognise as a menu item:
+    /// CamelCase identifiers with no spaces, or substrings like "Shell Extension" /
+    /// "Common Dll" / "Property Page" / "Context Menu extension" / "verb handler".
+    /// Used to decide whether to swap in the publisher's friendly product name.
+    /// </summary>
+    private static bool LooksTechnical(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return true;
+        var lower = s.ToLowerInvariant();
+        if (lower.Contains("shell extension") || lower.Contains("shellext")
+            || lower.Contains("shell common dll") || lower.Contains("common dll")
+            || lower.Contains("property page") || lower.Contains("context menu extension")
+            || lower.Contains("verb handler") || lower.Contains("context menu verb handler"))
+            return true;
+        // CamelCase identifier (one token, mixed case)
+        if (!s.Contains(' ') && s.Length >= 8)
+        {
+            bool hasLower = false, hasUpper = false;
+            foreach (var c in s)
+            {
+                if (char.IsLower(c)) hasLower = true;
+                else if (char.IsUpper(c)) hasUpper = true;
+            }
+            if (hasLower && hasUpper) return true;
+        }
+        return false;
+    }
 
     /// <summary>
     /// Maps an HKCU\Software\Classes\... HideTarget path back to its HKCR equivalent

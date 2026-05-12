@@ -37,6 +37,8 @@ public sealed class ShellexInvoker
         new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _iconByClsid =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _titleByClsid =
+        new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _extraClsids =
         new(StringComparer.OrdinalIgnoreCase);
     private bool _built;
@@ -63,6 +65,32 @@ public sealed class ShellexInvoker
         if (string.IsNullOrEmpty(clsid)) return null;
         BuildDisplayNameToClsidMap();
         return _iconByClsid.TryGetValue(clsid, out var icon) ? icon : null;
+    }
+
+    /// <summary>
+    /// Returns the IExplorerCommand-reported title for a CLSID — the same text the
+    /// shell would render in the menu (e.g. "AMD Software: Adrenalin Edition" for
+    /// AMD's Catalyst CLSID). Lets us rename packaged COM rows whose registry-only
+    /// DisplayName is a technical class label.
+    /// </summary>
+    public string? LookupTitle(string? clsid)
+    {
+        if (string.IsNullOrEmpty(clsid)) return null;
+        BuildDisplayNameToClsidMap();
+        return _titleByClsid.TryGetValue(clsid, out var title) ? title : null;
+    }
+
+    /// <summary>
+    /// Returns every display name that this CLSID's IContextMenu emitted when the
+    /// invoker probed it (typically one or two human-readable menu items, e.g.
+    /// "Scan with Microsoft Defender…" for the EPP CLSID). Lets callers rename a
+    /// row whose registry DisplayName is a technical FileDescription.
+    /// </summary>
+    public IEnumerable<string> LookupEmittedNames(string? clsid)
+    {
+        if (string.IsNullOrEmpty(clsid)) return Array.Empty<string>();
+        BuildDisplayNameToClsidMap();
+        return _emittedByClsid.TryGetValue(clsid, out var names) ? (IEnumerable<string>)names : Array.Empty<string>();
     }
 
     /// <summary>
@@ -129,7 +157,7 @@ public sealed class ShellexInvoker
         if (!done.Wait(TimeSpan.FromSeconds(45)))
             Log.Warn(Cat, "STA invoker exceeded 45s; using partial results");
 
-        Log.Info(Cat, $"ShellexInvoker probed registrations clsids={_emittedByClsid.Count} iconPaths={_iconByClsid.Count}");
+        Log.Info(Cat, $"ShellexInvoker probed registrations clsids={_emittedByClsid.Count} iconPaths={_iconByClsid.Count} titles={_titleByClsid.Count}");
     }
 
     /// <summary>
@@ -153,13 +181,26 @@ public sealed class ShellexInvoker
             cmd = (IExplorerCommand)Marshal.GetObjectForIUnknown(pCmd);
 
             hr = cmd.GetIcon(IntPtr.Zero, out var pIcon);
-            if (hr < 0 || pIcon == IntPtr.Zero) return;
-            try
+            if (hr >= 0 && pIcon != IntPtr.Zero)
             {
-                var iconPath = Marshal.PtrToStringUni(pIcon);
-                if (!string.IsNullOrWhiteSpace(iconPath)) _iconByClsid[key] = iconPath!;
+                try
+                {
+                    var iconPath = Marshal.PtrToStringUni(pIcon);
+                    if (!string.IsNullOrWhiteSpace(iconPath)) _iconByClsid[key] = iconPath!;
+                }
+                finally { Marshal.FreeCoTaskMem(pIcon); }
             }
-            finally { Marshal.FreeCoTaskMem(pIcon); }
+
+            hr = cmd.GetTitle(IntPtr.Zero, out var pTitle);
+            if (hr >= 0 && pTitle != IntPtr.Zero)
+            {
+                try
+                {
+                    var title = Marshal.PtrToStringUni(pTitle);
+                    if (!string.IsNullOrWhiteSpace(title)) _titleByClsid[key] = title!;
+                }
+                finally { Marshal.FreeCoTaskMem(pTitle); }
+            }
         }
         finally
         {
