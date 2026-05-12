@@ -129,4 +129,29 @@ public class ClassicVerbScannerTests
 
         Assert.Equal("R&D", sut.Scan(Scope.Files).Single().DisplayName);
     }
+
+    [Fact]
+    public void Scan_marks_verb_as_builtin_when_command_lives_under_SystemRoot()
+    {
+        var reg = new FakeRegistry();
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\sysfoo", "", "System Foo");
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\sysfoo\command", "", @"%SystemRoot%\System32\sysfoo.exe /run");
+        var sut = MakeSut(reg);
+
+        var entry = sut.Scan(Scope.Files).Single();
+        Assert.True(entry.IsBuiltIn);
+        Assert.Equal("Windows", entry.Source);
+    }
+
+    [Fact]
+    public void Scan_leaves_thirdparty_verb_unbuilted()
+    {
+        var reg = new FakeRegistry();
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\thirdparty", "", "Third Party");
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\thirdparty\command", "", @"C:\Program Files\Vendor\app.exe ""%1""");
+        var sut = MakeSut(reg);
+
+        var entry = sut.Scan(Scope.Files).Single();
+        Assert.False(entry.IsBuiltIn);
+    }
 }

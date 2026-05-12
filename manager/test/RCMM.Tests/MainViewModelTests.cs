@@ -118,4 +118,34 @@ public class MainViewModelTests
         Assert.Single(vm.AllEntries);
         Assert.Equal("WinRAR Shell", vm.AllEntries[0].DisplayName);
     }
+
+    [Fact]
+    public void AllEntries_excludes_builtin_entries_by_default()
+    {
+        var (vm, reg) = BuildSut();
+        // Third-party verb (no SystemRoot command) — kept.
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\thirdparty", "", "Third party");
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\thirdparty\command", "", @"C:\Program Files\Vendor\app.exe");
+        // Windows verb — should be excluded.
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\sysverb", "", "Sys Verb");
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\sysverb\command", "", @"%SystemRoot%\System32\sysfoo.exe");
+        vm.Rescan();
+
+        Assert.Single(vm.AllEntries);
+        Assert.Equal("Third party", vm.AllEntries[0].DisplayName);
+    }
+
+    [Fact]
+    public void Setting_ShowBuiltIns_restores_builtin_entries_into_AllEntries()
+    {
+        var (vm, reg) = BuildSut();
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\sysverb", "", "Sys Verb");
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\sysverb\command", "", @"%SystemRoot%\System32\sysfoo.exe");
+        vm.Rescan();
+
+        Assert.Empty(vm.AllEntries);
+        vm.ShowBuiltIns = true;
+        Assert.Single(vm.AllEntries);
+        Assert.Equal("Sys Verb", vm.AllEntries[0].DisplayName);
+    }
 }

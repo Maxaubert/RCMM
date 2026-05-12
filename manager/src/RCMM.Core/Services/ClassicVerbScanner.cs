@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using RCMM.Core.Models;
 
@@ -5,6 +6,9 @@ namespace RCMM.Core.Services;
 
 public sealed class ClassicVerbScanner
 {
+    private static readonly string WindowsDir =
+        Environment.GetFolderPath(Environment.SpecialFolder.Windows).ToLowerInvariant();
+
     private readonly IRegistry _reg;
     private readonly IMuiStringResolver _mui;
 
@@ -33,17 +37,22 @@ public sealed class ClassicVerbScanner
             var hidden = _reg.GetValue(RegistryHive.ClassesRoot, path, "LegacyDisable") != null;
             var commandLine = _reg.GetValue(RegistryHive.ClassesRoot, path + @"\command", "") as string;
             var icon = _reg.GetValue(RegistryHive.ClassesRoot, path, "Icon") as string;
+            var muiVerbHint = _reg.GetValue(RegistryHive.ClassesRoot, path, "MUIVerb") as string;
+
+            var isBuiltIn = LooksWindowsPath(commandLine)
+                            || LooksWindowsPath(icon)
+                            || LooksWindowsPath(muiVerbHint);
 
             yield return new ContextMenuEntry
             {
                 Id = $"{scope}/shell/{name}",
                 DisplayName = display,
-                Source = "Unknown",
+                Source = isBuiltIn ? "Windows" : "Unknown",
                 Scope = scope,
                 Kind = EntryKind.ShellVerb,
                 RegistryPath = path,
                 OriginalKeyName = name,
-                IsBuiltIn = false,
+                IsBuiltIn = isBuiltIn,
                 IsHidden = hidden,
                 CommandLine = commandLine,
                 IconPath = icon
@@ -53,4 +62,33 @@ public sealed class ClassicVerbScanner
 
     private static string StripAccelerator(string s)
         => s.Replace("&&", "￾").Replace("&", "").Replace("￾", "&");
+
+    private static bool LooksWindowsPath(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return false;
+        try
+        {
+            var s = Environment.ExpandEnvironmentVariables(raw).ToLowerInvariant();
+            if (s.Length > 0 && s[0] == '@') s = s[1..];
+            if (s.StartsWith('"'))
+            {
+                var end = s.IndexOf('"', 1);
+                if (end > 1) s = s[1..end];
+            }
+            else
+            {
+                var space = s.IndexOf(' ');
+                if (space > 0) s = s[..space];
+            }
+            var comma = s.LastIndexOf(',');
+            if (comma > 0 && comma > s.LastIndexOf('\\')) s = s[..comma];
+
+            if (WindowsDir.Length > 0 && s.StartsWith(WindowsDir + "\\")) return true;
+            return s.Contains(@"\windows\system32\") || s.Contains(@"\windows\syswow64\");
+        }
+        catch
+        {
+            return false;
+        }
+    }
 }

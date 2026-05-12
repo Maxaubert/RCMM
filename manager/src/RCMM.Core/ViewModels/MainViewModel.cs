@@ -16,6 +16,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly HideService _hideService;
     private readonly Dictionary<Scope, ScopeListViewModel> _scopes;
     private readonly Dictionary<string, PendingChange> _pending = new();
+    private bool _showBuiltIns;
 
     public ObservableCollection<PendingChange> PendingChanges { get; } = new();
     public ObservableCollection<EntryRowViewModel> AllEntries { get; } = new();
@@ -32,28 +33,50 @@ public sealed class MainViewModel : ObservableObject
     public bool RequiresExplorerRestart
         => _pending.Values.Any(p => p.RequiresExplorerRestart);
 
+    public bool ShowBuiltIns
+    {
+        get => _showBuiltIns;
+        set
+        {
+            if (SetField(ref _showBuiltIns, value))
+                RebuildAllEntries();
+        }
+    }
+
     public void Rescan()
     {
         foreach (var scope in AllScopes)
             _scopes[scope].Entries.Clear();
-        AllEntries.Clear();
 
-        var seen = new HashSet<string>();
         foreach (var entry in _scanner.ScanAll())
         {
             var row = new EntryRowViewModel(entry);
             row.HiddenChanged = OnRowToggled;
             _scopes[entry.Scope].Entries.Add(row);
-
-            if (!EntryFilters.IsLikelyUserVisible(entry.DisplayName)) continue;
-            var dedupeKey = $"{entry.Kind}:{entry.OriginalKeyName}";
-            if (!seen.Add(dedupeKey)) continue;
-            AllEntries.Add(row);
         }
+
+        RebuildAllEntries();
 
         _pending.Clear();
         PendingChanges.Clear();
         Raise(nameof(RequiresExplorerRestart));
+    }
+
+    private void RebuildAllEntries()
+    {
+        AllEntries.Clear();
+        var seen = new HashSet<string>();
+        foreach (var scope in AllScopes)
+        {
+            foreach (var row in _scopes[scope].Entries)
+            {
+                if (!EntryFilters.IsLikelyUserVisible(row.Entry.DisplayName)) continue;
+                if (row.Entry.IsBuiltIn && !_showBuiltIns) continue;
+                var dedupeKey = $"{row.Entry.Kind}:{row.Entry.OriginalKeyName}";
+                if (!seen.Add(dedupeKey)) continue;
+                AllEntries.Add(row);
+            }
+        }
     }
 
     private void OnRowToggled(EntryRowViewModel row, bool isHidden)
