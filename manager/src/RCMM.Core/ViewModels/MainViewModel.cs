@@ -1,0 +1,87 @@
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Linq;
+using RCMM.Core.Models;
+using RCMM.Core.Services;
+
+namespace RCMM.Core.ViewModels;
+
+public sealed class MainViewModel : ObservableObject
+{
+    private static readonly Scope[] AllScopes =
+        { Scope.Files, Scope.Folders, Scope.Drives, Scope.Background };
+
+    private readonly EntryScanner _scanner;
+    private readonly HideService _hideService;
+    private readonly Dictionary<Scope, ScopeListViewModel> _scopes;
+    private readonly Dictionary<string, PendingChange> _pending = new();
+
+    public ObservableCollection<PendingChange> PendingChanges { get; } = new();
+
+    public MainViewModel(EntryScanner scanner, HideService hideService)
+    {
+        _scanner = scanner;
+        _hideService = hideService;
+        _scopes = AllScopes.ToDictionary(s => s, s => new ScopeListViewModel(s));
+    }
+
+    public ScopeListViewModel GetScope(Scope scope) => _scopes[scope];
+
+    public bool RequiresExplorerRestart
+        => _pending.Values.Any(p => p.RequiresExplorerRestart);
+
+    public void Rescan()
+    {
+        foreach (var scope in AllScopes)
+            _scopes[scope].Entries.Clear();
+
+        foreach (var entry in _scanner.ScanAll())
+        {
+            var row = new EntryRowViewModel(entry);
+            row.HiddenChanged = OnRowToggled;
+            _scopes[entry.Scope].Entries.Add(row);
+        }
+
+        _pending.Clear();
+        PendingChanges.Clear();
+        Raise(nameof(RequiresExplorerRestart));
+    }
+
+    private void OnRowToggled(EntryRowViewModel row, bool isHidden)
+    {
+        var action = isHidden ? PendingAction.Hide : PendingAction.Unhide;
+        // If the row's new state matches the underlying entry, drop the pending change.
+        if (isHidden == row.Entry.IsHidden)
+        {
+            if (_pending.Remove(row.Entry.Id, out var stale))
+                PendingChanges.Remove(stale);
+        }
+        else
+        {
+            var change = new PendingChange(row.Entry.Id, action,
+                HideService.RequiresExplorerRestart(row.Entry.Kind));
+            if (_pending.TryGetValue(row.Entry.Id, out var existing))
+                PendingChanges.Remove(existing);
+            _pending[row.Entry.Id] = change;
+            PendingChanges.Add(change);
+        }
+        Raise(nameof(RequiresExplorerRestart));
+    }
+
+    public void ApplyPending()
+    {
+        foreach (var change in _pending.Values.ToList())
+        {
+            var entry = AllScopes
+                .SelectMany(s => _scopes[s].Entries)
+                .First(r => r.Entry.Id == change.EntryId)
+                .Entry;
+
+            if (change.Action == PendingAction.Hide) _hideService.Hide(entry);
+            else _hideService.Unhide(entry);
+        }
+        _pending.Clear();
+        PendingChanges.Clear();
+        Raise(nameof(RequiresExplorerRestart));
+    }
+}
