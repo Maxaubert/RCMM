@@ -16,14 +16,6 @@ Captures every entry that appears when you right-click in Windows Explorer. Buil
 
 Works without admin rights, writes to the per-user HKCU shadow of the shell registry instead of HKCR.
 
-## Use
-
-1. Open **RCMM**.
-2. Click **Show / hide** on the landing screen.
-3. Pick **Application specific** for entries added by installed programs, or **Windows specific** for built-in shell verbs.
-4. Toggle entries off (or on) using the switch on each row. Click anywhere on a row to flip it.
-5. Click **Apply** in the footer. Explorer restarts and the menu updates.
-
 ## Install
 
 No installer yet, build from source for now. Releases will land at https://github.com/Maxaubert/RCMM/releases when ready.
