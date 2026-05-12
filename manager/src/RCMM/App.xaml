@@ -2,12 +2,29 @@
 <Application
     x:Class="RCMM.App"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:RCMM">
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
             </ResourceDictionary.MergedDictionaries>
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Default">
+                    <SolidColorBrush x:Key="WindowBackground" Color="#FFF3F3F3"/>
+                    <SolidColorBrush x:Key="FooterBackground" Color="#FFE9E9E9"/>
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="WindowBackground" Color="#FFF3F3F3"/>
+                    <SolidColorBrush x:Key="FooterBackground" Color="#FFE9E9E9"/>
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="WindowBackground" Color="#FF202020"/>
+                    <SolidColorBrush x:Key="FooterBackground" Color="#FF2B2B2B"/>
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+            <local:InvertBoolConverter x:Key="InvertBoolConverter"/>
+            <local:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
         </ResourceDictionary>
     </Application.Resources>
 </Application>
