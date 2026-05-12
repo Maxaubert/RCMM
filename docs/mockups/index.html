@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RCMM — Mockup index</title>
+<link rel="stylesheet" href="_shared.css">
+<style>
+  .index-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .index-card { padding: 28px; border: 1px solid var(--border); border-radius: var(--radius); text-decoration: none; color: inherit; transition: border-color .2s, background .2s; display: flex; flex-direction: column; gap: 8px; min-height: 140px; }
+  .index-card:hover { border-color: var(--border-strong); background: var(--surface); }
+  .index-card .num { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); letter-spacing: .14em; text-transform: uppercase; }
+  .index-card .title { font-size: 20px; font-weight: 500; letter-spacing: -.01em; }
+  .index-card .desc { color: var(--text-muted); font-size: 13px; line-height: 1.5; }
+  .index-card.flow { grid-column: 1 / -1; border-style: dashed; background: transparent; }
+  .index-card.flow:hover { background: transparent; }
+  .flow-text { color: var(--text-muted); font-size: 13px; line-height: 1.7; }
+  .flow-text code { font-family: var(--font-mono); color: var(--accent-dim); }
+</style>
+</head>
+<body>
+  <div class="app">
+    <div class="titlebar">
+      <div class="brand">
+        <div class="brand-mark">R</div>
+        <div class="brand-name">RCMM <span class="dim">— Mockup index</span></div>
+      </div>
+      <div class="titlebar-meta">v0.4 layout proposal</div>
+    </div>
+
+    <main class="stagger">
+      <div class="section-head">
+        <div>
+          <h1>Mockups</h1>
+          <p class="sub">Four screens for the new top-level flow. Click through to see each. Click anything in the mockups to navigate, every link is wired up.</p>
+        </div>
+      </div>
+
+      <div class="index-list">
+        <a class="index-card" href="00-landing.html">
+          <span class="num">00 · landing</span>
+          <span class="title">Show / hide · Add to menu</span>
+          <span class="desc">Two cards. Show/hide is the path through to the entry list. Add to menu is parked in a "coming soon" state.</span>
+        </a>
+        <a class="index-card" href="01-showhide.html">
+          <span class="num">01 · show / hide</span>
+          <span class="title">Application · Windows</span>
+          <span class="desc">Two cards splitting the entries by source. Counts reflect the Microsoft-vs-third-party classification after this branch's IsBuiltIn fix.</span>
+        </a>
+        <a class="index-card" href="02-list-application.html">
+          <span class="num">02 · list — application</span>
+          <span class="title">14 entries grouped by vendor</span>
+          <span class="desc">Sectioned list (AMD, VideoLAN, Notepad++, Microsoft apps, Git, WinRAR, Piriform, others). Toggles, search, sort, Apply.</span>
+        </a>
+        <a class="index-card" href="03-list-windows.html">
+          <span class="num">03 · list — windows</span>
+          <span class="title">47 built-in shell verbs</span>
+          <span class="desc">Grouped by purpose (clipboard ops, open/launch, share/send, pinning, other). Create shortcut shows the locked state since shell32 owns it internally.</span>
+        </a>
+
+        <div class="index-card flow" style="cursor:default;">
+          <span class="num">flow</span>
+          <div class="flow-text">
+            <code>00 Landing</code> → click <code>Show / hide</code> → <code>01 Show / hide</code><br>
+            → click <code>Application specific</code> → <code>02 List (app)</code><br>
+            → click <code>Windows specific</code> → <code>03 List (windows)</code><br>
+            Back-arrows in the breadcrumbs return up the tree.
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <div class="footer">
+      <span>Open <code style="font-family:var(--font-mono);color:var(--text-muted);">docs/mockups/index.html</code> in a browser</span>
+      <span style="font-family:var(--font-mono);">RCMM v0.4 · mockup pass</span>
+    </div>
+  </div>
+</body>
+</html>
