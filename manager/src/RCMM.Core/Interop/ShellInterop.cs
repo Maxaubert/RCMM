@@ -100,6 +100,26 @@ internal static class ShellInterop
         [PreserveSig] int Initialize(IntPtr pidlFolder, IntPtr lpdobj, IntPtr hkeyProgID);
     }
 
+    // === IExplorerCommand — modern Win11 verb interface ===
+    // Used by ExplorerCommandHandler-registered verbs (Notepad++'s ANotepad++64,
+    // most Windows.* CommandStore entries, packaged context menus). The handler
+    // exposes its own title and icon path; we only need GetIcon for icon resolution.
+    internal static readonly Guid IID_IExplorerCommand = new("A08CE4D0-FA25-44AB-B57C-C7B1C323E0B9");
+
+    [ComImport, Guid("A08CE4D0-FA25-44AB-B57C-C7B1C323E0B9"),
+     InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IExplorerCommand
+    {
+        [PreserveSig] int GetTitle(IntPtr psiItemArray, out IntPtr ppszName);
+        [PreserveSig] int GetIcon(IntPtr psiItemArray, out IntPtr ppszIcon);
+        [PreserveSig] int GetToolTip(IntPtr psiItemArray, out IntPtr ppszInfotip);
+        [PreserveSig] int GetCanonicalName(out Guid pguidCommandName);
+        [PreserveSig] int GetState(IntPtr psiItemArray, [MarshalAs(UnmanagedType.Bool)] bool fOkToBeSlow, out uint pCmdState);
+        [PreserveSig] int Invoke(IntPtr psiItemArray, IntPtr pbc);
+        [PreserveSig] int GetFlags(out uint pFlags);
+        [PreserveSig] int EnumSubCommands(out IntPtr ppEnum);
+    }
+
     // === CoCreateInstance ===
     [DllImport("ole32.dll")]
     internal static extern int CoCreateInstance(

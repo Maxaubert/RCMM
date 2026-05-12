@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -34,12 +35,34 @@ public sealed class ShellexInvoker
     private readonly TargetProvider _targets;
     private readonly Dictionary<string, HashSet<string>> _emittedByClsid =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _iconByClsid =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _extraClsids =
+        new(StringComparer.OrdinalIgnoreCase);
     private bool _built;
 
     public ShellexInvoker(IRegistry reg, TargetProvider targets)
     {
         _reg = reg;
         _targets = targets;
+    }
+
+    /// <summary>
+    /// Adds a CLSID that wasn't found by the shellex enumeration (typically a verb's
+    /// ExplorerCommandHandler or a CommandStore VerbHandler). The invoker will probe
+    /// it with IExplorerCommand::GetIcon during the next Build pass.
+    /// </summary>
+    public void RegisterExtraClsid(string clsid)
+    {
+        if (!string.IsNullOrWhiteSpace(clsid)) _extraClsids.Add(clsid.Trim().ToUpperInvariant());
+    }
+
+    /// <summary>Returns the IExplorerCommand-reported icon path for a CLSID, or null.</summary>
+    public string? LookupIconPath(string? clsid)
+    {
+        if (string.IsNullOrEmpty(clsid)) return null;
+        BuildDisplayNameToClsidMap();
+        return _iconByClsid.TryGetValue(clsid, out var icon) ? icon : null;
     }
 
     /// <summary>
@@ -65,6 +88,15 @@ public sealed class ShellexInvoker
     private void BuildOnce()
     {
         var registrations = CollectRegistrations();
+        // Also probe every "extra" CLSID for IExplorerCommand::GetIcon — these come
+        // from verb ExplorerCommandHandlers and CommandStore handlers, which never
+        // show up in shellex enumeration.
+        var extraTarget = _targets.GetTargets().FirstOrDefault();
+        if (extraTarget != null)
+        {
+            foreach (var clsid in _extraClsids)
+                registrations.Add((clsid, extraTarget));
+        }
         if (registrations.Count == 0)
         {
             Log.Info(Cat, "no shellex registrations to probe");
@@ -81,6 +113,8 @@ public sealed class ShellexInvoker
                 {
                     try { InvokeOne(reg.Clsid, reg.TargetPath); }
                     catch (Exception ex) { Log.Debug(Cat, $"invoke {reg.Clsid} target={reg.TargetPath} ex={ex.Message}"); }
+                    try { TryGetIconFromExplorerCommand(reg.Clsid); }
+                    catch (Exception ex) { Log.Debug(Cat, $"GetIcon {reg.Clsid} ex={ex.Message}"); }
                 }
             }
             finally
@@ -95,7 +129,43 @@ public sealed class ShellexInvoker
         if (!done.Wait(TimeSpan.FromSeconds(45)))
             Log.Warn(Cat, "STA invoker exceeded 45s; using partial results");
 
-        Log.Info(Cat, $"ShellexInvoker probed registrations clsids={_emittedByClsid.Count}");
+        Log.Info(Cat, $"ShellexInvoker probed registrations clsids={_emittedByClsid.Count} iconPaths={_iconByClsid.Count}");
+    }
+
+    /// <summary>
+    /// Asks an IExplorerCommand-implementing CLSID for its icon path. Many modern
+    /// shellexes return something like "C:\\Program Files\\Notepad++\\notepad++.exe,0"
+    /// even when the registry has no Icon / DefaultIcon hint pointing to that exe.
+    /// </summary>
+    private void TryGetIconFromExplorerCommand(string clsid)
+    {
+        var key = clsid.Trim().ToUpperInvariant();
+        if (_iconByClsid.ContainsKey(key)) return;
+
+        IntPtr pCmd = IntPtr.Zero;
+        IExplorerCommand? cmd = null;
+        try
+        {
+            if (!System.Guid.TryParse(clsid, out var clsidGuid)) return;
+            var iid = IID_IExplorerCommand;
+            int hr = CoCreateInstance(ref clsidGuid, IntPtr.Zero, CLSCTX_INPROC_SERVER, ref iid, out pCmd);
+            if (hr < 0 || pCmd == IntPtr.Zero) return;
+            cmd = (IExplorerCommand)Marshal.GetObjectForIUnknown(pCmd);
+
+            hr = cmd.GetIcon(IntPtr.Zero, out var pIcon);
+            if (hr < 0 || pIcon == IntPtr.Zero) return;
+            try
+            {
+                var iconPath = Marshal.PtrToStringUni(pIcon);
+                if (!string.IsNullOrWhiteSpace(iconPath)) _iconByClsid[key] = iconPath!;
+            }
+            finally { Marshal.FreeCoTaskMem(pIcon); }
+        }
+        finally
+        {
+            if (cmd != null) Marshal.ReleaseComObject(cmd);
+            if (pCmd != IntPtr.Zero) Marshal.Release(pCmd);
+        }
     }
 
     private List<(string Clsid, string TargetPath)> CollectRegistrations()

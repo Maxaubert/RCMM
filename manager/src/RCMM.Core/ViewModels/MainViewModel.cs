@@ -132,6 +132,36 @@ public sealed class MainViewModel : ObservableObject
         Log.Info("rescan", $"captured={allItems.Count} mergedUnique={merged.Count}");
         var nameIndex = _shellexIndex.BuildNameToClsidMap();
         var wordIndex = _shellexIndex.BuildClsidWordIndex();
+
+        // Feed the invoker every handler CLSID we know about — verb
+        // ExplorerCommandHandlers / VerbHandlers, CommandStore handlers, packaged
+        // CLSIDs — so its IExplorerCommand::GetIcon pass can resolve their icons.
+        if (_shellexInvoker != null)
+        {
+            foreach (var captured in allItems)
+                if (!string.IsNullOrEmpty(captured.OwnerClsid))
+                    _shellexInvoker.RegisterExtraClsid(captured.OwnerClsid!);
+            foreach (var captured in allItems)
+            {
+                if (string.IsNullOrEmpty(captured.Verb)) continue;
+                foreach (var cmdStoreClsid in _commandStore?.LookupClsids(captured.Verb!) ?? Array.Empty<string>())
+                    _shellexInvoker.RegisterExtraClsid(cmdStoreClsid);
+            }
+            // Also register handler CLSIDs from each verb registration. Walk MapVerb
+            // for every captured verb and read the handler-CLSID fields out of HKCR.
+            foreach (var captured in allItems)
+            {
+                if (string.IsNullOrEmpty(captured.Verb)) continue;
+                foreach (var t in _mapper.MapVerb(captured.Verb!))
+                {
+                    var hkcrPath = HkcrPathFor(t) ?? t.Path;
+                    foreach (var field in new[] { "ExplorerCommandHandler", "VerbHandler", "CommandStateHandler", "CanonicalName" })
+                        if (_reg.GetValue(RegistryHive.ClassesRoot, hkcrPath, field) is string c && LooksLikeClsid(c))
+                            _shellexInvoker.RegisterExtraClsid(c);
+                }
+            }
+        }
+
         // Heaviest lookup last so cheaper resolvers win: instantiate each shellex
         // handler and ask what it emits. Catches Recuva / Library Location / PlayTo,
         // which have no name overlap with their FileDescription. Cached per-process.
@@ -266,6 +296,43 @@ public sealed class MainViewModel : ObservableObject
 
     private string? ResolveIconPath(CapturedItem item, IReadOnlyList<HideTarget> targets)
     {
+        // 0. IExplorerCommand::GetIcon for any handler we've probed. Modern verbs
+        // (Notepad++'s ANotepad++64, packaged context menus, many CommandStore
+        // entries) implement IExplorerCommand and return an explicit icon path
+        // pointing at the real product binary (notepad++.exe etc.). This is the
+        // highest-fidelity source we have outside of intercepting the menu's HBITMAP.
+        if (_shellexInvoker != null)
+        {
+            // Check the OwnerClsid first.
+            var byClsid = _shellexInvoker.LookupIconPath(item.OwnerClsid);
+            if (!string.IsNullOrWhiteSpace(byClsid)) return byClsid;
+            // Then any handler CLSID registered against the verb.
+            if (!string.IsNullOrEmpty(item.Verb))
+            {
+                foreach (var t in targets)
+                {
+                    if (t.Kind != HideKind.LegacyDisable) continue;
+                    var hkcrPath = HkcrPathFor(t) ?? t.Path;
+                    foreach (var field in new[] { "ExplorerCommandHandler", "VerbHandler", "CommandStateHandler", "CanonicalName" })
+                    {
+                        if (_reg.GetValue(RegistryHive.ClassesRoot, hkcrPath, field) is string c && LooksLikeClsid(c))
+                        {
+                            var icon = _shellexInvoker.LookupIconPath(c);
+                            if (!string.IsNullOrWhiteSpace(icon)) return icon;
+                        }
+                    }
+                }
+                if (_commandStore != null)
+                {
+                    foreach (var c in _commandStore.LookupClsids(item.Verb!))
+                    {
+                        var icon = _shellexInvoker.LookupIconPath(c);
+                        if (!string.IsNullOrWhiteSpace(icon)) return icon;
+                    }
+                }
+            }
+        }
+
         // 1. Verb icon registered alongside the verb itself. Hide targets live in
         // HKCU\Software\Classes\…, but the Icon and command values are at HKLM —
         // read the merged HKCR view so installed-app verbs (VLC, Notepad++, Git, …)
