@@ -56,8 +56,14 @@
                                 <Run Text="{x:Bind KindLabel}"/>
                             </TextBlock>
                         </StackPanel>
-                        <ToggleSwitch Grid.Column="2" IsOn="{x:Bind IsHidden, Mode=TwoWay, Converter={StaticResource InvertBoolConverter}}"
-                                      OnContent="" OffContent=""/>
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                            <TextBlock Text="Built into Windows" FontSize="10" Opacity="0.55"
+                                       VerticalAlignment="Center"
+                                       Visibility="{x:Bind CanHide, Converter={StaticResource InvertBoolToVisibilityConverter}}"/>
+                            <ToggleSwitch IsOn="{x:Bind IsHidden, Mode=TwoWay, Converter={StaticResource InvertBoolConverter}}"
+                                          IsEnabled="{x:Bind CanHide}"
+                                          OnContent="" OffContent=""/>
+                        </StackPanel>
                     </Grid>
                 </DataTemplate>
             </ListView.ItemTemplate>
