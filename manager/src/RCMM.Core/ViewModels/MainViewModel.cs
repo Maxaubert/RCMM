@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using RCMM.Core.Diagnostics;
 using RCMM.Core.Models;
 using RCMM.Core.Services;
 
@@ -16,6 +17,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly IRegistry _reg;
     private readonly IFileVersionReader _files;
     private readonly ShellexNameIndex _shellexIndex;
+    private readonly EntryScanner? _registryScanner;
 
     private readonly Dictionary<string, IReadOnlyList<HideTarget>> _pendingHide = new();
     private readonly Dictionary<string, IReadOnlyList<HideTarget>> _pendingUnhide = new();
@@ -32,7 +34,8 @@ public sealed class MainViewModel : ObservableObject
         HideService hideService,
         IRegistry reg,
         IFileVersionReader files,
-        ShellexNameIndex shellexIndex)
+        ShellexNameIndex shellexIndex,
+        EntryScanner? registryScanner = null)
     {
         _capture = capture;
         _targets = targets;
@@ -41,6 +44,7 @@ public sealed class MainViewModel : ObservableObject
         _reg = reg;
         _files = files;
         _shellexIndex = shellexIndex;
+        _registryScanner = registryScanner;
     }
 
     public bool RequiresExplorerRestart
@@ -60,10 +64,24 @@ public sealed class MainViewModel : ObservableObject
 
     public void Rescan()
     {
-        var captures = _capture.CaptureAll(_targets.GetTargets());
-        var merged = MergeCaptures(captures);
+        Log.Info("rescan", "begin");
+        var targets = _targets.GetTargets();
+        Log.Debug("rescan", $"targets={targets.Count}");
+        var allItems = new List<CapturedItem>();
+        allItems.AddRange(_capture.CaptureAll(targets));
+        int liveCount = allItems.Count;
+        if (_registryScanner != null)
+        {
+            allItems.AddRange(_registryScanner.ScanAsCaptures());
+            Log.Info("rescan", $"liveCaptured={liveCount} registryAdded={allItems.Count - liveCount}");
+        }
+        var merged = MergeCaptures(allItems).ToList();
+        Log.Info("rescan", $"captured={allItems.Count} mergedUnique={merged.Count}");
         var nameIndex = _shellexIndex.BuildNameToClsidMap();
+        Log.Debug("rescan", $"shellexNameIndex entries={nameIndex.Count}");
 
+        int rowsWithHide = 0;
+        int rowsBuiltIn = 0;
         _allRows.Clear();
         foreach (var item in merged)
         {
@@ -92,6 +110,8 @@ public sealed class MainViewModel : ObservableObject
             };
             var row = new EntryRowViewModel(entry) { HiddenChanged = OnRowToggled };
             _allRows.Add(row);
+            if (hideTargets.Count > 0) rowsWithHide++;
+            if (isBuiltIn) rowsBuiltIn++;
         }
 
         FilterIntoAllEntries();
@@ -99,6 +119,13 @@ public sealed class MainViewModel : ObservableObject
         _pendingUnhide.Clear();
         PendingChangeIds.Clear();
         Raise(nameof(RequiresExplorerRestart));
+        Log.Info("rescan", $"end rows={_allRows.Count} withHideTargets={rowsWithHide} builtIn={rowsBuiltIn} visible={AllEntries.Count}");
+        for (int i = 0; i < _allRows.Count; i++)
+        {
+            var r = _allRows[i];
+            var src = string.IsNullOrEmpty(r.Entry.Source) ? "Unknown" : r.Entry.Source;
+            Log.Debug("dump", $"#{i:D2} '{r.Entry.DisplayName}' src='{src}' sub={r.Entry.IsSubmenu} hideTargets={r.Entry.HideTargets.Count}");
+        }
     }
 
     private void FilterIntoAllEntries()
@@ -197,12 +224,22 @@ public sealed class MainViewModel : ObservableObject
 
     public void ApplyPending()
     {
-        foreach (var (_, targets) in _pendingHide) _hideService.Hide(targets);
-        foreach (var (_, targets) in _pendingUnhide) _hideService.Unhide(targets);
+        Log.Info("apply", $"begin hide={_pendingHide.Count} unhide={_pendingUnhide.Count}");
+        foreach (var (id, targets) in _pendingHide)
+        {
+            try { _hideService.Hide(targets); }
+            catch (Exception ex) { Log.Error("apply", $"hide id={id} failed", ex); }
+        }
+        foreach (var (id, targets) in _pendingUnhide)
+        {
+            try { _hideService.Unhide(targets); }
+            catch (Exception ex) { Log.Error("apply", $"unhide id={id} failed", ex); }
+        }
         _pendingHide.Clear();
         _pendingUnhide.Clear();
         PendingChangeIds.Clear();
         Raise(nameof(RequiresExplorerRestart));
+        Log.Info("apply", "end");
     }
 
     private (string? source, bool isBuiltIn) ResolveSourceAndBuiltIn(CapturedItem item, IReadOnlyList<HideTarget> targets)

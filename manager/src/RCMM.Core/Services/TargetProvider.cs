@@ -30,11 +30,15 @@ public sealed class TargetProvider
         foreach (var ext in SampleExtensions)
         {
             var path = Path.Combine(_root, "sample" + ext);
-            if (!File.Exists(path))
+            try
             {
-                try { using (File.Create(path)) { } }
-                catch { continue; }
+                // Write at least 1 byte. Several shell extensions skip zero-byte files
+                // (they treat them as placeholders) so an empty file misses entries
+                // those handlers would otherwise contribute.
+                if (!File.Exists(path) || new FileInfo(path).Length == 0)
+                    File.WriteAllBytes(path, new byte[] { 0x00 });
             }
+            catch { continue; }
             result.Add(path);
         }
 

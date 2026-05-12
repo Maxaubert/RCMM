@@ -22,7 +22,11 @@
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <TextBlock x:Name="StatusLabel" Text="0 entries · 0 pending" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="12">
+                <TextBlock x:Name="StatusLabel" Text="0 entries · 0 pending" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                <HyperlinkButton x:Name="OpenLogButton" Content="Open log folder"
+                                 Click="OpenLogButton_Click" Padding="0" FontSize="12" Opacity="0.85"/>
+            </StackPanel>
             <Button Grid.Column="1" x:Name="ApplyButton" Content="Apply (restart Explorer)"
                     Click="ApplyButton_Click" IsEnabled="False"/>
         </Grid>

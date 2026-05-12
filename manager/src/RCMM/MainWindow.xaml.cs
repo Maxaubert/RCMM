@@ -1,9 +1,11 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using RCMM.Core.Diagnostics;
 using RCMM.Core.Services;
 using RCMM.Core.ViewModels;
 using RCMM.Util;
@@ -29,10 +31,14 @@ public sealed partial class MainWindow : Window
         var mapper = new VerbToRegistryMapper(registry);
         var hide = new HideService(registry);
         var files = new Win32FileVersionReader();
+        var mui = new Win32MuiStringResolver();
         var resolver = new ClsidResolver(registry);
         var shellexIndex = new ShellexNameIndex(registry, resolver, files);
+        var verbScanner = new ClassicVerbScanner(registry, mui);
+        var shellexScanner = new ClassicShellexScanner(registry, resolver, files);
+        var entryScanner = new EntryScanner(verbScanner, shellexScanner);
 
-        ViewModel = new MainViewModel(capture, targets, mapper, hide, registry, files, shellexIndex);
+        ViewModel = new MainViewModel(capture, targets, mapper, hide, registry, files, shellexIndex, entryScanner);
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
@@ -69,6 +75,24 @@ public sealed partial class MainWindow : Window
         ViewModel.Rescan();
         LoadIconsForAllEntries();
         RefreshFooter();
+    }
+
+    private void OpenLogButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Directory.CreateDirectory(Log.Folder);
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = $"\"{Log.Folder}\"",
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.Error("ui", "OpenLogButton failed", ex);
+        }
     }
 
     private void LoadIconsForAllEntries()

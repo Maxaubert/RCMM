@@ -1,0 +1,195 @@
+RCMM menu reference — items the user expects to see captured.
+Transcribed from screenshots in the 2026-05-12 capture-fix iteration.
+Goal: capture all of these via generic shell hooks. NEVER hard-code names.
+
+============================================================
+IMAGE #3 — Folder background menu (right-click empty area)
+Context: classic menu, inside an Explorer window or on desktop folder
+============================================================
+View                                  [submenu]
+Sort by                               [submenu]
+Group by                              [submenu]
+Refresh                               [verb]
+--- separator ---
+Customise this folder...              [verb / shell extension]
+--- separator ---
+Paste                                 [verb]
+AMD Software: Adrenalin Edition       [shellex - AMD]
+Open in Terminal                      [shellex - Terminal]
+Open with Visual Studio               [shellex - VS]
+--- separator ---
+Give access to                        [submenu / sharing]
+--- separator ---
+New                                   [submenu - shellex]
+--- separator ---
+Properties                            [verb]
+
+REQUIRES strategy: IShellFolder.CreateViewObject(IID_IContextMenu)
+  i.e. the FOLDER'S BACKGROUND context menu — NOT achievable via
+  BindToHandler(SFUIObject) which gave E_NOTIMPL.
+
+============================================================
+IMAGE #4 — Executable file (.exe), classic menu
+============================================================
+Open                                  [verb - default, bold]
+Run as administrator                  [verb - runas]
+WinRAR                                [submenu - shellex WinRAR]
+Edit with Notepad++                   [shellex - N++]
+Add to Favourites                     [shellex - custom favourites]
+Troubleshoot compatibility            [verb - pcwrun]
+Pin to Start                          [verb - pintostartscreen]
+Install with Revo Uninstaller Pro     [shellex - Revo]
+Scan with Microsoft Defender...       [shellex - Defender]
+Pin to taskbar                        [verb - taskbarpin]
+Copy as path                          [verb - copyaspath]
+Share                                 [verb - Windows.ModernShare]
+Restore previous versions             [verb - properties prevversions]
+--- separator ---
+Send to                               [submenu - sendto]
+--- separator ---
+Cut                                   [verb]
+Copy                                  [verb]
+Paste                                 [verb]
+--- separator ---
+Create shortcut                       [verb - link]
+Delete                                [verb - delete]
+Rename                                [verb - rename]
+--- separator ---
+Properties                            [verb - properties]
+
+REQUIRES strategy: parent-getUIObjectOf works (already captured 24/24
+for sample.exe in run 3). Should match this list closely.
+
+============================================================
+IMAGE #5 — Media file (looks like .mp4), classic menu
+============================================================
+Play                                  [verb - play, default]
+Add to VLC media player's Playlist    [shellex - VLC]
+Play with VLC media player            [shellex - VLC]
+WinRAR                                [submenu - shellex WinRAR]
+Edit with Notepad++                   [shellex - N++]
+Add to Favourites                     [shellex - custom favourites]
+Cast to Device                        [submenu - PlayTo]
+Scan with Microsoft Defender...       [shellex - Defender]
+Open with                             [submenu - openas]
+Give access to                        [submenu - sharing]
+Copy as path                          [verb]
+Share                                 [verb]
+Restore previous versions             [verb]
+--- separator ---
+Send to                               [submenu]
+--- separator ---
+Cut                                   [verb]
+Copy                                  [verb]
+--- separator ---
+Create shortcut                       [verb]
+Delete                                [verb]
+Rename                                [verb]
+--- separator ---
+Properties                            [verb]
+
+REQUIRES strategy: parent-getUIObjectOf works (sample.mp4 → 22/22).
+
+============================================================
+IMAGE #6 — Folder right-clicked as an item, classic menu
+============================================================
+Open                                  [verb - explore/open, default bold]
+Open in new tab                       [verb - opennewprocess / shellex]
+Open in new window                    [verb - opennewprocess]
+Pin to Quick access                   [verb - pintohome]
+WinRAR                                [submenu]
+Open in Terminal                      [shellex - Terminal]
+Add to VLC media player's Playlist    [shellex - VLC]
+Open with Visual Studio               [shellex - VS]
+Search...                             [verb - find]
+Open Git GUI here                     [shellex - Git]
+Open Git Bash here                    [shellex - Git]
+Play with VLC media player            [shellex - VLC]
+Scan with Microsoft Defender...       [shellex - Defender]
+Scan for deleted files                [shellex]
+Restore previous versions             [verb]
+Include in library                    [submenu - shellex Libraries]
+Pin to Start                          [verb]
+Uninstall with Revo Uninstaller Pro   [shellex - Revo]
+Copy as path                          [verb]
+--- separator ---
+Send to                               [submenu]
+--- separator ---
+Cut                                   [verb]
+Copy                                  [verb]
+Paste                                 [verb]
+--- separator ---
+Create shortcut                       [verb]
+Delete                                [verb]
+Rename                                [verb]
+--- separator ---
+Properties                            [verb]
+
+REQUIRES strategy: FOLDER as ITEM — must run parent-getUIObjectOf
+against folder paths (currently gated off by IsContainerPath).
+
+============================================================
+Iteration progress (2026-05-12):
+
+  Iteration 1 (baseline)               1 entry  (Extract All only)
+  Iteration 2 (after AV fixes)        35 entries
+  Iteration 3 (multi-strategy)        48 entries
+  Iteration 4 (registry merge)        83 entries
+  Iteration 5 (CMF_CANRENAME, 1B)     84 entries
+
+CAPTURED OK:
+- File-type-specific extensions (txt, png, mp4, mp3, pdf, zip, exe, lnk)
+- Folder-as-item menu items (Open, Open in new tab, Pin to Quick access, etc.)
+- Folder background verbs (Open with Visual Studio, PowerShell, WSL, etc.)
+- All built-in verbs (Cut, Copy, Paste(*), Rename, Delete, Create shortcut, ...)
+- Many shell extensions via registry merge (Microsoft Defender's "EPP",
+  BitLocker family, NVIDIA, Recuva, Revo, etc.)
+- Items hidden by LegacyDisable (registry merge sees them)
+
+(*) Paste captured only when the clipboard had Cut/Copy data at scan time.
+
+STILL NOT CAPTURED — and why:
+
+A. Explorer-internal items (FUNDAMENTALLY uncapturable)
+   View, Sort by, Group by, Refresh, Customise this folder...
+   These are emitted by CDefView (Explorer's IShellView), not by
+   any registered IContextMenu. No registry path leads to them, no
+   classic IContextMenu surfaces them. Only Explorer can produce
+   them. Out of scope for RCMM.
+
+B. Modern PackagedCom context menus  (Plan 3 territory)
+   AMD Software: Adrenalin Edition
+   Open in Terminal
+   WinRAR
+   Pin to taskbar (Start Menu Pin CLSID is packaged)
+   These register under HKLM\SOFTWARE\Classes\PackagedCom\Package\<pkg>
+   and are invoked by Explorer through IExplorerCommand from a sparse
+   AppX manifest. Classic SHCreate / BindToHandler / GetUIObjectOf
+   does NOT instantiate them. Plan 3 covers Win11 modern menu.
+   Roughly 36 packages on this machine -- enumerate via:
+     HKLM\SOFTWARE\Classes\PackagedCom\Package\*\Class\*
+   then resolve DisplayName from the package manifest.
+
+C. Items with non-friendly registry display
+   "Microsoft Security Client Shell Extension" (=> Scan with Defender)
+   "Windows Shell Common Dll" (=> various rendered by shell32.dll)
+   The friendly text is the runtime QueryContextMenu emission. Without
+   a live invocation of the shellex with a real target, only the DLL's
+   FileDescription is available. Live capture surfaces the friendly
+   name; registry-only fallback uses the technical one.
+
+KEY BINDING STRATEGIES (confirmed working):
+- shellitem-bindToHandler          IShellItem.BindToHandler(SFUIObject,IContextMenu)
+- parent-getUIObjectOf             SHBindToParent + IShellFolder.GetUIObjectOf
+- folder-background                SHGetDesktopFolder + BindToObject + CreateViewObject
+
+KEY MARSHAL FIXES required during iteration:
+- IShellFolder.GetUIObjectOf       IntPtr[] => ref IntPtr (AV in SafeArray marshaller)
+- IContextMenu.GetCommandString    byte[]   => IntPtr  (AV in SafeArray marshaller)
+- CMF_INCLUDESTATIC bogus constant  (0x40 is actually CMF_NODEFAULT - was suppressing)
+- CMF_CANRENAME added              so shellexes that gate on rename support contribute
+
+HARD CONSTRAINTS:
+- IContextMenu must be queried on an STA thread with a message pump.
+- 30s overall timeout protects against wedged shellexes.
+- Sample files must be non-empty (>=1 byte) or some shellexes skip them.

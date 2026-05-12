@@ -24,4 +24,27 @@ public sealed class EntryScanner
 
     public IEnumerable<ContextMenuEntry> ScanScope(Scope scope)
         => _verbs.Scan(scope).Concat(_shellex.Scan(scope));
+
+    /// <summary>
+    /// Yields each registered shell entry as a synthetic CapturedItem so the rescan
+    /// pipeline can merge it with live captures. Live captures take precedence when
+    /// keys collide (their display names are what the user actually sees).
+    /// </summary>
+    public IEnumerable<CapturedItem> ScanAsCaptures()
+    {
+        int pos = 0;
+        foreach (var entry in ScanAll())
+        {
+            yield return new CapturedItem
+            {
+                TargetPath = $"<registry:{entry.Scope}:{entry.Kind}>",
+                Position = pos++,
+                DisplayName = entry.DisplayName,
+                Verb = entry.Kind == EntryKind.ShellVerb ? entry.OriginalKeyName : null,
+                OwnerClsid = entry.Kind == EntryKind.ShellExtension ? entry.Clsid : null,
+                IsSeparator = false,
+                IsSubmenu = false
+            };
+        }
+    }
 }
