@@ -128,9 +128,24 @@ public sealed partial class MainWindow : Window
             if (string.IsNullOrEmpty(path)) continue;
             _ = Task.Run(async () =>
             {
-                var bmp = await IconHelper.LoadIconAsync(path);
-                if (bmp != null)
-                    DispatcherQueue.TryEnqueue(() => rowRef.Icon = bmp);
+                var pngBytes = await IconHelper.LoadIconBytesAsync(path);
+                if (pngBytes == null) return;
+                // BitmapImage is COM-tied to the dispatcher that created it; build
+                // it on the UI thread to avoid silent cross-thread marshalling errors.
+                DispatcherQueue.TryEnqueue(async () =>
+                {
+                    try
+                    {
+                        using var ms = new System.IO.MemoryStream(pngBytes);
+                        var bmp = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage();
+                        await bmp.SetSourceAsync(ms.AsRandomAccessStream());
+                        rowRef.Icon = bmp;
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Debug("ui", $"icon load failed for {rowRef.Entry.DisplayName}: {ex.Message}");
+                    }
+                });
             });
         }
     }

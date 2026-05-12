@@ -280,22 +280,26 @@ public sealed class MainViewModel : ObservableObject
             if (!string.IsNullOrWhiteSpace(cmd)) return cmd;
 
             // Verbs that delegate to a COM handler (modern Notepad++, pintohomefile, …)
-            // expose the handler's CLSID through one of these fields. Resolve to the
-            // handler DLL's first icon as a fallback when no Icon / command is given.
+            // expose the handler's CLSID through one of these fields. We use the
+            // handler DLL as a last-ditch icon source — but only when the DLL is
+            // NOT in System32. Microsoft system DLLs (shell32, windows.storage, …)
+            // contain hundreds of icons and the first one is almost always a
+            // generic placeholder; the shell uses an HBITMAP the handler emits at
+            // runtime, which we can't read from the registry.
             foreach (var field in new[] { "ExplorerCommandHandler", "VerbHandler", "CommandStateHandler", "CanonicalName" })
             {
                 if (_reg.GetValue(RegistryHive.ClassesRoot, hkcrPath, field) is string handlerClsid
                     && LooksLikeClsid(handlerClsid))
                 {
                     var dll = _reg.GetValue(RegistryHive.ClassesRoot, $@"CLSID\{handlerClsid}\InprocServer32", "") as string;
-                    if (!string.IsNullOrWhiteSpace(dll)) return dll;
+                    if (!IsSystemDll(dll) && !string.IsNullOrWhiteSpace(dll)) return dll;
                 }
             }
             if (_reg.GetValue(RegistryHive.ClassesRoot, hkcrPath + @"\command", "DelegateExecute") is string delegateClsid
                 && LooksLikeClsid(delegateClsid))
             {
                 var dll = _reg.GetValue(RegistryHive.ClassesRoot, $@"CLSID\{delegateClsid}\InprocServer32", "") as string;
-                if (!string.IsNullOrWhiteSpace(dll)) return dll;
+                if (!IsSystemDll(dll) && !string.IsNullOrWhiteSpace(dll)) return dll;
             }
         }
 
@@ -310,14 +314,15 @@ public sealed class MainViewModel : ObservableObject
 
         // 3. CLSID-owned icons — shellex handlers (Recuva, Defender, ModernSharing,
         // PlayTo, …) typically expose their icon via DefaultIcon or as the first
-        // icon resource of the registered DLL.
+        // icon resource of the registered DLL. Skip system DLL fallbacks because
+        // their first icon is almost always a generic placeholder.
         if (!string.IsNullOrEmpty(item.OwnerClsid))
         {
             var clsidPath = $@"CLSID\{item.OwnerClsid}";
             var defaultIcon = _reg.GetValue(RegistryHive.ClassesRoot, clsidPath + @"\DefaultIcon", "") as string;
             if (!string.IsNullOrWhiteSpace(defaultIcon)) return defaultIcon;
             var dll = _reg.GetValue(RegistryHive.ClassesRoot, clsidPath + @"\InprocServer32", "") as string;
-            if (!string.IsNullOrWhiteSpace(dll)) return dll;
+            if (!string.IsNullOrWhiteSpace(dll) && !IsSystemDll(dll)) return dll;
 
             // Packaged COM extensions aren't in classic HKCR\CLSID; their DLL lives
             // under C:\Program Files\WindowsApps\<package>\… resolved from the AppX
@@ -327,6 +332,32 @@ public sealed class MainViewModel : ObservableObject
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// True when the path resolves to a DLL inside Windows\System32 or SysWOW64.
+    /// Used as an icon-source filter: the shell's generic DLLs (shell32.dll,
+    /// windows.storage.dll, ntshrui.dll, …) host hundreds of icons and the first
+    /// one is a placeholder, so the menu's real icon comes from a runtime HBITMAP
+    /// the handler emits — not from index 0 of the DLL.
+    /// </summary>
+    private static bool IsSystemDll(string? path)
+    {
+        if (string.IsNullOrEmpty(path)) return false;
+        try
+        {
+            var s = Environment.ExpandEnvironmentVariables(path).ToLowerInvariant();
+            if (s.StartsWith('"'))
+            {
+                var end = s.IndexOf('"', 1);
+                if (end > 1) s = s[1..end];
+            }
+            var comma = s.LastIndexOf(',');
+            if (comma > 0 && comma > s.LastIndexOf('\\')) s = s[..comma];
+            return s.Contains(@"\windows\system32\")
+                || s.Contains(@"\windows\syswow64\");
+        }
+        catch { return false; }
     }
 
     private bool AllTargetsHidden(IReadOnlyList<HideTarget> targets)

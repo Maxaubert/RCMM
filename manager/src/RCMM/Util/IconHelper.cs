@@ -2,84 +2,93 @@ using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
-using Microsoft.UI.Xaml.Media.Imaging;
 
 namespace RCMM.Util;
 
 internal static class IconHelper
 {
     /// <summary>
-    /// Loads an icon from a shell-style path. Accepts:
+    /// Extracts an icon from a shell-style spec and returns its PNG bytes. Safe to
+    /// call from any thread — does only file I/O, GDI+ and Win32 work. Callers
+    /// should hand the bytes to the UI thread to construct a BitmapImage (which
+    /// is COM-tied to the dispatcher that created it).
+    ///
+    /// Accepts:
     ///   <list type="bullet">
-    ///   <item>raw path: <c>C:\Program Files\VLC\vlc.exe</c> — first icon group</item>
-    ///   <item>path with positive index: <c>vlc.exe,0</c> — Nth icon group</item>
-    ///   <item>path with negative index: <c>imageres.dll,-5302</c> — resource ID 5302</item>
-    ///   <item><c>%SystemRoot%</c>-style env vars</item>
-    ///   <item>quoted paths and trailing command-line arguments (stripped)</item>
+    ///   <item>raw path: <c>C:\Program Files\VLC\vlc.exe</c></item>
+    ///   <item>path with positive index: <c>vlc.exe,0</c></item>
+    ///   <item>path with negative resource ID: <c>imageres.dll,-5302</c></item>
+    ///   <item><c>%SystemRoot%</c> env vars and bare DLL names (resolved via System32)</item>
+    ///   <item>quoted paths with trailing index after the closing quote</item>
     ///   </list>
-    /// Always tries the small icon (16x16) first; falls back to the large
-    /// icon if no small one is present. Returns null on any failure.
     /// </summary>
-    public static async Task<BitmapImage?> LoadIconAsync(string? filePath)
-    {
-        if (string.IsNullOrEmpty(filePath)) return null;
-        try
+    public static Task<byte[]?> LoadIconBytesAsync(string? filePath)
+        => Task.Run<byte[]?>(() =>
         {
-            var (path, index) = ParseIconSpec(filePath);
-            if (!File.Exists(path)) return null;
+            if (string.IsNullOrEmpty(filePath)) return null;
+            try
+            {
+                var (path, index) = ParseIconSpec(filePath);
+                if (!File.Exists(path)) return null;
 
-            // First try ExtractIconEx so we respect the icon index. Falls back
-            // to ExtractAssociatedIcon (first icon, 32x32) if that returns nothing.
-            using var icon = ExtractWithIndex(path, index) ?? System.Drawing.Icon.ExtractAssociatedIcon(path);
-            if (icon == null) return null;
-
-            using var bitmap = icon.ToBitmap();
-            using var ms = new MemoryStream();
-            bitmap.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
-            ms.Position = 0;
-            var bmp = new BitmapImage();
-            await bmp.SetSourceAsync(ms.AsRandomAccessStream());
-            return bmp;
-        }
-        catch
-        {
-            return null;
-        }
-    }
+                // ExtractIconEx is precise. ExtractAssociatedIcon as fallback is OK
+                // for executables and shortcuts (gives the program's icon) but for
+                // DLLs it returns Windows' generic "library" placeholder when the
+                // file has no icon resources — better to show no icon than that.
+                var icon = ExtractWithIndex(path, index);
+                if (icon == null && !path.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+                    icon = System.Drawing.Icon.ExtractAssociatedIcon(path);
+                if (icon == null) return null;
+                using var iconHandle = icon;
+                using var bitmap = iconHandle.ToBitmap();
+                using var ms = new MemoryStream();
+                bitmap.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+                return ms.ToArray();
+            }
+            catch
+            {
+                return null;
+            }
+        });
 
     private static (string path, int index) ParseIconSpec(string raw)
     {
-        var expanded = Environment.ExpandEnvironmentVariables(raw).Trim();
-        // strip quotes
-        if (expanded.StartsWith('"') && expanded.EndsWith('"') && expanded.Length >= 2)
-            expanded = expanded[1..^1];
+        var s = Environment.ExpandEnvironmentVariables(raw).Trim();
+        if (s.StartsWith('@')) s = s[1..];
 
-        // detect "path,index" — must be after the last backslash so we don't trip on commas in folder names
-        int comma = expanded.LastIndexOf(',');
-        int lastSep = expanded.LastIndexOf('\\');
+        // path,index detection must come BEFORE quote-stripping because the index
+        // sits outside the quotes: "C:\path with space\vlc.exe",0
+        int comma = s.LastIndexOf(',');
+        int lastSep = s.LastIndexOf('\\');
         int index = 0;
         if (comma > lastSep && comma > 0 &&
-            int.TryParse(expanded.AsSpan(comma + 1).Trim(), out var parsed))
+            int.TryParse(s.AsSpan(comma + 1).Trim(), out var parsed))
         {
             index = parsed;
-            expanded = expanded[..comma].Trim();
+            s = s[..comma].Trim();
         }
 
-        // some registry entries embed command-line args after the exe — strip them.
-        // For unquoted command lines, the first space after the path delimits args.
-        // We only do this if no comma index was present and the path doesn't exist
-        // as-is (so we don't misinterpret real paths with spaces).
-        if (!File.Exists(expanded))
+        if (s.Length >= 2 && s[0] == '"' && s[^1] == '"') s = s[1..^1];
+
+        // unquoted command-line: prefer the prefix that names a real file.
+        if (!File.Exists(s))
         {
-            var firstSpace = expanded.IndexOf(' ');
+            var firstSpace = s.IndexOf(' ');
             if (firstSpace > 0)
             {
-                var candidate = expanded[..firstSpace];
-                if (File.Exists(candidate)) expanded = candidate;
+                var candidate = s[..firstSpace];
+                if (File.Exists(candidate)) s = candidate;
             }
         }
 
-        return (expanded, index);
+        // bare filename like "imageres.dll" — fall back to System32 search path.
+        if (!File.Exists(s) && !s.Contains('\\') && !s.Contains('/'))
+        {
+            var sys32 = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), s);
+            if (File.Exists(sys32)) s = sys32;
+        }
+
+        return (s, index);
     }
 
     private static System.Drawing.Icon? ExtractWithIndex(string path, int index)
@@ -90,7 +99,6 @@ internal static class IconHelper
             int got = ExtractIconEx(path, index, null, small, 1);
             if (got <= 0 || small[0] == IntPtr.Zero)
             {
-                // try the large icon
                 var large = new IntPtr[1];
                 got = ExtractIconEx(path, index, large, null, 1);
                 if (got <= 0 || large[0] == IntPtr.Zero) return null;
