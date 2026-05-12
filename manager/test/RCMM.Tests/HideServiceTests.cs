@@ -91,4 +91,86 @@ public class HideServiceTests
     {
         Assert.Equal(expected, HideService.RequiresExplorerRestart(kind));
     }
+
+    [Fact]
+    public void Hide_with_HideTarget_list_applies_LegacyDisable_to_each_target()
+    {
+        var reg = new FakeRegistry();
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\foo", "", "Foo");
+        reg.SetValue(RegistryHive.ClassesRoot, @"Directory\shell\foo", "", "Foo");
+        var sut = new HideService(reg);
+
+        var targets = new[]
+        {
+            new HideTarget(HideKind.LegacyDisable, RegistryHive.ClassesRoot, @"*\shell\foo", "LegacyDisable"),
+            new HideTarget(HideKind.LegacyDisable, RegistryHive.ClassesRoot, @"Directory\shell\foo", "LegacyDisable"),
+        };
+        sut.Hide(targets);
+
+        Assert.Equal("", reg.GetValue(RegistryHive.ClassesRoot, @"*\shell\foo", "LegacyDisable"));
+        Assert.Equal("", reg.GetValue(RegistryHive.ClassesRoot, @"Directory\shell\foo", "LegacyDisable"));
+    }
+
+    [Fact]
+    public void Unhide_with_HideTarget_list_removes_LegacyDisable_from_each_target()
+    {
+        var reg = new FakeRegistry();
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\foo", "LegacyDisable", "");
+        reg.SetValue(RegistryHive.ClassesRoot, @"Directory\shell\foo", "LegacyDisable", "");
+        var sut = new HideService(reg);
+
+        var targets = new[]
+        {
+            new HideTarget(HideKind.LegacyDisable, RegistryHive.ClassesRoot, @"*\shell\foo", "LegacyDisable"),
+            new HideTarget(HideKind.LegacyDisable, RegistryHive.ClassesRoot, @"Directory\shell\foo", "LegacyDisable"),
+        };
+        sut.Unhide(targets);
+
+        Assert.Null(reg.GetValue(RegistryHive.ClassesRoot, @"*\shell\foo", "LegacyDisable"));
+        Assert.Null(reg.GetValue(RegistryHive.ClassesRoot, @"Directory\shell\foo", "LegacyDisable"));
+    }
+
+    [Fact]
+    public void Hide_with_HkcuMask_target_creates_mask_key()
+    {
+        var reg = new FakeRegistry();
+        var sut = new HideService(reg);
+
+        var targets = new[]
+        {
+            new HideTarget(HideKind.HkcuMask, RegistryHive.CurrentUser,
+                           @"Software\Classes\*\shellex\ContextMenuHandlers\X", null),
+        };
+        sut.Hide(targets);
+
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser,
+            @"Software\Classes\*\shellex\ContextMenuHandlers\X"));
+    }
+
+    [Fact]
+    public void Unhide_with_HkcuMask_target_deletes_mask_key()
+    {
+        var reg = new FakeRegistry();
+        reg.CreateKey(RegistryHive.CurrentUser, @"Software\Classes\*\shellex\ContextMenuHandlers\X");
+        var sut = new HideService(reg);
+
+        var targets = new[]
+        {
+            new HideTarget(HideKind.HkcuMask, RegistryHive.CurrentUser,
+                           @"Software\Classes\*\shellex\ContextMenuHandlers\X", null),
+        };
+        sut.Unhide(targets);
+
+        Assert.False(reg.KeyExists(RegistryHive.CurrentUser,
+            @"Software\Classes\*\shellex\ContextMenuHandlers\X"));
+    }
+
+    [Fact]
+    public void RequiresExplorerRestart_list_overload_is_true_when_any_target_is_HkcuMask()
+    {
+        var verb = new HideTarget(HideKind.LegacyDisable, RegistryHive.ClassesRoot, "p", "v");
+        var mask = new HideTarget(HideKind.HkcuMask, RegistryHive.CurrentUser, "p", null);
+        Assert.False(HideService.RequiresExplorerRestart(new[] { verb }));
+        Assert.True(HideService.RequiresExplorerRestart(new[] { verb, mask }));
+    }
 }
