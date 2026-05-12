@@ -37,8 +37,9 @@ public sealed partial class MainWindow : Window
         var verbScanner = new ClassicVerbScanner(registry, mui);
         var shellexScanner = new ClassicShellexScanner(registry, resolver, files);
         var entryScanner = new EntryScanner(verbScanner, shellexScanner);
+        var packagedScanner = new PackagedShellExtScanner(registry, mui);
 
-        ViewModel = new MainViewModel(capture, targets, mapper, hide, registry, files, shellexIndex, entryScanner);
+        ViewModel = new MainViewModel(capture, targets, mapper, hide, registry, files, shellexIndex, entryScanner, packagedScanner);
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);

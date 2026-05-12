@@ -18,6 +18,12 @@ public sealed class MainViewModel : ObservableObject
     private readonly IFileVersionReader _files;
     private readonly ShellexNameIndex _shellexIndex;
     private readonly EntryScanner? _registryScanner;
+    private readonly PackagedShellExtScanner? _packagedScanner;
+
+    private readonly HashSet<string> _packagedClsids =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _packagedPublishers =
+        new(StringComparer.OrdinalIgnoreCase);
 
     private readonly Dictionary<string, IReadOnlyList<HideTarget>> _pendingHide = new();
     private readonly Dictionary<string, IReadOnlyList<HideTarget>> _pendingUnhide = new();
@@ -35,7 +41,8 @@ public sealed class MainViewModel : ObservableObject
         IRegistry reg,
         IFileVersionReader files,
         ShellexNameIndex shellexIndex,
-        EntryScanner? registryScanner = null)
+        EntryScanner? registryScanner = null,
+        PackagedShellExtScanner? packagedScanner = null)
     {
         _capture = capture;
         _targets = targets;
@@ -45,12 +52,13 @@ public sealed class MainViewModel : ObservableObject
         _files = files;
         _shellexIndex = shellexIndex;
         _registryScanner = registryScanner;
+        _packagedScanner = packagedScanner;
     }
 
     public bool RequiresExplorerRestart
         => _pendingHide.Values.Concat(_pendingUnhide.Values)
                        .SelectMany(t => t)
-                       .Any(t => t.Kind == HideKind.HkcuMask);
+                       .Any(t => t.Kind == HideKind.HkcuMask || t.Kind == HideKind.BlockedShellExt);
 
     public bool ShowBuiltIns
     {
@@ -70,10 +78,40 @@ public sealed class MainViewModel : ObservableObject
         var allItems = new List<CapturedItem>();
         allItems.AddRange(_capture.CaptureAll(targets));
         int liveCount = allItems.Count;
+
+        // Packaged COM context menus go BEFORE the classic registry scan because
+        // (a) their friendly DisplayName is more accurate than a DLL's FileDescription
+        // and (b) they own the BlockedShellExt hide-target path; ResolveHideTargets
+        // consults _packagedClsids to pick the right hide path.
+        _packagedClsids.Clear();
+        _packagedPublishers.Clear();
+        if (_packagedScanner != null)
+        {
+            int pos = 0;
+            int packagedAdded = 0;
+            foreach (var pkg in _packagedScanner.Scan())
+            {
+                _packagedClsids.Add(pkg.Clsid);
+                if (!_packagedPublishers.ContainsKey(pkg.Clsid))
+                    _packagedPublishers[pkg.Clsid] = pkg.PublisherDisplayName;
+                allItems.Add(new CapturedItem
+                {
+                    TargetPath = $"<packaged:{pkg.PackageFullName}>",
+                    Position = pos++,
+                    DisplayName = pkg.DisplayName,
+                    OwnerClsid = pkg.Clsid,
+                    IsSeparator = false,
+                    IsSubmenu = false
+                });
+                packagedAdded++;
+            }
+            Log.Info("rescan", $"packagedAdded={packagedAdded} clsids={_packagedClsids.Count}");
+        }
+
         if (_registryScanner != null)
         {
             allItems.AddRange(_registryScanner.ScanAsCaptures());
-            Log.Info("rescan", $"liveCaptured={liveCount} registryAdded={allItems.Count - liveCount}");
+            Log.Info("rescan", $"liveCaptured={liveCount} packaged+registry={allItems.Count - liveCount}");
         }
         var merged = MergeCaptures(allItems).ToList();
         Log.Info("rescan", $"captured={allItems.Count} mergedUnique={merged.Count}");
@@ -164,7 +202,11 @@ public sealed class MainViewModel : ObservableObject
         if (!string.IsNullOrEmpty(item.Verb))
             result.AddRange(_mapper.MapVerb(item.Verb!));
         if (!string.IsNullOrEmpty(item.OwnerClsid))
+        {
             result.AddRange(_mapper.MapClsid(item.OwnerClsid!));
+            if (_packagedClsids.Contains(item.OwnerClsid!))
+                result.Add(HideService.BlockedShellExtTarget(item.OwnerClsid!));
+        }
         return result;
     }
 
@@ -186,13 +228,17 @@ public sealed class MainViewModel : ObservableObject
         if (targets.Count == 0) return false;
         foreach (var t in targets)
         {
-            if (t.Kind == HideKind.LegacyDisable)
+            switch (t.Kind)
             {
-                if (_reg.GetValue(t.Hive, t.Path, t.ValueName ?? "LegacyDisable") == null) return false;
-            }
-            else
-            {
-                if (!_reg.KeyExists(t.Hive, t.Path)) return false;
+                case HideKind.LegacyDisable:
+                    if (_reg.GetValue(t.Hive, t.Path, t.ValueName ?? "LegacyDisable") == null) return false;
+                    break;
+                case HideKind.HkcuMask:
+                    if (!_reg.KeyExists(t.Hive, t.Path)) return false;
+                    break;
+                case HideKind.BlockedShellExt:
+                    if (_reg.GetValue(t.Hive, t.Path, t.ValueName!) == null) return false;
+                    break;
             }
         }
         return true;
@@ -266,13 +312,24 @@ public sealed class MainViewModel : ObservableObject
         }
 
         var probe = exePath ?? dllPath;
-        if (string.IsNullOrEmpty(probe)) return (null, false);
+        if (!string.IsNullOrEmpty(probe))
+        {
+            var info = _files.Read(probe);
+            var company = info.CompanyName;
+            bool builtIn = (company != null && company.IndexOf("Microsoft", StringComparison.OrdinalIgnoreCase) >= 0)
+                            || LooksWindowsPath(probe);
+            return (company, builtIn);
+        }
 
-        var info = _files.Read(probe);
-        var company = info.CompanyName;
-        bool builtIn = (company != null && company.IndexOf("Microsoft", StringComparison.OrdinalIgnoreCase) >= 0)
-                        || LooksWindowsPath(probe);
-        return (company, builtIn);
+        // Packaged extensions don't have a classic CLSID InprocServer entry. Use the
+        // publisher name straight from the AppX registration so the user can recognise
+        // which app the entry belongs to (e.g. "AMD Software", "Microsoft").
+        if (clsidForFile != null && _packagedPublishers.TryGetValue(clsidForFile, out var pub))
+        {
+            bool builtIn = pub.IndexOf("Microsoft", StringComparison.OrdinalIgnoreCase) >= 0;
+            return (pub, builtIn);
+        }
+        return (null, false);
     }
 
     private static string? ExtractExe(string cmd)

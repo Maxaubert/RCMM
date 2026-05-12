@@ -173,4 +173,40 @@ public class HideServiceTests
         Assert.False(HideService.RequiresExplorerRestart(new[] { verb }));
         Assert.True(HideService.RequiresExplorerRestart(new[] { verb, mask }));
     }
+
+    [Fact]
+    public void Hide_BlockedShellExt_writes_clsid_value_under_blocked_list()
+    {
+        var reg = new FakeRegistry();
+        var sut = new HideService(reg);
+        var target = HideService.BlockedShellExtTarget("{B41DB860-64E4-11D2-9906-E49FADC173CA}");
+
+        sut.Hide(new[] { target });
+
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, HideService.BlockedListPath));
+        Assert.Equal("", reg.GetValue(RegistryHive.CurrentUser, HideService.BlockedListPath,
+            "{B41DB860-64E4-11D2-9906-E49FADC173CA}"));
+    }
+
+    [Fact]
+    public void Unhide_BlockedShellExt_removes_clsid_value()
+    {
+        var reg = new FakeRegistry();
+        reg.SetValue(RegistryHive.CurrentUser, HideService.BlockedListPath,
+            "{B41DB860-64E4-11D2-9906-E49FADC173CA}", "");
+        var sut = new HideService(reg);
+        var target = HideService.BlockedShellExtTarget("{B41DB860-64E4-11D2-9906-E49FADC173CA}");
+
+        sut.Unhide(new[] { target });
+
+        Assert.Null(reg.GetValue(RegistryHive.CurrentUser, HideService.BlockedListPath,
+            "{B41DB860-64E4-11D2-9906-E49FADC173CA}"));
+    }
+
+    [Fact]
+    public void RequiresExplorerRestart_list_overload_is_true_for_BlockedShellExt()
+    {
+        var blocked = HideService.BlockedShellExtTarget("{B41DB860-64E4-11D2-9906-E49FADC173CA}");
+        Assert.True(HideService.RequiresExplorerRestart(new[] { blocked }));
+    }
 }

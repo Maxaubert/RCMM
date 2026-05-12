@@ -5,6 +5,19 @@ namespace RCMM.Core.Services;
 
 public sealed class HideService
 {
+    public const string BlockedListPath =
+        @"Software\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked";
+
+    /// <summary>
+    /// Constructs a HideTarget that blocks a shell extension CLSID via the
+    /// Shell Extensions\Blocked list. HKCU is tried first because it doesn't
+    /// need elevation; if a particular packaged extension is honored only at
+    /// HKLM, the caller should add a second target for LocalMachine.
+    /// </summary>
+    public static HideTarget BlockedShellExtTarget(string clsid, RegistryHive hive = RegistryHive.CurrentUser)
+        => new HideTarget(HideKind.BlockedShellExt, hive, BlockedListPath, clsid);
+
+
     private readonly IRegistry _reg;
 
     public HideService(IRegistry reg) { _reg = reg; }
@@ -42,14 +55,20 @@ public sealed class HideService
     {
         foreach (var t in targets)
         {
-            if (t.Kind == HideKind.LegacyDisable)
+            switch (t.Kind)
             {
-                _reg.SetValue(t.Hive, t.Path, t.ValueName ?? "LegacyDisable", "");
-            }
-            else // HkcuMask
-            {
-                _reg.CreateKey(t.Hive, t.Path);
-                _reg.SetValue(t.Hive, t.Path, "", "");
+                case HideKind.LegacyDisable:
+                    _reg.SetValue(t.Hive, t.Path, t.ValueName ?? "LegacyDisable", "");
+                    break;
+                case HideKind.HkcuMask:
+                    _reg.CreateKey(t.Hive, t.Path);
+                    _reg.SetValue(t.Hive, t.Path, "", "");
+                    break;
+                case HideKind.BlockedShellExt:
+                    // ValueName is the CLSID. Data is ignored by Explorer; conventional value is "".
+                    _reg.CreateKey(t.Hive, t.Path);
+                    _reg.SetValue(t.Hive, t.Path, t.ValueName!, "");
+                    break;
             }
         }
     }
@@ -58,13 +77,17 @@ public sealed class HideService
     {
         foreach (var t in targets)
         {
-            if (t.Kind == HideKind.LegacyDisable)
+            switch (t.Kind)
             {
-                _reg.DeleteValue(t.Hive, t.Path, t.ValueName ?? "LegacyDisable");
-            }
-            else // HkcuMask
-            {
-                _reg.DeleteKey(t.Hive, t.Path);
+                case HideKind.LegacyDisable:
+                    _reg.DeleteValue(t.Hive, t.Path, t.ValueName ?? "LegacyDisable");
+                    break;
+                case HideKind.HkcuMask:
+                    _reg.DeleteKey(t.Hive, t.Path);
+                    break;
+                case HideKind.BlockedShellExt:
+                    _reg.DeleteValue(t.Hive, t.Path, t.ValueName!);
+                    break;
             }
         }
     }
@@ -72,7 +95,7 @@ public sealed class HideService
     public static bool RequiresExplorerRestart(IReadOnlyList<HideTarget> targets)
     {
         foreach (var t in targets)
-            if (t.Kind == HideKind.HkcuMask) return true;
+            if (t.Kind == HideKind.HkcuMask || t.Kind == HideKind.BlockedShellExt) return true;
         return false;
     }
 
