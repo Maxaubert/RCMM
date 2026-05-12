@@ -41,6 +41,10 @@ public sealed class MainViewModel : ObservableObject
     public ObservableCollection<EntryRowViewModel> AllEntries { get; } = new();
     public ObservableCollection<string> PendingChangeIds { get; } = new();
 
+    /// <summary>Raised after Rescan finishes populating AllEntries — host uses
+    /// this to (re-)load icons for the new rows.</summary>
+    public event Action? RescanComplete;
+
     public MainViewModel(
         IContextMenuCaptureService capture,
         TargetProvider targets,
@@ -295,6 +299,7 @@ public sealed class MainViewModel : ObservableObject
         _pendingUnhide.Clear();
         PendingChangeIds.Clear();
         Raise(nameof(RequiresExplorerRestart));
+        RescanComplete?.Invoke();
         Log.Info("rescan", $"end rows={_allRows.Count} withHideTargets={rowsWithHide} builtIn={rowsBuiltIn} visible={AllEntries.Count}");
         for (int i = 0; i < _allRows.Count; i++)
         {

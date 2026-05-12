@@ -4,67 +4,150 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:vm="using:RCMM.Core.ViewModels">
-    <Grid Padding="20,12,20,12">
+    <Grid Padding="48,28,48,12" RowSpacing="20">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <Grid Grid.Row="0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
-            <Button x:Name="BackButton" Click="BackButton_Click" Padding="6,2" Background="Transparent" BorderThickness="0">
-                <FontIcon Glyph="&#xE72B;" FontSize="14"/>
-            </Button>
-            <TextBlock Grid.Column="1" x:Name="ScopeTitle" Margin="8,0,0,0" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center"/>
-        </Grid>
+        <!-- Heading -->
+        <TextBlock Grid.Row="0" x:Name="HeadingTitle" FontSize="34" FontWeight="Medium"
+                   Foreground="{ThemeResource AppText}" CharacterSpacing="-15"
+                   HorizontalAlignment="Left"/>
 
-        <Grid Grid.Row="1" Margin="0,12,0,8" ColumnSpacing="12">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <TextBox x:Name="SearchBox" PlaceholderText="Search…" TextChanged="SearchBox_TextChanged"/>
-            <CheckBox Grid.Column="1" x:Name="HideBuiltInsBox" Content="Hide Windows built-ins"
-                      VerticalAlignment="Center" Checked="HideBuiltInsBox_Changed" Unchecked="HideBuiltInsBox_Changed"/>
-        </Grid>
+        <!-- Toolbar -->
+        <TextBox Grid.Row="1" x:Name="SearchBox" PlaceholderText="Search…" TextChanged="SearchBox_TextChanged"
+                 Background="{ThemeResource AppSurface}" BorderBrush="{ThemeResource AppBorder}"
+                 CornerRadius="10" Padding="10,8" FontSize="13">
+            <TextBox.Resources>
+                <SolidColorBrush x:Key="TextControlBackgroundPointerOver"  Color="#141418"/>
+                <SolidColorBrush x:Key="TextControlBackgroundFocused"      Color="#141418"/>
+                <SolidColorBrush x:Key="TextControlBackgroundDisabled"     Color="#141418"/>
+                <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="#26262c"/>
+                <SolidColorBrush x:Key="TextControlBorderBrushFocused"     Color="#26262c"/>
+                <SolidColorBrush x:Key="TextControlBorderBrushDisabled"    Color="#26262c"/>
+                <Thickness x:Key="TextControlBorderThemeThicknessFocused">1</Thickness>
+            </TextBox.Resources>
+        </TextBox>
 
-        <ListView Grid.Row="2" x:Name="EntriesList" SelectionMode="None">
+        <!-- List -->
+        <ListView Grid.Row="2" x:Name="EntriesList" SelectionMode="None" Background="Transparent"
+                  Padding="0" Margin="0,0,0,0">
+            <ListView.Resources>
+                <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver"        Color="#1f1f25"/>
+                <SolidColorBrush x:Key="ListViewItemBackgroundSelected"           Color="#1f1f25"/>
+                <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="#1f1f25"/>
+                <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPressed"     Color="#1f1f25"/>
+                <SolidColorBrush x:Key="ListViewItemSelectedBackground"           Color="#1f1f25"/>
+                <SolidColorBrush x:Key="ListViewItemForegroundSelected"           Color="#f1f1f3"/>
+            </ListView.Resources>
+            <ListView.ItemContainerStyle>
+                <Style TargetType="ListViewItem">
+                    <Setter Property="Padding" Value="0"/>
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                    <Setter Property="MinHeight" Value="0"/>
+                    <Setter Property="Margin" Value="0"/>
+                    <Setter Property="Background" Value="Transparent"/>
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="ListViewItem">
+                                <Grid Background="Transparent">
+                                    <Border x:Name="HoverBg" Background="#1f1f25" Opacity="0"/>
+                                    <ContentPresenter x:Name="ContentPresenter"
+                                                      Content="{TemplateBinding Content}"
+                                                      ContentTemplate="{TemplateBinding ContentTemplate}"
+                                                      HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                      VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"/>
+                                    <VisualStateManager.VisualStateGroups>
+                                        <VisualStateGroup x:Name="CommonStates">
+                                            <VisualState x:Name="Normal"/>
+                                            <VisualState x:Name="PointerOver">
+                                                <Storyboard>
+                                                    <DoubleAnimation Storyboard.TargetName="HoverBg"
+                                                                     Storyboard.TargetProperty="Opacity"
+                                                                     To="1" Duration="0:0:0.12"/>
+                                                </Storyboard>
+                                            </VisualState>
+                                            <VisualState x:Name="Pressed">
+                                                <Storyboard>
+                                                    <DoubleAnimation Storyboard.TargetName="HoverBg"
+                                                                     Storyboard.TargetProperty="Opacity"
+                                                                     To="0.85" Duration="0"/>
+                                                </Storyboard>
+                                            </VisualState>
+                                        </VisualStateGroup>
+                                    </VisualStateManager.VisualStateGroups>
+                                </Grid>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </ListView.ItemContainerStyle>
             <ListView.ItemTemplate>
                 <DataTemplate x:DataType="vm:EntryRowViewModel">
-                    <Grid Padding="6,8" ColumnSpacing="14">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="28"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <Image Width="24" Height="24" Source="{x:Bind Icon, Converter={StaticResource ObjectToImageSourceConverter}, Mode=OneWay}" VerticalAlignment="Center"/>
-                        <StackPanel Grid.Column="1">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <Border CornerRadius="3" Padding="4,1" Background="#22808080"
-                                        Visibility="{x:Bind IsBuiltIn, Converter={StaticResource BoolToVisibilityConverter}}">
-                                    <TextBlock Text="Built-in" FontSize="10" Opacity="0.8"/>
-                                </Border>
-                                <TextBlock Text="{x:Bind DisplayName}" FontSize="14"/>
+                    <Border BorderBrush="{ThemeResource AppBorder}" BorderThickness="0,0,0,1"
+                            Background="Transparent"
+                            PointerEntered="Row_PointerEntered"
+                            PointerExited="Row_PointerExited"
+                            Tapped="Row_Tapped">
+                        <Grid Padding="6,12" ColumnSpacing="14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="32"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Image Width="22" Height="22"
+                                   Source="{x:Bind Icon, Converter={StaticResource ObjectToImageSourceConverter}, Mode=OneWay}"
+                                   VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                            <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
+                                <TextBlock Text="{x:Bind DisplayName}" FontSize="14"
+                                           Foreground="{ThemeResource AppText}"/>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Border Padding="4,1" CornerRadius="3"
+                                            Background="#1a2810" BorderBrush="#3d5a1d" BorderThickness="1"
+                                            Visibility="{x:Bind IsBuiltIn, Converter={StaticResource BoolToVisibilityConverter}}">
+                                        <TextBlock Text="BUILT-IN" FontSize="9"
+                                                   FontFamily="Consolas, Cascadia Code, monospace"
+                                                   Foreground="#92bd4c" CharacterSpacing="100"/>
+                                    </Border>
+                                    <TextBlock FontSize="11"
+                                               FontFamily="Consolas, Cascadia Code, monospace"
+                                               Foreground="{ThemeResource AppTextDim}">
+                                        <Run Text="{x:Bind Source}"/>
+                                        <Run Text=" · "/>
+                                        <Run Text="{x:Bind KindLabel}"/>
+                                    </TextBlock>
+                                </StackPanel>
                             </StackPanel>
-                            <TextBlock FontSize="11" Opacity="0.6">
-                                <Run Text="{x:Bind Source}"/>
-                                <Run Text=" · "/>
-                                <Run Text="{x:Bind KindLabel}"/>
-                            </TextBlock>
-                        </StackPanel>
-                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                            <TextBlock Text="Built into Windows" FontSize="10" Opacity="0.55"
-                                       VerticalAlignment="Center"
-                                       Visibility="{x:Bind CanHide, Converter={StaticResource InvertBoolToVisibilityConverter}}"/>
-                            <ToggleSwitch IsOn="{x:Bind IsHidden, Mode=TwoWay, Converter={StaticResource InvertBoolConverter}}"
-                                          IsEnabled="{x:Bind CanHide}"
-                                          OnContent="" OffContent=""/>
-                        </StackPanel>
-                    </Grid>
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <TextBlock Text="locked" FontSize="10"
+                                           FontFamily="Consolas, Cascadia Code, monospace"
+                                           Foreground="{ThemeResource AppTextDim}"
+                                           VerticalAlignment="Center"
+                                           Visibility="{x:Bind CanHide, Converter={StaticResource InvertBoolToVisibilityConverter}}"/>
+                                <ToggleSwitch IsOn="{x:Bind IsHidden, Mode=TwoWay, Converter={StaticResource InvertBoolConverter}}"
+                                              IsEnabled="{x:Bind CanHide}"
+                                              OnContent="" OffContent="" MinWidth="0">
+                                    <ToggleSwitch.Resources>
+                                        <SolidColorBrush x:Key="ToggleSwitchFillOn"                Color="#d4ff3a"/>
+                                        <SolidColorBrush x:Key="ToggleSwitchFillOnPointerOver"     Color="#e5ff5a"/>
+                                        <SolidColorBrush x:Key="ToggleSwitchFillOnPressed"         Color="#c2eb28"/>
+                                        <SolidColorBrush x:Key="ToggleSwitchStrokeOn"              Color="#d4ff3a"/>
+                                        <SolidColorBrush x:Key="ToggleSwitchStrokeOnPointerOver"   Color="#d4ff3a"/>
+                                        <SolidColorBrush x:Key="ToggleSwitchStrokeOnPressed"       Color="#d4ff3a"/>
+                                        <SolidColorBrush x:Key="ToggleSwitchKnobFillOn"            Color="#0a0a0a"/>
+                                        <SolidColorBrush x:Key="ToggleSwitchKnobFillOnPointerOver" Color="#0a0a0a"/>
+                                        <SolidColorBrush x:Key="ToggleSwitchKnobFillOnPressed"     Color="#0a0a0a"/>
+                                        <SolidColorBrush x:Key="AccentFillColorDefaultBrush"       Color="#d4ff3a"/>
+                                        <SolidColorBrush x:Key="AccentFillColorSecondaryBrush"     Color="#e5ff5a"/>
+                                        <SolidColorBrush x:Key="AccentFillColorTertiaryBrush"      Color="#c2eb28"/>
+                                        <SolidColorBrush x:Key="TextOnAccentFillColorPrimaryBrush" Color="#0a0a0a"/>
+                                    </ToggleSwitch.Resources>
+                                </ToggleSwitch>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
                 </DataTemplate>
             </ListView.ItemTemplate>
         </ListView>

@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RCMM · Donut color combos (no grey)</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap');
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0b0b0d;
+  color: #f1f1f3;
+  font-family: 'Geist', system-ui, sans-serif;
+  padding: 32px;
+  min-height: 100vh;
+}
+h1 {
+  font-size: 24px;
+  font-weight: 500;
+  letter-spacing: -.02em;
+  margin-bottom: 6px;
+}
+.sub {
+  color: #8a8a93;
+  font-size: 12px;
+  margin-bottom: 32px;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 18px;
+}
+.tile {
+  background: #141418;
+  border: 1px solid #26262c;
+  border-radius: 12px;
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.donut {
+  position: relative;
+  width: 120px; height: 120px;
+}
+.donut svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.center {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  pointer-events: none;
+}
+.num {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 24px;
+  font-weight: 500;
+  color: #f1f1f3;
+  line-height: 1;
+}
+.cap {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  color: #555560;
+  letter-spacing: .2em;
+  margin-top: 2px;
+}
+.legend {
+  display: flex;
+  gap: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: #8a8a93;
+}
+.legend-item { display: flex; align-items: center; gap: 5px; }
+.dot { width: 6px; height: 6px; border-radius: 3px; }
+.label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: #555560;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  text-align: center;
+}
+.label strong { display: block; color: #f1f1f3; font-weight: 500; font-size: 11px; margin-bottom: 2px; }
+</style>
+</head>
+<body>
+<h1>Donut color combos · no grey</h1>
+<p class="sub">Same 20/42 split. Every combo uses two colored hues — no neutral filler.</p>
+
+<div class="grid">
+
+  <div class="tile">
+    <div class="donut">
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#ff6b6b" stroke-width="18"/>
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#d4ff3a" stroke-width="18" stroke-dasharray="91.2 282.7"/>
+      </svg>
+      <div class="center"><div class="num">62</div><div class="cap">ENTRIES</div></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="dot" style="background:#d4ff3a"></div>20 APP</div>
+      <div class="legend-item"><div class="dot" style="background:#ff6b6b"></div>42 WIN</div>
+    </div>
+    <div class="label"><strong>Lime · Coral</strong>#d4ff3a · #ff6b6b</div>
+  </div>
+
+  <div class="tile">
+    <div class="donut">
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#ff5cb7" stroke-width="18"/>
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#d4ff3a" stroke-width="18" stroke-dasharray="91.2 282.7"/>
+      </svg>
+      <div class="center"><div class="num">62</div><div class="cap">ENTRIES</div></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="dot" style="background:#d4ff3a"></div>20 APP</div>
+      <div class="legend-item"><div class="dot" style="background:#ff5cb7"></div>42 WIN</div>
+    </div>
+    <div class="label"><strong>Lime · Magenta</strong>#d4ff3a · #ff5cb7</div>
+  </div>
+
+  <div class="tile">
+    <div class="donut">
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#5ec8ff" stroke-width="18"/>
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#d4ff3a" stroke-width="18" stroke-dasharray="91.2 282.7"/>
+      </svg>
+      <div class="center"><div class="num">62</div><div class="cap">ENTRIES</div></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="dot" style="background:#d4ff3a"></div>20 APP</div>
+      <div class="legend-item"><div class="dot" style="background:#5ec8ff"></div>42 WIN</div>
+    </div>
+    <div class="label"><strong>Lime · Cyan</strong>#d4ff3a · #5ec8ff</div>
+  </div>
+
+  <div class="tile">
+    <div class="donut">
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#a878ff" stroke-width="18"/>
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#d4ff3a" stroke-width="18" stroke-dasharray="91.2 282.7"/>
+      </svg>
+      <div class="center"><div class="num">62</div><div class="cap">ENTRIES</div></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="dot" style="background:#d4ff3a"></div>20 APP</div>
+      <div class="legend-item"><div class="dot" style="background:#a878ff"></div>42 WIN</div>
+    </div>
+    <div class="label"><strong>Lime · Violet</strong>#d4ff3a · #a878ff</div>
+  </div>
+
+  <div class="tile">
+    <div class="donut">
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#ff8a3a" stroke-width="18"/>
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#d4ff3a" stroke-width="18" stroke-dasharray="91.2 282.7"/>
+      </svg>
+      <div class="center"><div class="num">62</div><div class="cap">ENTRIES</div></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="dot" style="background:#d4ff3a"></div>20 APP</div>
+      <div class="legend-item"><div class="dot" style="background:#ff8a3a"></div>42 WIN</div>
+    </div>
+    <div class="label"><strong>Lime · Orange</strong>#d4ff3a · #ff8a3a</div>
+  </div>
+
+  <div class="tile">
+    <div class="donut">
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#00ffb0" stroke-width="18"/>
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#d4ff3a" stroke-width="18" stroke-dasharray="91.2 282.7"/>
+      </svg>
+      <div class="center"><div class="num">62</div><div class="cap">ENTRIES</div></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="dot" style="background:#d4ff3a"></div>20 APP</div>
+      <div class="legend-item"><div class="dot" style="background:#00ffb0"></div>42 WIN</div>
+    </div>
+    <div class="label"><strong>Lime · Mint</strong>#d4ff3a · #00ffb0</div>
+  </div>
+
+  <div class="tile">
+    <div class="donut">
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#ff5cb7" stroke-width="18"/>
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#ffb547" stroke-width="18" stroke-dasharray="91.2 282.7"/>
+      </svg>
+      <div class="center"><div class="num">62</div><div class="cap">ENTRIES</div></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="dot" style="background:#ffb547"></div>20 APP</div>
+      <div class="legend-item"><div class="dot" style="background:#ff5cb7"></div>42 WIN</div>
+    </div>
+    <div class="label"><strong>Amber · Magenta</strong>#ffb547 · #ff5cb7</div>
+  </div>
+
+  <div class="tile">
+    <div class="donut">
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#5ec8ff" stroke-width="18"/>
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#ffb547" stroke-width="18" stroke-dasharray="91.2 282.7"/>
+      </svg>
+      <div class="center"><div class="num">62</div><div class="cap">ENTRIES</div></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="dot" style="background:#ffb547"></div>20 APP</div>
+      <div class="legend-item"><div class="dot" style="background:#5ec8ff"></div>42 WIN</div>
+    </div>
+    <div class="label"><strong>Amber · Cyan</strong>#ffb547 · #5ec8ff</div>
+  </div>
+
+  <div class="tile">
+    <div class="donut">
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#a878ff" stroke-width="18"/>
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#ffb547" stroke-width="18" stroke-dasharray="91.2 282.7"/>
+      </svg>
+      <div class="center"><div class="num">62</div><div class="cap">ENTRIES</div></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="dot" style="background:#ffb547"></div>20 APP</div>
+      <div class="legend-item"><div class="dot" style="background:#a878ff"></div>42 WIN</div>
+    </div>
+    <div class="label"><strong>Amber · Violet</strong>#ffb547 · #a878ff</div>
+  </div>
+
+  <div class="tile">
+    <div class="donut">
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#00ffb0" stroke-width="18"/>
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#ffb547" stroke-width="18" stroke-dasharray="91.2 282.7"/>
+      </svg>
+      <div class="center"><div class="num">62</div><div class="cap">ENTRIES</div></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="dot" style="background:#ffb547"></div>20 APP</div>
+      <div class="legend-item"><div class="dot" style="background:#00ffb0"></div>42 WIN</div>
+    </div>
+    <div class="label"><strong>Amber · Mint</strong>#ffb547 · #00ffb0</div>
+  </div>
+
+  <div class="tile">
+    <div class="donut">
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#5ec8ff" stroke-width="18"/>
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#ff6b6b" stroke-width="18" stroke-dasharray="91.2 282.7"/>
+      </svg>
+      <div class="center"><div class="num">62</div><div class="cap">ENTRIES</div></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="dot" style="background:#ff6b6b"></div>20 APP</div>
+      <div class="legend-item"><div class="dot" style="background:#5ec8ff"></div>42 WIN</div>
+    </div>
+    <div class="label"><strong>Coral · Cyan</strong>#ff6b6b · #5ec8ff</div>
+  </div>
+
+  <div class="tile">
+    <div class="donut">
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#00ffb0" stroke-width="18"/>
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#ff6b6b" stroke-width="18" stroke-dasharray="91.2 282.7"/>
+      </svg>
+      <div class="center"><div class="num">62</div><div class="cap">ENTRIES</div></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="dot" style="background:#ff6b6b"></div>20 APP</div>
+      <div class="legend-item"><div class="dot" style="background:#00ffb0"></div>42 WIN</div>
+    </div>
+    <div class="label"><strong>Coral · Mint</strong>#ff6b6b · #00ffb0</div>
+  </div>
+
+  <div class="tile">
+    <div class="donut">
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#a878ff" stroke-width="18"/>
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#ff6b6b" stroke-width="18" stroke-dasharray="91.2 282.7"/>
+      </svg>
+      <div class="center"><div class="num">62</div><div class="cap">ENTRIES</div></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="dot" style="background:#ff6b6b"></div>20 APP</div>
+      <div class="legend-item"><div class="dot" style="background:#a878ff"></div>42 WIN</div>
+    </div>
+    <div class="label"><strong>Coral · Violet</strong>#ff6b6b · #a878ff</div>
+  </div>
+
+  <div class="tile">
+    <div class="donut">
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#ff5cb7" stroke-width="18"/>
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#5ec8ff" stroke-width="18" stroke-dasharray="91.2 282.7"/>
+      </svg>
+      <div class="center"><div class="num">62</div><div class="cap">ENTRIES</div></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="dot" style="background:#5ec8ff"></div>20 APP</div>
+      <div class="legend-item"><div class="dot" style="background:#ff5cb7"></div>42 WIN</div>
+    </div>
+    <div class="label"><strong>Cyan · Magenta</strong>#5ec8ff · #ff5cb7</div>
+  </div>
+
+  <div class="tile">
+    <div class="donut">
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#ff8a3a" stroke-width="18"/>
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#5ec8ff" stroke-width="18" stroke-dasharray="91.2 282.7"/>
+      </svg>
+      <div class="center"><div class="num">62</div><div class="cap">ENTRIES</div></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="dot" style="background:#5ec8ff"></div>20 APP</div>
+      <div class="legend-item"><div class="dot" style="background:#ff8a3a"></div>42 WIN</div>
+    </div>
+    <div class="label"><strong>Cyan · Orange</strong>#5ec8ff · #ff8a3a</div>
+  </div>
+
+  <div class="tile">
+    <div class="donut">
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#a878ff" stroke-width="18"/>
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#5ec8ff" stroke-width="18" stroke-dasharray="91.2 282.7"/>
+      </svg>
+      <div class="center"><div class="num">62</div><div class="cap">ENTRIES</div></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="dot" style="background:#5ec8ff"></div>20 APP</div>
+      <div class="legend-item"><div class="dot" style="background:#a878ff"></div>42 WIN</div>
+    </div>
+    <div class="label"><strong>Cyan · Violet</strong>#5ec8ff · #a878ff</div>
+  </div>
+
+  <div class="tile">
+    <div class="donut">
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#ff5cb7" stroke-width="18"/>
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#00ffb0" stroke-width="18" stroke-dasharray="91.2 282.7"/>
+      </svg>
+      <div class="center"><div class="num">62</div><div class="cap">ENTRIES</div></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="dot" style="background:#00ffb0"></div>20 APP</div>
+      <div class="legend-item"><div class="dot" style="background:#ff5cb7"></div>42 WIN</div>
+    </div>
+    <div class="label"><strong>Mint · Magenta</strong>#00ffb0 · #ff5cb7</div>
+  </div>
+
+  <div class="tile">
+    <div class="donut">
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#a878ff" stroke-width="18"/>
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#00ffb0" stroke-width="18" stroke-dasharray="91.2 282.7"/>
+      </svg>
+      <div class="center"><div class="num">62</div><div class="cap">ENTRIES</div></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="dot" style="background:#00ffb0"></div>20 APP</div>
+      <div class="legend-item"><div class="dot" style="background:#a878ff"></div>42 WIN</div>
+    </div>
+    <div class="label"><strong>Mint · Violet</strong>#00ffb0 · #a878ff</div>
+  </div>
+
+  <div class="tile">
+    <div class="donut">
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#ff8a3a" stroke-width="18"/>
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#a878ff" stroke-width="18" stroke-dasharray="91.2 282.7"/>
+      </svg>
+      <div class="center"><div class="num">62</div><div class="cap">ENTRIES</div></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="dot" style="background:#a878ff"></div>20 APP</div>
+      <div class="legend-item"><div class="dot" style="background:#ff8a3a"></div>42 WIN</div>
+    </div>
+    <div class="label"><strong>Violet · Orange</strong>#a878ff · #ff8a3a</div>
+  </div>
+
+  <div class="tile">
+    <div class="donut">
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#3a8ec0" stroke-width="18"/>
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#ffea3a" stroke-width="18" stroke-dasharray="91.2 282.7"/>
+      </svg>
+      <div class="center"><div class="num">62</div><div class="cap">ENTRIES</div></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="dot" style="background:#ffea3a"></div>20 APP</div>
+      <div class="legend-item"><div class="dot" style="background:#3a8ec0"></div>42 WIN</div>
+    </div>
+    <div class="label"><strong>Yellow · Deep blue</strong>#ffea3a · #3a8ec0</div>
+  </div>
+
+  <div class="tile">
+    <div class="donut">
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#7a3aff" stroke-width="18"/>
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#ffea3a" stroke-width="18" stroke-dasharray="91.2 282.7"/>
+      </svg>
+      <div class="center"><div class="num">62</div><div class="cap">ENTRIES</div></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="dot" style="background:#ffea3a"></div>20 APP</div>
+      <div class="legend-item"><div class="dot" style="background:#7a3aff"></div>42 WIN</div>
+    </div>
+    <div class="label"><strong>Yellow · Indigo</strong>#ffea3a · #7a3aff</div>
+  </div>
+
+  <div class="tile">
+    <div class="donut">
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#e84a4a" stroke-width="18"/>
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#ffea3a" stroke-width="18" stroke-dasharray="91.2 282.7"/>
+      </svg>
+      <div class="center"><div class="num">62</div><div class="cap">ENTRIES</div></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="dot" style="background:#ffea3a"></div>20 APP</div>
+      <div class="legend-item"><div class="dot" style="background:#e84a4a"></div>42 WIN</div>
+    </div>
+    <div class="label"><strong>Yellow · Red</strong>#ffea3a · #e84a4a</div>
+  </div>
+
+  <div class="tile">
+    <div class="donut">
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#ff3a8a" stroke-width="18"/>
+        <circle cx="60" cy="60" r="45" fill="none" stroke="#ffea3a" stroke-width="18" stroke-dasharray="91.2 282.7"/>
+      </svg>
+      <div class="center"><div class="num">62</div><div class="cap">ENTRIES</div></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="dot" style="background:#ffea3a"></div>20 APP</div>
+      <div class="legend-item"><div class="dot" style="background:#ff3a8a"></div>42 WIN</div>
+    </div>
+    <div class="label"><strong>Yellow · Hot pink</strong>#ffea3a · #ff3a8a</div>
+  </div>
+
+</div>
+</body>
+</html>

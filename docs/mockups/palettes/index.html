@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RCMM · Palette mockups</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0b0b0d;
+  color: #f1f1f3;
+  font-family: 'Geist', system-ui, sans-serif;
+  min-height: 100vh;
+  padding: 40px 32px;
+}
+h1 {
+  font-size: 28px;
+  font-weight: 500;
+  letter-spacing: -.02em;
+  margin-bottom: 8px;
+}
+.sub {
+  color: #8a8a93;
+  font-size: 13px;
+  margin-bottom: 32px;
+  max-width: 640px;
+  line-height: 1.5;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  gap: 18px;
+  max-width: 1400px;
+}
+.tile {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  border: 1px solid #26262c;
+  border-radius: 12px;
+  overflow: hidden;
+  transition: border-color .2s, transform .2s;
+  background: #141418;
+}
+.tile:hover { border-color: #353540; transform: translateY(-2px); }
+.preview {
+  height: 240px;
+  background-size: cover;
+  background-position: top center;
+  position: relative;
+  overflow: hidden;
+}
+.preview iframe {
+  width: 1200px; height: 700px;
+  transform: scale(0.4);
+  transform-origin: 0 0;
+  border: 0;
+  pointer-events: none;
+}
+.label {
+  padding: 14px 18px;
+  display: flex; align-items: center; gap: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+.label strong { font-weight: 500; font-size: 13px; }
+.swatches { display: flex; gap: 4px; margin-left: auto; }
+.sw { width: 12px; height: 12px; border-radius: 3px; border: 1px solid rgba(255,255,255,0.08); }
+.foot { margin-top: 32px; color: #555560; font-size: 12px; font-family: 'JetBrains Mono', monospace; }
+</style>
+</head>
+<body>
+<h1>Palette mockups</h1>
+<p class="sub">Six full-page variants of the landing page. Click any tile to open the full mockup. The donut shows a 20/42 split (matching the live app).</p>
+
+<div class="grid">
+  <a class="tile" href="01-lime.html">
+    <div class="preview"><iframe src="01-lime.html"></iframe></div>
+    <div class="label">
+      <strong>01 · Electric Lime</strong>
+      <div class="swatches">
+        <div class="sw" style="background:#d4ff3a"></div>
+        <div class="sw" style="background:#2a2a32"></div>
+        <div class="sw" style="background:#0b0b0d"></div>
+      </div>
+    </div>
+  </a>
+
+  <a class="tile" href="02-amber.html">
+    <div class="preview"><iframe src="02-amber.html"></iframe></div>
+    <div class="label">
+      <strong>02 · Solar Amber</strong>
+      <div class="swatches">
+        <div class="sw" style="background:#ffb547"></div>
+        <div class="sw" style="background:#2b1f12"></div>
+        <div class="sw" style="background:#0d0a07"></div>
+      </div>
+    </div>
+  </a>
+
+  <a class="tile" href="03-cyan.html">
+    <div class="preview"><iframe src="03-cyan.html"></iframe></div>
+    <div class="label">
+      <strong>03 · Cyan Plasma</strong>
+      <div class="swatches">
+        <div class="sw" style="background:#5ec8ff"></div>
+        <div class="sw" style="background:#1c2530"></div>
+        <div class="sw" style="background:#08090d"></div>
+      </div>
+    </div>
+  </a>
+
+  <a class="tile" href="04-magenta.html">
+    <div class="preview"><iframe src="04-magenta.html"></iframe></div>
+    <div class="label">
+      <strong>04 · Magenta Pulse</strong>
+      <div class="swatches">
+        <div class="sw" style="background:#ff5cb7"></div>
+        <div class="sw" style="background:#2a1828"></div>
+        <div class="sw" style="background:#0d080d"></div>
+      </div>
+    </div>
+  </a>
+
+  <a class="tile" href="05-mint.html">
+    <div class="preview"><iframe src="05-mint.html"></iframe></div>
+    <div class="label">
+      <strong>05 · Acid Mint</strong>
+      <div class="swatches">
+        <div class="sw" style="background:#00ffb0"></div>
+        <div class="sw" style="background:#182522"></div>
+        <div class="sw" style="background:#06100c"></div>
+      </div>
+    </div>
+  </a>
+
+  <a class="tile" href="06-mono.html">
+    <div class="preview"><iframe src="06-mono.html"></iframe></div>
+    <div class="label">
+      <strong>06 · Pure Mono</strong>
+      <div class="swatches">
+        <div class="sw" style="background:#6a6a78"></div>
+        <div class="sw" style="background:#2a2a32"></div>
+        <div class="sw" style="background:#0b0b0d"></div>
+      </div>
+    </div>
+  </a>
+</div>
+
+<div class="foot">file://&hellip;/docs/mockups/palettes/</div>
+</body>
+</html>
