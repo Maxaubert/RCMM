@@ -16,7 +16,7 @@ public sealed partial class ScopePage : Page
     {
         _vm = (MainViewModel)e.Parameter;
         ScopeTitle.Text = "Right-click menu entries";
-        ShowBuiltInsBox.IsChecked = _vm.ShowBuiltIns;
+        HideBuiltInsBox.IsChecked = !_vm.ShowBuiltIns;
         EntriesList.ItemsSource = _vm.AllEntries;
     }
 
@@ -38,10 +38,10 @@ public sealed partial class ScopePage : Page
             .ToList();
     }
 
-    private void ShowBuiltInsBox_Changed(object sender, RoutedEventArgs e)
+    private void HideBuiltInsBox_Changed(object sender, RoutedEventArgs e)
     {
         if (_vm is null) return;
-        _vm.ShowBuiltIns = ShowBuiltInsBox.IsChecked == true;
+        _vm.ShowBuiltIns = HideBuiltInsBox.IsChecked != true;
         SearchBox_TextChanged(SearchBox, null!);
     }
 }

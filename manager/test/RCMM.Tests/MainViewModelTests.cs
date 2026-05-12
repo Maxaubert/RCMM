@@ -120,32 +120,33 @@ public class MainViewModelTests
     }
 
     [Fact]
-    public void AllEntries_excludes_builtin_entries_by_default()
+    public void AllEntries_includes_builtin_entries_by_default()
     {
         var (vm, reg) = BuildSut();
-        // Third-party verb (no SystemRoot command) — kept.
         reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\thirdparty", "", "Third party");
         reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\thirdparty\command", "", @"C:\Program Files\Vendor\app.exe");
-        // Windows verb — should be excluded.
         reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\sysverb", "", "Sys Verb");
         reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\sysverb\command", "", @"%SystemRoot%\System32\sysfoo.exe");
         vm.Rescan();
 
-        Assert.Single(vm.AllEntries);
-        Assert.Equal("Third party", vm.AllEntries[0].DisplayName);
+        Assert.Equal(2, vm.AllEntries.Count);
+        Assert.Contains(vm.AllEntries, r => r.DisplayName == "Third party");
+        Assert.Contains(vm.AllEntries, r => r.DisplayName == "Sys Verb");
     }
 
     [Fact]
-    public void Setting_ShowBuiltIns_restores_builtin_entries_into_AllEntries()
+    public void Clearing_ShowBuiltIns_removes_builtin_entries_from_AllEntries()
     {
         var (vm, reg) = BuildSut();
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\thirdparty", "", "Third party");
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\thirdparty\command", "", @"C:\Program Files\Vendor\app.exe");
         reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\sysverb", "", "Sys Verb");
         reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\sysverb\command", "", @"%SystemRoot%\System32\sysfoo.exe");
         vm.Rescan();
 
-        Assert.Empty(vm.AllEntries);
-        vm.ShowBuiltIns = true;
+        Assert.Equal(2, vm.AllEntries.Count);
+        vm.ShowBuiltIns = false;
         Assert.Single(vm.AllEntries);
-        Assert.Equal("Sys Verb", vm.AllEntries[0].DisplayName);
+        Assert.Equal("Third party", vm.AllEntries[0].DisplayName);
     }
 }

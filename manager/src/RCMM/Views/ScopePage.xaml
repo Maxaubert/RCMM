@@ -28,8 +28,8 @@
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
             <TextBox x:Name="SearchBox" PlaceholderText="Search…" TextChanged="SearchBox_TextChanged"/>
-            <CheckBox Grid.Column="1" x:Name="ShowBuiltInsBox" Content="Show Windows built-ins"
-                      VerticalAlignment="Center" Checked="ShowBuiltInsBox_Changed" Unchecked="ShowBuiltInsBox_Changed"/>
+            <CheckBox Grid.Column="1" x:Name="HideBuiltInsBox" Content="Hide Windows built-ins"
+                      VerticalAlignment="Center" Checked="HideBuiltInsBox_Changed" Unchecked="HideBuiltInsBox_Changed"/>
         </Grid>
 
         <ListView Grid.Row="2" x:Name="EntriesList" SelectionMode="None">

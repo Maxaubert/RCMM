@@ -16,7 +16,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly HideService _hideService;
     private readonly Dictionary<Scope, ScopeListViewModel> _scopes;
     private readonly Dictionary<string, PendingChange> _pending = new();
-    private bool _showBuiltIns;
+    private bool _showBuiltIns = true;
 
     public ObservableCollection<PendingChange> PendingChanges { get; } = new();
     public ObservableCollection<EntryRowViewModel> AllEntries { get; } = new();
