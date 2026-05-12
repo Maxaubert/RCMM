@@ -12,4 +12,10 @@ public sealed record PackagedShellExt
     public required string PackageFullName { get; init; }
     public required string DisplayName { get; init; }
     public required string PublisherDisplayName { get; init; }
+    /// <summary>
+    /// Absolute path to the package's COM-registered DLL (or null if it couldn't be
+    /// resolved). Used as the icon source: ExtractIconEx returns the package's icon
+    /// resources, which is the closest we can get without parsing AppxManifest.xml.
+    /// </summary>
+    public string? DllPath { get; init; }
 }

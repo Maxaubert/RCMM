@@ -16,6 +16,8 @@ namespace RCMM.Core.Services;
 public sealed class PackagedShellExtScanner
 {
     private const string PackagesRoot = @"SOFTWARE\Classes\PackagedCom\Package";
+    private const string AppxStoreRoot =
+        @"SOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Applications";
     private const string Cat = "packaged";
 
     private readonly IRegistry _reg;
@@ -43,6 +45,8 @@ public sealed class PackagedShellExtScanner
             var serverRoot = PackagesRoot + "\\" + pkg + "\\Server";
             if (!_reg.KeyExists(RegistryHive.LocalMachine, serverRoot)) continue;
 
+            string? installFolder = ResolvePackageInstallFolder(pkg);
+
             foreach (var idx in _reg.GetSubKeyNames(RegistryHive.LocalMachine, serverRoot))
             {
                 var serverPath = serverRoot + "\\" + idx;
@@ -60,18 +64,53 @@ public sealed class PackagedShellExtScanner
                                   : pkg;
                 var publisher = !string.IsNullOrWhiteSpace(appDisplayName) ? appDisplayName : pkg;
 
+                // The Class\<CLSID>\DllPath is relative to the package install folder.
+                // Joining the two gives ExtractIconEx an absolute path it can probe.
+                var classPath = PackagesRoot + "\\" + pkg + "\\Class\\" + clsid!.Trim();
+                var relDll = _reg.GetValue(RegistryHive.LocalMachine, classPath, "DllPath") as string;
+                string? absDll = null;
+                if (!string.IsNullOrWhiteSpace(relDll) && installFolder != null)
+                    absDll = System.IO.Path.Combine(installFolder, relDll!);
+
                 yielded++;
                 yield return new PackagedShellExt
                 {
-                    Clsid = clsid!.Trim().ToUpperInvariant(),
+                    Clsid = clsid.Trim().ToUpperInvariant(),
                     PackageFullName = pkg,
                     DisplayName = chosenDisplay!,
-                    PublisherDisplayName = publisher!
+                    PublisherDisplayName = publisher!,
+                    DllPath = absDll
                 };
             }
         }
 
         Log.Info(Cat, $"PackagedShellExtScanner packages={packages} candidates={yielded}");
+    }
+
+    private string? ResolvePackageInstallFolder(string packageFullName)
+    {
+        // Primary: AppxAllUserStore lists a manifest path for some (but not all)
+        // packages. AMD lives here; Clipchamp / Terminal / Notepad++ do not.
+        var path = _reg.GetValue(RegistryHive.LocalMachine,
+            AppxStoreRoot + "\\" + packageFullName, "Path") as string;
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            try { var dir = System.IO.Path.GetDirectoryName(path); if (dir != null) return dir; }
+            catch { }
+        }
+
+        // Fallback: the standard system-wide install location. Even when the WindowsApps
+        // folder is unenumerable for non-admin users, ExtractIconEx can still read a DLL
+        // by absolute path inside it.
+        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        if (!string.IsNullOrEmpty(programFiles))
+        {
+            var candidate = System.IO.Path.Combine(programFiles, "WindowsApps", packageFullName);
+            // We can't List the folder but a DLL probe is fine — return the path and
+            // let ExtractIconEx do its own File.Exists check on the joined path.
+            return candidate;
+        }
+        return null;
     }
 
     private static bool LooksLikeClsid(string s)

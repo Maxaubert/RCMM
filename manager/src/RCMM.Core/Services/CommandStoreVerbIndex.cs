@@ -36,6 +36,7 @@ public sealed class CommandStoreVerbIndex
 
     private readonly IRegistry _reg;
     private Dictionary<string, HashSet<string>>? _byNormalisedName;
+    private Dictionary<string, string>? _iconByNormalisedName;
 
     public CommandStoreVerbIndex(IRegistry reg) { _reg = reg; }
 
@@ -44,10 +45,12 @@ public sealed class CommandStoreVerbIndex
         if (_byNormalisedName != null) return _byNormalisedName;
 
         var map = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        var iconMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (!_reg.KeyExists(RegistryHive.LocalMachine, CommandStoreRoot))
         {
             Log.Warn(Cat, "CommandStore not present");
             _byNormalisedName = map;
+            _iconByNormalisedName = iconMap;
             return map;
         }
 
@@ -65,24 +68,27 @@ public sealed class CommandStoreVerbIndex
             }
             if (clsids.Count == 0) continue;
 
+            var iconValue = _reg.GetValue(RegistryHive.LocalMachine, path, "Icon") as string;
+
             // Index by every label a caller might present:
             //   - raw key name                         (Windows.share)
             //   - key name with "Windows." stripped    (share)
             //   - last dot-separated segment           (extract from Windows.CompressedFile.extract)
             //   - the VerbName value if present        (opencontaining, format, ...)
-            Index(map, name, clsids);
+            Index(map, iconMap, name, clsids, iconValue);
             if (name.StartsWith("Windows.", StringComparison.OrdinalIgnoreCase))
-                Index(map, name.Substring("Windows.".Length), clsids);
+                Index(map, iconMap, name.Substring("Windows.".Length), clsids, iconValue);
             var lastDot = name.LastIndexOf('.');
             if (lastDot >= 0 && lastDot < name.Length - 1)
-                Index(map, name.Substring(lastDot + 1), clsids);
+                Index(map, iconMap, name.Substring(lastDot + 1), clsids, iconValue);
             if (_reg.GetValue(RegistryHive.LocalMachine, path, "VerbName") is string verbName
                 && !string.IsNullOrWhiteSpace(verbName))
-                Index(map, verbName, clsids);
+                Index(map, iconMap, verbName, clsids, iconValue);
         }
 
-        Log.Info(Cat, $"CommandStoreVerbIndex entries={map.Count}");
+        Log.Info(Cat, $"CommandStoreVerbIndex entries={map.Count} icons={iconMap.Count}");
         _byNormalisedName = map;
+        _iconByNormalisedName = iconMap;
         return map;
     }
 
@@ -94,7 +100,22 @@ public sealed class CommandStoreVerbIndex
         return Build().TryGetValue(key, out var clsids) ? clsids : Array.Empty<string>();
     }
 
-    private static void Index(Dictionary<string, HashSet<string>> map, string keyName, HashSet<string> clsids)
+    /// <summary>
+    /// Returns the Icon hint registered against the CommandStore entry for the verb
+    /// (e.g. "@%SystemRoot%\\System32\\imageres.dll,-5302"). Null when the verb has
+    /// no CommandStore entry or no Icon value.
+    /// </summary>
+    public string? LookupIcon(string verb)
+    {
+        Build();
+        var key = Normalise(verb);
+        if (key == null) return null;
+        return _iconByNormalisedName!.TryGetValue(key, out var icon) ? icon : null;
+    }
+
+    private static void Index(Dictionary<string, HashSet<string>> map,
+                              Dictionary<string, string> iconMap,
+                              string keyName, HashSet<string> clsids, string? icon)
     {
         var norm = Normalise(keyName);
         if (norm == null) return;
@@ -102,6 +123,8 @@ public sealed class CommandStoreVerbIndex
             map[norm] = new HashSet<string>(clsids, StringComparer.OrdinalIgnoreCase);
         else
             foreach (var c in clsids) existing.Add(c);
+        if (!string.IsNullOrWhiteSpace(icon) && !iconMap.ContainsKey(norm))
+            iconMap[norm] = icon!;
     }
 
     private static string? Normalise(string? s)

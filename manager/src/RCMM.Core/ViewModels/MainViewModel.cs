@@ -27,6 +27,8 @@ public sealed class MainViewModel : ObservableObject
         new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _packagedPublishers =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _packagedDllByClsid =
+        new(StringComparer.OrdinalIgnoreCase);
 
 
     private readonly Dictionary<string, IReadOnlyList<HideTarget>> _pendingHide = new();
@@ -95,6 +97,7 @@ public sealed class MainViewModel : ObservableObject
         // consults _packagedClsids to pick the right hide path.
         _packagedClsids.Clear();
         _packagedPublishers.Clear();
+        _packagedDllByClsid.Clear();
         if (_packagedScanner != null)
         {
             int pos = 0;
@@ -104,6 +107,8 @@ public sealed class MainViewModel : ObservableObject
                 _packagedClsids.Add(pkg.Clsid);
                 if (!_packagedPublishers.ContainsKey(pkg.Clsid))
                     _packagedPublishers[pkg.Clsid] = pkg.PublisherDisplayName;
+                if (pkg.DllPath != null && !_packagedDllByClsid.ContainsKey(pkg.Clsid))
+                    _packagedDllByClsid[pkg.Clsid] = pkg.DllPath;
                 allItems.Add(new CapturedItem
                 {
                     TargetPath = $"<packaged:{pkg.PackageFullName}>",
@@ -187,7 +192,7 @@ public sealed class MainViewModel : ObservableObject
         {
             var r = _allRows[i];
             var src = string.IsNullOrEmpty(r.Entry.Source) ? "Unknown" : r.Entry.Source;
-            Log.Debug("dump", $"#{i:D2} '{r.Entry.DisplayName}' src='{src}' sub={r.Entry.IsSubmenu} hideTargets={r.Entry.HideTargets.Count}");
+            Log.Debug("dump", $"#{i:D2} '{r.Entry.DisplayName}' src='{src}' sub={r.Entry.IsSubmenu} hideTargets={r.Entry.HideTargets.Count} icon='{r.Entry.IconPath ?? ""}'");
         }
     }
 
@@ -261,14 +266,66 @@ public sealed class MainViewModel : ObservableObject
 
     private string? ResolveIconPath(CapturedItem item, IReadOnlyList<HideTarget> targets)
     {
-        foreach (var target in targets)
+        // 1. Verb icon registered alongside the verb itself. Hide targets live in
+        // HKCU\Software\Classes\…, but the Icon and command values are at HKLM —
+        // read the merged HKCR view so installed-app verbs (VLC, Notepad++, Git, …)
+        // surface their custom icons.
+        foreach (var t in targets)
         {
-            if (target.Kind != HideKind.LegacyDisable) continue;
-            var icon = _reg.GetValue(target.Hive, target.Path, "Icon") as string;
+            if (t.Kind != HideKind.LegacyDisable) continue;
+            var hkcrPath = HkcrPathFor(t) ?? t.Path;
+            var icon = _reg.GetValue(RegistryHive.ClassesRoot, hkcrPath, "Icon") as string;
             if (!string.IsNullOrWhiteSpace(icon)) return icon;
-            var cmd = _reg.GetValue(target.Hive, target.Path + @"\command", "") as string;
+            var cmd = _reg.GetValue(RegistryHive.ClassesRoot, hkcrPath + @"\command", "") as string;
             if (!string.IsNullOrWhiteSpace(cmd)) return cmd;
+
+            // Verbs that delegate to a COM handler (modern Notepad++, pintohomefile, …)
+            // expose the handler's CLSID through one of these fields. Resolve to the
+            // handler DLL's first icon as a fallback when no Icon / command is given.
+            foreach (var field in new[] { "ExplorerCommandHandler", "VerbHandler", "CommandStateHandler", "CanonicalName" })
+            {
+                if (_reg.GetValue(RegistryHive.ClassesRoot, hkcrPath, field) is string handlerClsid
+                    && LooksLikeClsid(handlerClsid))
+                {
+                    var dll = _reg.GetValue(RegistryHive.ClassesRoot, $@"CLSID\{handlerClsid}\InprocServer32", "") as string;
+                    if (!string.IsNullOrWhiteSpace(dll)) return dll;
+                }
+            }
+            if (_reg.GetValue(RegistryHive.ClassesRoot, hkcrPath + @"\command", "DelegateExecute") is string delegateClsid
+                && LooksLikeClsid(delegateClsid))
+            {
+                var dll = _reg.GetValue(RegistryHive.ClassesRoot, $@"CLSID\{delegateClsid}\InprocServer32", "") as string;
+                if (!string.IsNullOrWhiteSpace(dll)) return dll;
+            }
         }
+
+        // 2. CommandStore icon for Windows' built-in verbs (Share, Open with, Copy
+        // as path, Cut, Copy, Delete, Properties, …). These reference resource IDs
+        // inside imageres.dll / shell32.dll — IconHelper handles the `,-NNNN` form.
+        if (!string.IsNullOrEmpty(item.Verb) && _commandStore != null)
+        {
+            var hint = _commandStore.LookupIcon(item.Verb!);
+            if (!string.IsNullOrWhiteSpace(hint)) return hint;
+        }
+
+        // 3. CLSID-owned icons — shellex handlers (Recuva, Defender, ModernSharing,
+        // PlayTo, …) typically expose their icon via DefaultIcon or as the first
+        // icon resource of the registered DLL.
+        if (!string.IsNullOrEmpty(item.OwnerClsid))
+        {
+            var clsidPath = $@"CLSID\{item.OwnerClsid}";
+            var defaultIcon = _reg.GetValue(RegistryHive.ClassesRoot, clsidPath + @"\DefaultIcon", "") as string;
+            if (!string.IsNullOrWhiteSpace(defaultIcon)) return defaultIcon;
+            var dll = _reg.GetValue(RegistryHive.ClassesRoot, clsidPath + @"\InprocServer32", "") as string;
+            if (!string.IsNullOrWhiteSpace(dll)) return dll;
+
+            // Packaged COM extensions aren't in classic HKCR\CLSID; their DLL lives
+            // under C:\Program Files\WindowsApps\<package>\… resolved from the AppX
+            // store and PackagedCom\Package\<pkg>\Class\<CLSID>\DllPath.
+            if (_packagedDllByClsid.TryGetValue(item.OwnerClsid!, out var packagedDll))
+                return packagedDll;
+        }
+
         return null;
     }
 
@@ -297,6 +354,9 @@ public sealed class MainViewModel : ObservableObject
         }
         return true;
     }
+
+    private static bool LooksLikeClsid(string s)
+        => !string.IsNullOrEmpty(s) && s.Length >= 38 && s.StartsWith('{') && s.EndsWith('}');
 
     /// <summary>
     /// Maps an HKCU\Software\Classes\... HideTarget path back to its HKCR equivalent
