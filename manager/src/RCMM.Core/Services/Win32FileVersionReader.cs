@@ -28,14 +28,24 @@ public sealed class Win32FileVersionReader : IFileVersionReader
         if (string.IsNullOrWhiteSpace(raw)) return null;
         var s = raw.Trim();
         if (s.StartsWith('"') && s.EndsWith('"') && s.Length >= 2) s = s[1..^1];
-        // Some CLSIDs store "<path>,<resource-id>" — drop the trailing index if it's not part of the file.
+        // "<path>,<resource-id>" — drop the trailing index when the head names a real file.
         var commaIdx = s.LastIndexOf(',');
         if (commaIdx > 0 && commaIdx > s.LastIndexOf('\\') && commaIdx > s.LastIndexOf('/'))
         {
-            var head = s[..commaIdx];
+            var head = s[..commaIdx].Trim();
             if (!File.Exists(s) && File.Exists(Environment.ExpandEnvironmentVariables(head)))
                 s = head;
+            else if (!File.Exists(s)) s = head;  // also strip when neither variant exists yet — the System32 fallback below will try
         }
-        return Environment.ExpandEnvironmentVariables(s);
+        s = Environment.ExpandEnvironmentVariables(s);
+        // Bare filename (no directory) — fall back to System32 the way Windows'
+        // DLL search path would. Lets us read shell32.dll / imageres.dll info
+        // from a CommandStore Icon hint like "shell32.dll,-16762".
+        if (!File.Exists(s) && !s.Contains('\\') && !s.Contains('/'))
+        {
+            var sys32 = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), s);
+            if (File.Exists(sys32)) s = sys32;
+        }
+        return s;
     }
 }

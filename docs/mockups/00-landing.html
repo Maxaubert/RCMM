@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RCMM — Mockup · Landing</title>
+<link rel="stylesheet" href="_shared.css">
+</head>
+<body>
+  <div class="app">
+
+    <div class="titlebar">
+      <div class="brand">
+        <div class="brand-mark">R</div>
+        <div class="brand-name">RCMM <span class="dim">— Right-Click Menu Manager</span></div>
+      </div>
+      <div class="titlebar-meta">Windows 11 · v0.4</div>
+    </div>
+
+    <main class="stagger">
+
+      <div class="section-head">
+        <div>
+          <h1>What would you like to do?</h1>
+          <p class="sub">Curate the menu that appears when you right-click anywhere in Explorer. Toggle entries off to hide them, on to bring them back.</p>
+        </div>
+        <div class="section-aside">
+          75 entries detected<br>
+          61 manageable<br>
+          14 of those Windows built-ins
+        </div>
+      </div>
+
+      <div class="card-grid">
+
+        <!-- Card 1: Show/hide -->
+        <a class="card" href="01-showhide.html" style="text-decoration:none; color:inherit;">
+          <div class="card-glyph">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+          </div>
+          <div>
+            <div class="card-title">Show / hide</div>
+            <p class="card-body">Toggle visibility of entries already in your right-click menu — from Cut and Paste down to Open with Visual Studio and AMD Software.</p>
+          </div>
+          <div class="card-stats">
+            <span class="stat-num">61</span>
+            <span class="stat-label">entries</span>
+            <span class="stat-sep">·</span>
+            <span class="stat-num">0</span>
+            <span class="stat-label">hidden</span>
+          </div>
+        </a>
+
+        <!-- Card 2: Add to menu -->
+        <div class="card disabled">
+          <div class="card-tag">Coming soon</div>
+          <div class="card-glyph">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 5v14M5 12h14"/>
+            </svg>
+          </div>
+          <div>
+            <div class="card-title">Add to menu</div>
+            <p class="card-body">Create new entries — run a custom command, open a path, or launch a script — and place them anywhere in the menu hierarchy.</p>
+          </div>
+          <div class="card-stats">
+            <span class="stat-num" style="color: var(--text-dim);">—</span>
+            <span class="stat-label">in development</span>
+          </div>
+        </div>
+
+      </div>
+
+    </main>
+
+    <div class="footer">
+      <span>Apply restarts Explorer · no admin required</span>
+      <a href="#">Open log folder</a>
+    </div>
+
+  </div>
+</body>
+</html>

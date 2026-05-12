@@ -4,31 +4,62 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="RCMM">
-    <Grid x:Name="RootGrid" Padding="0" Background="{ThemeResource WindowBackground}">
+    <Grid x:Name="RootGrid" Background="{ThemeResource WindowBackground}">
         <Grid.RowDefinitions>
-            <RowDefinition Height="36"/>
+            <RowDefinition Height="48"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <Grid x:Name="AppTitleBar" Grid.Row="0" Background="Transparent" Padding="14,0,140,0">
-            <TextBlock Text="RCMM — Right-Click Menu Manager" VerticalAlignment="Center" FontSize="12" Opacity="0.85"/>
+        <!-- Title bar: brand · nav · drag area · (window caption buttons) -->
+        <Grid x:Name="AppTitleBar" Grid.Row="0" Padding="16,0,140,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Brand -->
+            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                <Image Source="ms-appx:///Assets/icon.png" Width="28" Height="28" VerticalAlignment="Center"/>
+                <TextBlock VerticalAlignment="Center" FontSize="13" FontWeight="SemiBold"
+                           Foreground="{ThemeResource AppText}" Text="RCMM" CharacterSpacing="20"/>
+            </StackPanel>
+
+            <!-- Divider -->
+            <Border Grid.Column="1" Width="1" Height="22" Margin="14,0,14,0"
+                    Background="{ThemeResource AppBorder}" VerticalAlignment="Center"/>
+
+            <!-- Back / Home -->
+            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                <Button x:Name="NavBackButton" Click="NavBack_Click"
+                        Style="{StaticResource TitleBarIconButton}"
+                        ToolTipService.ToolTip="Back" IsEnabled="False">
+                    <FontIcon Glyph="&#xE72B;" FontSize="14"/>
+                </Button>
+                <Button x:Name="NavHomeButton" Click="NavHome_Click"
+                        Style="{StaticResource TitleBarIconButton}"
+                        ToolTipService.ToolTip="Home" IsEnabled="False">
+                    <FontIcon Glyph="&#xE80F;" FontSize="14"/>
+                </Button>
+            </StackPanel>
+
+            <!-- Drag area (rest of bar) -->
+            <Grid Grid.Column="3" Background="Transparent"/>
         </Grid>
 
+        <!-- Content -->
         <Frame x:Name="ContentFrame" Grid.Row="1"/>
 
-        <Grid Grid.Row="2" Padding="20,12,20,14" Background="{ThemeResource FooterBackground}">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="12">
-                <TextBlock x:Name="StatusLabel" Text="0 entries · 0 pending" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                <HyperlinkButton x:Name="OpenLogButton" Content="Open log folder"
-                                 Click="OpenLogButton_Click" Padding="0" FontSize="12" Opacity="0.85"/>
-            </StackPanel>
-            <Button Grid.Column="1" x:Name="ApplyButton" Content="Apply (restart Explorer)"
-                    Click="ApplyButton_Click" IsEnabled="False"/>
+        <!-- Footer (shows on list pages with Apply, invisible elsewhere) -->
+        <Grid x:Name="FooterContainer" Grid.Row="2" Padding="48,12,48,16"
+              BorderThickness="0">
+            <Button x:Name="FooterApplyButton" Content="Apply"
+                    Click="FooterApply_Click"
+                    Style="{StaticResource AccentButton}" IsEnabled="False"
+                    Visibility="Collapsed"
+                    HorizontalAlignment="Right" VerticalAlignment="Center"/>
         </Grid>
     </Grid>
 </Window>

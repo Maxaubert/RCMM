@@ -48,61 +48,73 @@ public sealed partial class MainWindow : Window
         SetTitleBar(AppTitleBar);
         TryRemoveWindowBorder();
         _minSize = WindowMinSize.Apply(WinRT.Interop.WindowNative.GetWindowHandle(this), 600, 480);
+        CenterOnPrimaryDisplay();
+        ApplyAppIcon();
 
-        HookThemeChange();
-        ViewModel.PropertyChanged += OnVmPropertyChanged;
-        ViewModel.PendingChangeIds.CollectionChanged += (_, __) => RefreshFooter();
+        // Force dark mode — the new design is dark-only.
+        RootGrid.RequestedTheme = ElementTheme.Dark;
+        ViewModel.RescanComplete += () => DispatcherQueue.TryEnqueue(LoadIconsForAllEntries);
+        ViewModel.PendingChangeIds.CollectionChanged += (_, __) => DispatcherQueue.TryEnqueue(UpdateFooterApply);
         ViewModel.Rescan();
-        LoadIconsForAllEntries();
-        RefreshFooter();
+        UpdateFooterApply();
 
-        ContentFrame.Navigate(typeof(ScopePage), ViewModel);
+        ContentFrame.Navigated += (_, e) => {
+            UpdateFooterApplyVisibility(e.SourcePageType);
+            UpdateNavButtons();
+        };
+        ContentFrame.Navigate(typeof(LandingPage), new NavArgs(ViewModel));
     }
 
-    private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    private void UpdateNavButtons()
     {
-        if (e.PropertyName == nameof(MainViewModel.RequiresExplorerRestart))
-            RefreshFooter();
+        NavBackButton.IsEnabled = ContentFrame.CanGoBack;
+        NavHomeButton.IsEnabled = ContentFrame.CanGoBack;
     }
 
-    private void RefreshFooter()
+    private void NavBack_Click(object sender, RoutedEventArgs e)
     {
-        StatusLabel.Text = $"{ViewModel.AllEntries.Count} entries · {ViewModel.PendingChangeIds.Count} pending";
-        ApplyButton.IsEnabled = ViewModel.PendingChangeIds.Count > 0;
+        if (ContentFrame.CanGoBack) ContentFrame.GoBack();
     }
 
-    private void ApplyButton_Click(object sender, RoutedEventArgs e)
+    private void NavHome_Click(object sender, RoutedEventArgs e)
     {
-        // Always restart Explorer after an Apply. LegacyDisable shows up immediately
-        // for new menus, but rows that were already-rendered keep their cached state,
-        // and shellex masks / Blocked-list entries definitely need a fresh Explorer.
-        // Cheaper to always restart than to confuse the user with "nothing happened".
+        while (ContentFrame.CanGoBack) ContentFrame.GoBack();
+    }
+
+    private void UpdateFooterApplyVisibility(Type pageType)
+    {
+        bool isListView = pageType == typeof(ScopePage);
+        FooterApplyButton.Visibility = isListView ? Visibility.Visible : Visibility.Collapsed;
+        if (isListView)
+        {
+            FooterContainer.Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["FooterBackground"];
+            FooterContainer.BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorder"];
+            FooterContainer.BorderThickness = new Thickness(0, 1, 0, 0);
+        }
+        else
+        {
+            FooterContainer.Background = null;
+            FooterContainer.BorderBrush = null;
+            FooterContainer.BorderThickness = new Thickness(0);
+        }
+    }
+
+    private void UpdateFooterApply()
+    {
+        int n = ViewModel.PendingChangeIds.Count;
+        FooterApplyButton.IsEnabled = n > 0;
+        FooterApplyButton.Content = n > 0 ? $"Apply ({n})" : "Apply";
+    }
+
+    private void FooterApply_Click(object sender, RoutedEventArgs e)
+    {
         ViewModel.ApplyPending();
         new ExplorerRestart().Restart();
         ViewModel.Rescan();
-        LoadIconsForAllEntries();
-        RefreshFooter();
+        UpdateFooterApply();
     }
 
-    private void OpenLogButton_Click(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            Directory.CreateDirectory(Log.Folder);
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "explorer.exe",
-                Arguments = $"\"{Log.Folder}\"",
-                UseShellExecute = true
-            });
-        }
-        catch (Exception ex)
-        {
-            Log.Error("ui", "OpenLogButton failed", ex);
-        }
-    }
-
-    private void LoadIconsForAllEntries()
+private void LoadIconsForAllEntries()
     {
         foreach (var row in ViewModel.AllEntries)
         {
@@ -148,6 +160,32 @@ public sealed partial class MainWindow : Window
                 });
             });
         }
+    }
+
+    private void ApplyAppIcon()
+    {
+        try
+        {
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd);
+            var appWindow = Microsoft.UI.Windowing.AppWindow.GetFromWindowId(windowId);
+            var icoPath = Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico");
+            if (File.Exists(icoPath)) appWindow?.SetIcon(icoPath);
+        }
+        catch (Exception ex) { Log.Error("ui", "ApplyAppIcon failed", ex); }
+    }
+
+    private void CenterOnPrimaryDisplay()
+    {
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd);
+        var appWindow = Microsoft.UI.Windowing.AppWindow.GetFromWindowId(windowId);
+        var display = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(
+            windowId, Microsoft.UI.Windowing.DisplayAreaFallback.Primary);
+        if (appWindow == null || display == null) return;
+        int x = display.WorkArea.X + (display.WorkArea.Width - appWindow.Size.Width) / 2;
+        int y = display.WorkArea.Y + (display.WorkArea.Height - appWindow.Size.Height) / 2;
+        appWindow.Move(new Windows.Graphics.PointInt32(x, y));
     }
 
     private void TryRemoveWindowBorder()

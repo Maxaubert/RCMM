@@ -1,0 +1,106 @@
+<!-- Shared body markup for palette mockups (kept as reference, not loaded directly) -->
+<div class="app">
+  <div class="titlebar">
+    <div class="brand">
+      <div class="brand-mark-wrap">
+        <div class="brand-mark-halo"></div>
+        <div class="brand-mark-glow"></div>
+        <div class="brand-mark">R</div>
+      </div>
+      <div class="brand-name">RCMM</div>
+    </div>
+    <div class="titlebar-divider"></div>
+    <div class="titlebar-nav">
+      <div class="nav-btn disabled" title="Back">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      </div>
+      <div class="nav-btn disabled" title="Home">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12L12 3l9 9M5 10v10h14V10"/></svg>
+      </div>
+    </div>
+    <div class="titlebar-spacer"></div>
+    <div class="titlebar-caption">
+      <div class="cap-btn"><svg viewBox="0 0 11 11"><path d="M0 5h11" stroke="currentColor" fill="none"/></svg></div>
+      <div class="cap-btn"><svg viewBox="0 0 11 11"><rect x="0.5" y="0.5" width="10" height="10" fill="none" stroke="currentColor"/></svg></div>
+      <div class="cap-btn close"><svg viewBox="0 0 11 11"><path d="M0 0 L11 11 M11 0 L0 11" stroke="currentColor" fill="none"/></svg></div>
+    </div>
+  </div>
+
+  <main>
+    <div class="section-head">
+      <div>
+        <h1>What would you like to do?</h1>
+        <p class="sub">Customize the right-click menu in Windows Explorer.</p>
+      </div>
+      <div class="stat-block">
+        <div class="donut-wrap">
+          <svg viewBox="0 0 120 120">
+            <circle cx="60" cy="60" r="45" fill="none" stroke="var(--donut-win)" stroke-width="18"/>
+            <circle cx="60" cy="60" r="45" fill="none" stroke="var(--donut-app)" stroke-width="18" stroke-dasharray="91.2 282.7"/>
+          </svg>
+          <div class="donut-center">
+            <div class="donut-num">62</div>
+            <div class="donut-cap">ENTRIES</div>
+          </div>
+        </div>
+        <div class="legend">
+          <div class="legend-item">
+            <div class="legend-dot" style="background: var(--donut-app)"></div>
+            <span>20</span><span class="legend-cap">APP</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-dot" style="background: var(--donut-win)"></div>
+            <span>42</span><span class="legend-cap">WIN</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card-grid">
+      <a class="card" href="#">
+        <div class="card-glyph-wrap">
+          <div class="card-glyph-halo"></div>
+          <div class="card-glyph">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>
+            </svg>
+          </div>
+        </div>
+        <div>
+          <div class="card-title">Show / hide</div>
+          <p class="card-body">Toggle visibility of entries already in your right-click menu.</p>
+        </div>
+        <div class="card-stats">
+          <span class="stat-num">62</span><span class="stat-label">ENTRIES</span>
+        </div>
+      </a>
+
+      <div class="card disabled">
+        <div class="card-tag">Coming soon</div>
+        <div class="card-glyph-wrap">
+          <div class="card-glyph muted">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 5v14M5 12h14"/>
+            </svg>
+          </div>
+        </div>
+        <div>
+          <div class="card-title">Add to menu</div>
+          <p class="card-body">Create new entries, run a custom command, open a path, or launch a script.</p>
+        </div>
+        <div class="card-stats">
+          <span class="stat-num" style="color: var(--text-dim)">—</span><span class="stat-label">IN DEVELOPMENT</span>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div class="palette-strip">
+    <strong>__PALETTE_NAME__</strong>
+    <span style="margin-left: 16px;"><span class="swatch" style="background: var(--accent)"></span>accent</span>
+    <span><span class="swatch" style="background: var(--donut-app)"></span>app</span>
+    <span><span class="swatch" style="background: var(--donut-win)"></span>win</span>
+    <span><span class="swatch" style="background: var(--bg)"></span>bg</span>
+    <span><span class="swatch" style="background: var(--surface)"></span>surface</span>
+  </div>
+</div>

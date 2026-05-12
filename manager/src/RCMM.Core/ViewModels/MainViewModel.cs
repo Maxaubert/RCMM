@@ -41,6 +41,10 @@ public sealed class MainViewModel : ObservableObject
     public ObservableCollection<EntryRowViewModel> AllEntries { get; } = new();
     public ObservableCollection<string> PendingChangeIds { get; } = new();
 
+    /// <summary>Raised after Rescan finishes populating AllEntries — host uses
+    /// this to (re-)load icons for the new rows.</summary>
+    public event Action? RescanComplete;
+
     public MainViewModel(
         IContextMenuCaptureService capture,
         TargetProvider targets,
@@ -264,7 +268,7 @@ public sealed class MainViewModel : ObservableObject
             var hideTargets = ResolveHideTargets(effectiveItem);
             var iconPath = ResolveIconPath(effectiveItem, hideTargets);
             var isHidden = AllTargetsHidden(hideTargets);
-            var (source, isBuiltIn) = ResolveSourceAndBuiltIn(effectiveItem, hideTargets);
+            var (source, isBuiltIn) = ResolveSourceAndBuiltIn(effectiveItem, hideTargets, iconPath);
             var entry = new MenuEntry
             {
                 Id = ComputeId(effectiveItem),
@@ -295,6 +299,7 @@ public sealed class MainViewModel : ObservableObject
         _pendingUnhide.Clear();
         PendingChangeIds.Clear();
         Raise(nameof(RequiresExplorerRestart));
+        RescanComplete?.Invoke();
         Log.Info("rescan", $"end rows={_allRows.Count} withHideTargets={rowsWithHide} builtIn={rowsBuiltIn} visible={AllEntries.Count}");
         for (int i = 0; i < _allRows.Count; i++)
         {
@@ -708,47 +713,97 @@ public sealed class MainViewModel : ObservableObject
         Log.Info("apply", "end");
     }
 
-    private (string? source, bool isBuiltIn) ResolveSourceAndBuiltIn(CapturedItem item, IReadOnlyList<HideTarget> targets)
+    private (string? source, bool isBuiltIn) ResolveSourceAndBuiltIn(CapturedItem item, IReadOnlyList<HideTarget> targets, string? iconPath)
     {
-        string? exePath = null;
-        string? clsidForFile = item.OwnerClsid;
-
+        // Walk every kind of hide target and collect candidate "probe" paths —
+        // either the verb's command-line exe (LegacyDisable) or a handler CLSID's
+        // InprocServer32 DLL (BlockedShellExt + HkcuMask). For Cut / Copy / Paste
+        // / Delete / Rename / Properties etc. the hide-target is BlockedShellExt
+        // pointing at a CommandStore handler CLSID, so probing the CLSID's DLL is
+        // the only way to discover the source — earlier code only checked
+        // LegacyDisable, which is why these all came back source=Unknown,
+        // IsBuiltIn=false even though their handler is shell32.dll.
+        var probes = new List<string>();
+        if (!string.IsNullOrEmpty(item.OwnerClsid))
+        {
+            var dll = _reg.GetValue(RegistryHive.ClassesRoot,
+                $@"CLSID\{item.OwnerClsid}\InprocServer32", "") as string;
+            if (!string.IsNullOrEmpty(dll)) probes.Add(dll);
+        }
+        // The resolved icon path is another strong hint at the handler binary —
+        // for verbs whose CommandStore CanonicalName is a virtual id with no
+        // HKCR\CLSID registration (Cut, Copy, Delete, Rename), the Icon value
+        // like "shell32.dll,-16762" is the only signal that the handler lives
+        // in shell32.dll.
+        if (!string.IsNullOrEmpty(iconPath)) probes.Add(iconPath);
         foreach (var t in targets)
         {
-            if (t.Kind != HideKind.LegacyDisable) continue;
-            var cmd = _reg.GetValue(t.Hive, t.Path + @"\command", "") as string;
-            if (!string.IsNullOrWhiteSpace(cmd))
+            switch (t.Kind)
             {
-                exePath = ExtractExe(cmd);
-                break;
+                case HideKind.LegacyDisable:
+                    var hkcrPath = HkcrPathFor(t) ?? t.Path;
+                    var cmd = _reg.GetValue(RegistryHive.ClassesRoot, hkcrPath + @"\command", "") as string;
+                    if (!string.IsNullOrWhiteSpace(cmd))
+                    {
+                        var exe = ExtractExe(cmd);
+                        if (!string.IsNullOrEmpty(exe)) probes.Add(exe);
+                    }
+                    foreach (var field in new[] { "ExplorerCommandHandler", "VerbHandler", "CommandStateHandler" })
+                    {
+                        if (_reg.GetValue(RegistryHive.ClassesRoot, hkcrPath, field) is string handlerClsid
+                            && LooksLikeClsid(handlerClsid))
+                        {
+                            var dll = _reg.GetValue(RegistryHive.ClassesRoot,
+                                $@"CLSID\{handlerClsid}\InprocServer32", "") as string;
+                            if (!string.IsNullOrEmpty(dll)) probes.Add(dll);
+                        }
+                    }
+                    break;
+                case HideKind.BlockedShellExt:
+                    if (LooksLikeClsid(t.ValueName))
+                    {
+                        var dll = _reg.GetValue(RegistryHive.ClassesRoot,
+                            $@"CLSID\{t.ValueName}\InprocServer32", "") as string;
+                        if (!string.IsNullOrEmpty(dll)) probes.Add(dll);
+                    }
+                    break;
+                case HideKind.HkcuMask:
+                    // path = Software\Classes\<scope>\shellex\ContextMenuHandlers\<name>
+                    var classes = "Software\\Classes\\";
+                    if (t.Path.StartsWith(classes, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var hkcrShellex = t.Path.Substring(classes.Length);
+                        var clsidStr = _reg.GetValue(RegistryHive.ClassesRoot, hkcrShellex, "") as string;
+                        if (clsidStr != null && LooksLikeClsid(clsidStr))
+                        {
+                            var dll = _reg.GetValue(RegistryHive.ClassesRoot,
+                                $@"CLSID\{clsidStr}\InprocServer32", "") as string;
+                            if (!string.IsNullOrEmpty(dll)) probes.Add(dll);
+                        }
+                    }
+                    break;
             }
         }
 
-        // For shellex items, look up the DLL via the CLSID.
-        string? dllPath = null;
-        if (clsidForFile != null)
-        {
-            dllPath = _reg.GetValue(RegistryHive.ClassesRoot, $@"CLSID\{clsidForFile}\InprocServer32", "") as string;
-        }
-
-        var probe = exePath ?? dllPath;
-        if (!string.IsNullOrEmpty(probe))
+        foreach (var probe in probes)
         {
             var info = _files.Read(probe);
             var company = info.CompanyName;
-            bool builtIn = (company != null && company.IndexOf("Microsoft", StringComparison.OrdinalIgnoreCase) >= 0)
-                            || LooksWindowsPath(probe);
-            return (company, builtIn);
+            if (!string.IsNullOrEmpty(company) || LooksWindowsPath(probe))
+            {
+                // IsBuiltIn means "Windows component, not a third-party app". DLL in
+                // Windows folder is the strict signal. Don't include "Microsoft app
+                // in Program Files / WindowsApps" — Visual Studio Code, Clipchamp,
+                // PowerToys are published by Microsoft but are user-installed apps.
+                return (company, LooksWindowsPath(probe));
+            }
         }
 
         // Packaged extensions don't have a classic CLSID InprocServer entry. Use the
-        // publisher name straight from the AppX registration so the user can recognise
-        // which app the entry belongs to (e.g. "AMD Software", "Microsoft").
-        if (clsidForFile != null && _packagedPublishers.TryGetValue(clsidForFile, out var pub))
-        {
-            bool builtIn = pub.IndexOf("Microsoft", StringComparison.OrdinalIgnoreCase) >= 0;
-            return (pub, builtIn);
-        }
+        // publisher name straight from the AppX registration. Microsoft-published
+        // packaged apps stay Application-specific because they aren't part of the OS.
+        if (item.OwnerClsid != null && _packagedPublishers.TryGetValue(item.OwnerClsid, out var pub))
+            return (pub, false);
         return (null, false);
     }
 
@@ -769,9 +824,24 @@ public sealed class MainViewModel : ObservableObject
         try
         {
             var s = Environment.ExpandEnvironmentVariables(raw).ToLowerInvariant();
+            // Strip optional trailing icon index ",-NNNN" and surrounding quotes.
+            if (s.StartsWith('"')) { var e = s.IndexOf('"', 1); if (e > 1) s = s[1..e]; }
+            var comma = s.LastIndexOf(',');
+            if (comma > 0 && comma > s.LastIndexOf('\\') && comma > s.LastIndexOf('/'))
+                s = s[..comma].Trim();
+
             var winDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows).ToLowerInvariant();
             if (winDir.Length > 0 && s.StartsWith(winDir + "\\")) return true;
-            return s.Contains(@"\windows\system32\") || s.Contains(@"\windows\syswow64\");
+            if (s.Contains(@"\windows\system32\") || s.Contains(@"\windows\syswow64\")) return true;
+            // Bare filenames like "shell32.dll" or "imageres.dll" resolve to System32
+            // via Windows' DLL search path. Treat them as Windows binaries.
+            if (!s.Contains('\\') && !s.Contains('/')
+                && (s.EndsWith(".dll") || s.EndsWith(".exe") || s.EndsWith(".mui")))
+            {
+                var sys32 = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), s);
+                if (System.IO.File.Exists(sys32)) return true;
+            }
+            return false;
         }
         catch { return false; }
     }
