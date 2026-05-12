@@ -15,6 +15,7 @@ dotnet run --project manager/src/RCMM/RCMM.csproj
 ## Status
 
 - [x] Foundation + classic-menu hide/unhide (Plan 1)
-- [ ] Modern Win11 menu hide (Plan 2)
-- [ ] Add custom items (Plan 3)
-- [ ] Backup snapshot + Undo all (Plan 4)
+- [x] Capture-based classic menu (Plan 2) — list mirrors actual right-click menu
+- [ ] Modern Win11 menu hide (Plan 3)
+- [ ] Add custom items (Plan 4)
+- [ ] Backup snapshot + Undo all (Plan 5)
