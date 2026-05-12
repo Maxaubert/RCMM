@@ -24,14 +24,12 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
 
         var registry = new Win32Registry();
-        var resolver = new ClsidResolver(registry);
-        var files = new Win32FileVersionReader();
-        var mui = new Win32MuiStringResolver();
-        var scanner = new EntryScanner(
-            new ClassicVerbScanner(registry, mui),
-            new ClassicShellexScanner(registry, resolver, files));
+        var capture = new ContextMenuCaptureService();
+        var targets = new TargetProvider();
+        var mapper = new VerbToRegistryMapper(registry);
         var hide = new HideService(registry);
-        ViewModel = new MainViewModel(scanner, hide);
+
+        ViewModel = new MainViewModel(capture, targets, mapper, hide, registry);
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
@@ -40,7 +38,7 @@ public sealed partial class MainWindow : Window
 
         HookThemeChange();
         ViewModel.PropertyChanged += OnVmPropertyChanged;
-        ViewModel.PendingChanges.CollectionChanged += (_, __) => RefreshFooter();
+        ViewModel.PendingChangeIds.CollectionChanged += (_, __) => RefreshFooter();
         ViewModel.Rescan();
         LoadIconsForAllEntries();
         RefreshFooter();
@@ -56,8 +54,8 @@ public sealed partial class MainWindow : Window
 
     private void RefreshFooter()
     {
-        StatusLabel.Text = $"{ViewModel.AllEntries.Count} entries · {ViewModel.PendingChanges.Count} pending";
-        ApplyButton.IsEnabled = ViewModel.PendingChanges.Count > 0;
+        StatusLabel.Text = $"{ViewModel.AllEntries.Count} entries · {ViewModel.PendingChangeIds.Count} pending";
+        ApplyButton.IsEnabled = ViewModel.PendingChangeIds.Count > 0;
     }
 
     private void ApplyButton_Click(object sender, RoutedEventArgs e)
@@ -74,31 +72,33 @@ public sealed partial class MainWindow : Window
     {
         foreach (var row in ViewModel.AllEntries)
         {
-            var path = row.Entry.IconPath ?? ExtractExeFromCommand(row.Entry.CommandLine);
-            if (string.IsNullOrEmpty(path)) continue;
             var rowRef = row;
+            var bytes = row.Entry.IconBytes;
+            if (bytes != null && bytes.Length > 0)
+            {
+                DispatcherQueue.TryEnqueue(async () =>
+                {
+                    try
+                    {
+                        using var ms = new System.IO.MemoryStream(bytes);
+                        var bmp = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage();
+                        await bmp.SetSourceAsync(ms.AsRandomAccessStream());
+                        rowRef.Icon = bmp;
+                    }
+                    catch { }
+                });
+                continue;
+            }
+
+            var path = row.Entry.IconPath;
+            if (string.IsNullOrEmpty(path)) continue;
             _ = Task.Run(async () =>
             {
                 var bmp = await IconHelper.LoadIconAsync(path);
                 if (bmp != null)
-                {
                     DispatcherQueue.TryEnqueue(() => rowRef.Icon = bmp);
-                }
             });
         }
-    }
-
-    private static string? ExtractExeFromCommand(string? cmd)
-    {
-        if (string.IsNullOrWhiteSpace(cmd)) return null;
-        cmd = cmd.Trim();
-        if (cmd.StartsWith('"'))
-        {
-            var end = cmd.IndexOf('"', 1);
-            if (end > 1) return cmd[1..end];
-        }
-        var space = cmd.IndexOf(' ');
-        return space > 0 ? cmd[..space] : cmd;
     }
 
     private void TryRemoveWindowBorder()
