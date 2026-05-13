@@ -11,15 +11,13 @@
 
 ---
 
-<table align="center">
-  <tr>
-    <td align="center"><img src="docs/screenshots/Home.png" alt="" width="480"></td>
-    <td align="center"><img src="docs/screenshots/Hide%26Show.png" alt="" width="480"></td>
-  </tr>
-  <tr>
-    <td align="center" colspan="2"><img src="docs/screenshots/AppListShowHide.png" alt="" width="700"></td>
-  </tr>
-</table>
+<div align="center">
+  <img src="docs/screenshots/Home.png" alt="" width="820">
+  <br><br>
+  <img src="docs/screenshots/Hide%26Show.png" alt="" width="820">
+  <br><br>
+  <img src="docs/screenshots/AppListShowHide.png" alt="" width="820">
+</div>
 
 ## Install
 
