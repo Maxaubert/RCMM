@@ -3,7 +3,7 @@
 
   # RCMM
 
-  Right-Click Menu Manager. Show or hide entries in the Windows Explorer right-click menu. No admin required.
+  Right-Click Menu Manager. Show or hide entries in the Windows Explorer right-click menu. More coming soon.
 
   [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square)](https://github.com/Maxaubert/RCMM/releases)
   [![Release](https://img.shields.io/github/v/release/Maxaubert/RCMM?style=flat-square)](https://github.com/Maxaubert/RCMM/releases/latest)
@@ -11,13 +11,15 @@
 
 ---
 
-<div align="center">
-  <img src="docs/screenshots/Home.png" alt="" width="820">
-  <br><br>
-  <img src="docs/screenshots/Hide%26Show.png" alt="" width="820">
-  <br><br>
-  <img src="docs/screenshots/AppListShowHide.png" alt="" width="820">
-</div>
+<table align="center">
+  <tr>
+    <td align="center"><img src="docs/screenshots/Home.png" alt="" width="480"></td>
+    <td align="center"><img src="docs/screenshots/Hide%26Show.png" alt="" width="480"></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2"><img src="docs/screenshots/AppListShowHide.png" alt="" width="700"></td>
+  </tr>
+</table>
 
 ## Install
 
