@@ -11,20 +11,13 @@
 
 ---
 
-<p align="center">
-  <img src="docs/screenshots/Home.png" alt="Landing screen" width="780"><br>
-  <sub><b>1. Land</b> — see what's in your right-click menu and pick an action.</sub>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/Hide%26Show.png" alt="Pick a scope" width="780"><br>
-  <sub><b>2. Pick a scope</b> — <em>Application specific</em> (entries added by installed apps) or <em>Windows specific</em> (built-in Explorer verbs).</sub>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/AppListShowHide.png" alt="Toggle entries" width="780"><br>
-  <sub><b>3. Toggle entries</b> — flip the switches you want hidden, then hit <em>Apply</em>.</sub>
-</p>
+<div align="center">
+  <img src="docs/screenshots/Home.png" alt="" width="820">
+  <br><br>
+  <img src="docs/screenshots/Hide%26Show.png" alt="" width="820">
+  <br><br>
+  <img src="docs/screenshots/AppListShowHide.png" alt="" width="820">
+</div>
 
 ## Install
 
