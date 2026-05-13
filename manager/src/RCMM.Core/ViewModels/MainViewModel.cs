@@ -269,6 +269,11 @@ public sealed class MainViewModel : ObservableObject
             var iconPath = ResolveIconPath(effectiveItem, hideTargets);
             var isHidden = AllTargetsHidden(hideTargets);
             var (source, isBuiltIn) = ResolveSourceAndBuiltIn(effectiveItem, hideTargets, iconPath);
+            // "Create shortcut" ships in shell32 but its hide-target classification
+            // doesn't always resolve to a Windows DLL probe (the verb's CLSID handler
+            // may live elsewhere), so force it into the Windows-specific bucket.
+            if (string.Equals(effectiveItem.DisplayName, "Create shortcut", StringComparison.OrdinalIgnoreCase))
+                isBuiltIn = true;
             var entry = new MenuEntry
             {
                 Id = ComputeId(effectiveItem),
@@ -309,12 +314,24 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    private static readonly string[] _suppressedDisplayNames =
+    {
+        "File ownership",
+        "Launches Sync Center",
+        "Launches Sync Center.",
+        "Work Folders",
+        "App Resolver",
+    };
+
     private void FilterIntoAllEntries()
     {
         AllEntries.Clear();
         foreach (var row in _allRows)
         {
             if (row.IsBuiltIn && !_showBuiltIns) continue;
+            // Conditional / informational handlers that surface during probing but
+            // aren't real menu options the user can act on.
+            if (_suppressedDisplayNames.Contains(row.Entry.DisplayName, StringComparer.OrdinalIgnoreCase)) continue;
             // Hide rows whose DisplayName is a technical class label — those are
             // FileDescriptions like "Windows Shell Common Dll" / "Microsoft Security
             // Client Shell Extension" that don't correspond to a real menu option.
