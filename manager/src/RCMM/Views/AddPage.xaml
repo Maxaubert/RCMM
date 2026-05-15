@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="RCMM.Views.AddPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Padding="48,28,48,40" RowSpacing="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Heading -->
+        <StackPanel Grid.Row="0" Spacing="6">
+            <TextBlock Text="Add to menu" FontSize="38" FontWeight="Medium"
+                       Foreground="{ThemeResource AppText}" CharacterSpacing="-15"/>
+            <TextBlock Text="Add your own entries to the (classic) right-click menu. Pick a template or write a custom command. Group entries into folders that render as submenus."
+                       Foreground="{ThemeResource AppTextMuted}" FontSize="13" TextWrapping="Wrap" MaxWidth="780"/>
+        </StackPanel>
+
+        <!-- Header buttons -->
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="10">
+            <Button x:Name="NewEntryButton" Content="+ New entry" Click="NewEntry_Click"
+                    Background="{ThemeResource AppSurface}" BorderBrush="{ThemeResource AppBorder}"
+                    Foreground="{ThemeResource AppText}" CornerRadius="8" Padding="14,8"/>
+            <Button x:Name="NewFolderButton" Content="+ New folder" Click="NewFolder_Click"
+                    Background="{ThemeResource AppSurface}" BorderBrush="{ThemeResource AppBorder}"
+                    Foreground="{ThemeResource AppText}" CornerRadius="8" Padding="14,8"/>
+            <Button x:Name="TemplatesButton" Content="Browse templates" Click="Templates_Click"
+                    Background="{ThemeResource AppSurface}" BorderBrush="{ThemeResource AppBorder}"
+                    Foreground="{ThemeResource AppText}" CornerRadius="8" Padding="14,8"/>
+        </StackPanel>
+
+        <!-- Master-detail -->
+        <Grid Grid.Row="2" ColumnSpacing="20">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="340"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Left: list of folders + entries -->
+            <Border Grid.Column="0"
+                    Background="{ThemeResource AppSurface}"
+                    BorderBrush="{ThemeResource AppBorder}"
+                    BorderThickness="1" CornerRadius="10">
+                <ListView x:Name="ItemsList"
+                          SelectionMode="Single"
+                          SelectionChanged="ItemsList_SelectionChanged"
+                          Background="Transparent"
+                          BorderThickness="0">
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Padding="8,6" ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <FontIcon Grid.Column="0"
+                                          Glyph="{Binding GlyphForKind}"
+                                          FontSize="13"
+                                          Foreground="{ThemeResource AppTextMuted}"
+                                          VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" Text="{Binding Display}"
+                                           Foreground="{ThemeResource AppText}"
+                                           TextTrimming="CharacterEllipsis"/>
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </Border>
+
+            <!-- Right: editor panel (built dynamically in code-behind) -->
+            <Border Grid.Column="1"
+                    Background="{ThemeResource AppSurface}"
+                    BorderBrush="{ThemeResource AppBorder}"
+                    BorderThickness="1" CornerRadius="10"
+                    Padding="20">
+                <ScrollViewer>
+                    <StackPanel x:Name="EditorPanel" Spacing="12" Visibility="Collapsed">
+                        <TextBlock x:Name="EditorTitle" Text="Edit entry"
+                                   FontSize="20" FontWeight="SemiBold"
+                                   Foreground="{ThemeResource AppText}"/>
+
+                        <TextBlock Text="Name" Foreground="{ThemeResource AppTextMuted}" FontSize="12"/>
+                        <TextBox x:Name="NameBox" LostFocus="Field_Changed"/>
+
+                        <TextBlock x:Name="CommandLabel" Text="Command"
+                                   Foreground="{ThemeResource AppTextMuted}" FontSize="12"/>
+                        <TextBox x:Name="CommandBox" FontFamily="Consolas, Cascadia Code, monospace" LostFocus="Field_Changed"/>
+
+                        <TextBlock x:Name="WorkingDirLabel" Text="Working directory"
+                                   Foreground="{ThemeResource AppTextMuted}" FontSize="12"/>
+                        <TextBox x:Name="WorkingDirBox" FontFamily="Consolas, Cascadia Code, monospace" LostFocus="Field_Changed"/>
+
+                        <TextBlock x:Name="ScopeLabel" Text="Scope" Foreground="{ThemeResource AppTextMuted}" FontSize="12"/>
+                        <ComboBox x:Name="ScopeBox" HorizontalAlignment="Stretch" SelectionChanged="Field_SelectionChanged"/>
+
+                        <TextBlock x:Name="FileTypesLabel" Text="File types (comma-separated; only used when Scope = File)"
+                                   Foreground="{ThemeResource AppTextMuted}" FontSize="12"/>
+                        <TextBox x:Name="FileTypesBox" FontFamily="Consolas, Cascadia Code, monospace" LostFocus="Field_Changed"/>
+
+                        <TextBlock x:Name="FolderLabel" Text="Folder" Foreground="{ThemeResource AppTextMuted}" FontSize="12"/>
+                        <ComboBox x:Name="FolderBox" HorizontalAlignment="Stretch" SelectionChanged="Field_SelectionChanged"/>
+
+                        <TextBlock x:Name="RunModeLabel" Text="Run mode" Foreground="{ThemeResource AppTextMuted}" FontSize="12"/>
+                        <ComboBox x:Name="RunModeBox" HorizontalAlignment="Stretch" SelectionChanged="Field_SelectionChanged"/>
+
+                        <TextBlock x:Name="IconLabel" Text="Icon (path or path,index)" Foreground="{ThemeResource AppTextMuted}" FontSize="12"/>
+                        <TextBox x:Name="IconBox" FontFamily="Consolas, Cascadia Code, monospace" LostFocus="Field_Changed"/>
+
+                        <Button x:Name="DeleteButton" Content="Delete" Click="Delete_Click"
+                                Margin="0,12,0,0"
+                                Background="Transparent"
+                                BorderBrush="{ThemeResource AppBorder}"
+                                Foreground="{ThemeResource AppText}"
+                                CornerRadius="8" Padding="14,8"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+        </Grid>
+    </Grid>
+</Page>

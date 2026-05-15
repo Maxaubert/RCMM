@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="RCMM.Views.TemplatesPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Padding="48,28,48,40" RowSpacing="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Spacing="6">
+            <TextBlock Text="Browse templates" FontSize="38" FontWeight="Medium"
+                       Foreground="{ThemeResource AppText}" CharacterSpacing="-15"/>
+            <TextBlock Text="Pick a starting point. Adding a template creates a new editable entry on the Add page — the template itself stays unchanged."
+                       Foreground="{ThemeResource AppTextMuted}" FontSize="13" TextWrapping="Wrap" MaxWidth="780"/>
+        </StackPanel>
+
+        <Border Grid.Row="1"
+                Background="{ThemeResource AppSurface}"
+                BorderBrush="{ThemeResource AppBorder}"
+                BorderThickness="1" CornerRadius="10">
+            <ListView x:Name="TemplatesList"
+                      Background="Transparent"
+                      BorderThickness="0"
+                      SelectionMode="None"
+                      IsItemClickEnabled="False">
+                <ListView.GroupStyle>
+                    <GroupStyle HidesIfEmpty="True">
+                        <GroupStyle.HeaderTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding Key}"
+                                           FontSize="14"
+                                           FontWeight="SemiBold"
+                                           Foreground="{ThemeResource AppTextMuted}"
+                                           Padding="8,14,8,6"/>
+                            </DataTemplate>
+                        </GroupStyle.HeaderTemplate>
+                    </GroupStyle>
+                </ListView.GroupStyle>
+                <ListView.ItemTemplate>
+                    <DataTemplate>
+                        <Grid ColumnSpacing="12" Padding="8,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <TextBlock Text="{Binding Name}"
+                                           Foreground="{ThemeResource AppText}"
+                                           FontWeight="SemiBold"/>
+                                <TextBlock Text="{Binding AppliesWhen}"
+                                           Foreground="{ThemeResource AppTextDim}"
+                                           FontSize="11"/>
+                            </StackPanel>
+                            <Button Grid.Column="1"
+                                    Content="+ Add"
+                                    Click="Add_Click"
+                                    Background="{ThemeResource AppSurfaceHover}"
+                                    BorderBrush="{ThemeResource AppBorder}"
+                                    Foreground="{ThemeResource AppText}"
+                                    CornerRadius="6" Padding="10,4"/>
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+        </Border>
+    </Grid>
+</Page>
