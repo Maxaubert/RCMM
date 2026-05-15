@@ -63,6 +63,16 @@ public sealed class VerbToRegistryMapper
             foreach (var name in _reg.GetSubKeyNames(RegistryHive.ClassesRoot, handlersRoot))
             {
                 var defaultVal = _reg.GetValue(RegistryHive.ClassesRoot, handlersRoot + "\\" + name, "") as string;
+                // HKCU mask path: once the user has hidden a shellex, the HKCU
+                // shadow key we wrote has an empty default value, which wins
+                // in HKCR's merged view. The classic CLSID lookup then fails
+                // and ResolveHideTargets falls back to BlockedShellExt — but
+                // the *original* hide was HkcuMask, so on un-hide we'd leave
+                // the HkcuMask keys orphaned. Fall back to HKLM to recover
+                // the original CLSID through the user's own mask.
+                if (string.IsNullOrEmpty(defaultVal))
+                    defaultVal = _reg.GetValue(RegistryHive.LocalMachine,
+                        "Software\\Classes\\" + handlersRoot + "\\" + name, "") as string;
                 var match = (defaultVal != null && string.Equals(defaultVal, clsid, StringComparison.OrdinalIgnoreCase))
                             || string.Equals(name, clsid, StringComparison.OrdinalIgnoreCase);
                 if (match)
