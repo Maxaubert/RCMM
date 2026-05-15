@@ -47,6 +47,13 @@ public sealed class PackagedShellExtScanner
             if (!_reg.KeyExists(RegistryHive.LocalMachine, serverRoot)) continue;
 
             string? installFolder = ResolvePackageInstallFolder(pkg);
+            // ItemType map (CLSID → set of ItemType strings) and AUMID are derived from
+            // the AppXManifest once per package. Packaged-COM context menu extensions
+            // declare their target scope (Directory, Directory\Background, *) under
+            // <windows.fileExplorerContextMenus> and are referenced there by CLSID; we
+            // need this mapping so cascade-protection knows which CLSIDs share scope
+            // with each other (see CLAUDE.md "packaged-COM Directory\Background cascade").
+            ManifestExtensionInfo? mfst = installFolder != null ? ResolveManifestInfo(installFolder, pkg) : null;
 
             foreach (var idx in _reg.GetSubKeyNames(RegistryHive.LocalMachine, serverRoot))
             {
@@ -73,6 +80,10 @@ public sealed class PackagedShellExtScanner
                 if (!string.IsNullOrWhiteSpace(relDll) && installFolder != null)
                     absDll = System.IO.Path.Combine(installFolder, relDll!);
 
+                IReadOnlyList<string> itemTypes = Array.Empty<string>();
+                if (mfst != null && mfst.ItemTypesByClsid.TryGetValue(clsid!.Trim().ToUpperInvariant(), out var its))
+                    itemTypes = its;
+
                 yielded++;
                 yield return new PackagedShellExt
                 {
@@ -82,11 +93,136 @@ public sealed class PackagedShellExtScanner
                     PublisherDisplayName = publisher!,
                     DllPath = absDll,
                     LogoPath = installFolder != null ? ResolvePackageLogo(installFolder) : null,
+                    ItemTypes = itemTypes,
+                    Aumid = mfst?.Aumid,
                 };
             }
         }
 
         Log.Info(Cat, $"PackagedShellExtScanner packages={packages} candidates={yielded}");
+    }
+
+    /// <summary>
+    /// AppXManifest-derived extension info: which CLSIDs target which ItemTypes in
+    /// &lt;windows.fileExplorerContextMenus&gt;, and the package's AUMID (PackageFamilyName!ApplicationId).
+    /// </summary>
+    public sealed class ManifestExtensionInfo
+    {
+        public Dictionary<string, IReadOnlyList<string>> ItemTypesByClsid { get; init; } =
+            new(StringComparer.OrdinalIgnoreCase);
+        public string? Aumid { get; init; }
+    }
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ManifestExtensionInfo?> _mfstCache
+        = new(StringComparer.OrdinalIgnoreCase);
+
+    private ManifestExtensionInfo? ResolveManifestInfo(string installFolder, string packageFullName)
+        => _mfstCache.GetOrAdd(installFolder, _ =>
+        {
+            try
+            {
+                var manifest = System.IO.Path.Combine(installFolder, "AppxManifest.xml");
+                if (!System.IO.File.Exists(manifest)) return null;
+                var doc = new System.Xml.XmlDocument();
+                doc.Load(manifest);
+                return ParseManifestExtensionInfo(doc, packageFullName);
+            }
+            catch (Exception ex)
+            {
+                Log.Debug(Cat, $"manifest parse for context-menu extension info failed for {installFolder}: {ex.Message}");
+                return null;
+            }
+        });
+
+    /// <summary>
+    /// Pure helper exposed for tests: parse an in-memory AppxManifest XmlDocument
+    /// into a map of CLSID → ItemTypes plus an AUMID. The manifest mixes element
+    /// names from several namespaces (desktop4:, desktop5:, foundation:) so we
+    /// match by LocalName to stay robust across namespace variants.
+    /// </summary>
+    public static ManifestExtensionInfo ParseManifestExtensionInfo(System.Xml.XmlDocument doc, string packageFullName)
+    {
+        var byClsid = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        // Walk the whole doc looking for any element whose LocalName is "ItemType";
+        // each one has a Type attribute and contains one or more Verb children with
+        // a Clsid attribute. The manifest's actual XML namespace varies (desktop4,
+        // desktop5, desktop6 across builds) so LocalName matching is the only safe
+        // strategy.
+        var itemTypes = doc.GetElementsByTagName("*");
+        foreach (System.Xml.XmlNode? n in itemTypes)
+        {
+            if (n is not System.Xml.XmlElement el) continue;
+            if (!string.Equals(el.LocalName, "ItemType", StringComparison.Ordinal)) continue;
+            var type = el.GetAttribute("Type");
+            if (string.IsNullOrWhiteSpace(type)) continue;
+            foreach (System.Xml.XmlNode child in el.ChildNodes)
+            {
+                if (child is not System.Xml.XmlElement vEl) continue;
+                if (!string.Equals(vEl.LocalName, "Verb", StringComparison.Ordinal)) continue;
+                var clsid = vEl.GetAttribute("Clsid");
+                if (string.IsNullOrWhiteSpace(clsid)) continue;
+                var key = NormalizeClsid(clsid);
+                if (!byClsid.TryGetValue(key, out var list))
+                {
+                    list = new List<string>();
+                    byClsid[key] = list;
+                }
+                if (!list.Contains(type, StringComparer.OrdinalIgnoreCase))
+                    list.Add(type);
+            }
+        }
+
+        // AUMID: PackageFamilyName + "!" + ApplicationId. PackageFamilyName is the
+        // package's <Name>_<PublisherHash>; we derive it from packageFullName which
+        // is formatted "<Name>_<Version>_<Arch>_<ResourceId>_<PublisherHash>".
+        string? aumid = null;
+        try
+        {
+            string? appId = null;
+            foreach (System.Xml.XmlNode? app in doc.GetElementsByTagName("Application"))
+            {
+                if (app is not System.Xml.XmlElement aEl) continue;
+                appId = aEl.GetAttribute("Id");
+                if (!string.IsNullOrWhiteSpace(appId)) break;
+            }
+            if (!string.IsNullOrWhiteSpace(appId))
+            {
+                var familyName = DerivePackageFamilyName(packageFullName);
+                if (!string.IsNullOrEmpty(familyName))
+                    aumid = familyName + "!" + appId;
+            }
+        }
+        catch { /* AUMID stays null — protection service falls back to launching nothing */ }
+
+        var converted = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var kv in byClsid) converted[kv.Key] = kv.Value;
+        return new ManifestExtensionInfo { ItemTypesByClsid = converted, Aumid = aumid };
+    }
+
+    private static string NormalizeClsid(string s)
+    {
+        var t = s.Trim();
+        if (t.Length == 0) return t;
+        if (t[0] != '{') t = "{" + t;
+        if (t[t.Length - 1] != '}') t = t + "}";
+        return t.ToUpperInvariant();
+    }
+
+    /// <summary>
+    /// PackageFamilyName from a PackageFullName: keep first segment (Name) and last
+    /// segment (PublisherHash), drop version/arch/resourceId. The 8.3-style
+    /// publisher hash is always at the end of the FullName. Returns null when the
+    /// FullName doesn't have the expected number of components.
+    /// </summary>
+    public static string? DerivePackageFamilyName(string packageFullName)
+    {
+        if (string.IsNullOrEmpty(packageFullName)) return null;
+        var parts = packageFullName.Split('_');
+        if (parts.Length < 2) return null;
+        var name = parts[0];
+        var publisherHash = parts[parts.Length - 1];
+        if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(publisherHash)) return null;
+        return name + "_" + publisherHash;
     }
 
     private string? ResolvePackageInstallFolder(string packageFullName)

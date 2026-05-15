@@ -1,3 +1,7 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
 namespace RCMM.Core.Models;
 
 /// <summary>
@@ -26,4 +30,30 @@ public sealed record PackagedShellExt
     /// fallback even when the WindowsApps folder isn't otherwise enumerable.
     /// </summary>
     public string? LogoPath { get; init; }
+    /// <summary>
+    /// AppxManifest ItemTypes this extension's CLSID is registered for under
+    /// &lt;windows.fileExplorerContextMenus&gt;. Common values: "Directory",
+    /// "Directory\Background", "*". Empty when the manifest is unreadable
+    /// (e.g. WindowsApps ACLs blocking the user) or when the extension is
+    /// not a FileExplorerContextMenus extension. Used by cascade protection
+    /// to identify which CLSIDs share scope and may co-fail when one is added
+    /// to the Shell Extensions\Blocked list.
+    /// </summary>
+    public IReadOnlyList<string> ItemTypes { get; init; } = Array.Empty<string>();
+    /// <summary>
+    /// App User Model ID (AUMID) for the package's main app, derived as
+    /// &lt;PackageFamilyName&gt;!&lt;ApplicationId&gt;. Null when the manifest is
+    /// unreadable. Used as the launch target for classic-verb fallbacks
+    /// installed by the cascade protection service.
+    /// </summary>
+    public string? Aumid { get; init; }
+    /// <summary>
+    /// True iff the extension is registered for the folder-background item type
+    /// (`Directory\Background`). These are the entries at risk of co-failing
+    /// when any one of them is added to HKCU\…\Shell Extensions\Blocked under
+    /// the Windows 11 modern menu — see CLAUDE.md "packaged-COM Directory\Background
+    /// cascade".
+    /// </summary>
+    public bool IsBackgroundExtension =>
+        ItemTypes.Any(t => string.Equals(t, "Directory\\Background", StringComparison.OrdinalIgnoreCase));
 }

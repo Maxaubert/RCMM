@@ -47,7 +47,9 @@ public sealed partial class MainWindow : Window
         var addPage = new AddPageViewModel(addStore);
         addPage.Load();
 
-        ViewModel = new MainViewModel(capture, targets, mapper, hide, registry, files, shellexIndex, entryScanner, packagedScanner, commandStore, shellexKeyIndex, shellexInvoker, addPage, additionApplier);
+        var cascadeProtector = new CascadeProtectionService(registry);
+
+        ViewModel = new MainViewModel(capture, targets, mapper, hide, registry, files, shellexIndex, entryScanner, packagedScanner, commandStore, shellexKeyIndex, shellexInvoker, addPage, additionApplier, cascadeProtector);
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);

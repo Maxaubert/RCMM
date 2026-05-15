@@ -87,6 +87,14 @@ public sealed class MainViewModel : ObservableObject
     /// <summary>View-model backing the Add page (templates / custom entries / folders).</summary>
     public AddPageViewModel? AddPage => _addPage;
 
+    private readonly CascadeProtectionService? _cascadeProtector;
+    // Background-scoped packaged-COM extensions, keyed by CLSID. Populated by
+    // Rescan from the PackagedShellExtScanner output. ApplyPending consults
+    // this to decide whether to install cascade-protection verbs before
+    // touching the HKCU Shell Extensions\Blocked list.
+    private readonly Dictionary<string, PackagedShellExt> _backgroundExtsByClsid =
+        new(StringComparer.OrdinalIgnoreCase);
+
     public MainViewModel(
         IContextMenuCaptureService capture,
         TargetProvider targets,
@@ -101,7 +109,8 @@ public sealed class MainViewModel : ObservableObject
         ShellexKeyNameIndex? shellexKey = null,
         ShellexInvoker? shellexInvoker = null,
         AddPageViewModel? addPage = null,
-        AdditionApplier? additionApplier = null)
+        AdditionApplier? additionApplier = null,
+        CascadeProtectionService? cascadeProtector = null)
     {
         _capture = capture;
         _targets = targets;
@@ -117,6 +126,7 @@ public sealed class MainViewModel : ObservableObject
         _shellexInvoker = shellexInvoker;
         _addPage = addPage;
         _additionApplier = additionApplier;
+        _cascadeProtector = cascadeProtector;
     }
 
     public bool RequiresExplorerRestart
@@ -147,6 +157,7 @@ public sealed class MainViewModel : ObservableObject
         _packagedPublishers.Clear();
         _packagedDllByClsid.Clear();
         _packagedLogoByClsid.Clear();
+        _backgroundExtsByClsid.Clear();
         _renamedClsids.Clear();
 
         // Defer iteration: get the packaged + registry CLSIDs first so they can be
@@ -206,6 +217,8 @@ public sealed class MainViewModel : ObservableObject
                 _packagedDllByClsid[pkg.Clsid] = pkg.DllPath;
             if (pkg.LogoPath != null && !_packagedLogoByClsid.ContainsKey(pkg.Clsid))
                 _packagedLogoByClsid[pkg.Clsid] = pkg.LogoPath;
+            if (pkg.IsBackgroundExtension)
+                _backgroundExtsByClsid[pkg.Clsid] = pkg;
 
             // Display name priority:
             //   1. IExplorerCommand::GetTitle — the exact menu text the shell renders.
@@ -957,6 +970,34 @@ public sealed class MainViewModel : ObservableObject
     public void ApplyPending()
     {
         Log.Info("apply", $"begin hide={_pendingHide.Count} unhide={_pendingUnhide.Count}");
+
+        // Cascade-protection pass — runs BEFORE any HKCU\…\Shell Extensions\Blocked
+        // write so the protective classic verbs exist by the time Windows decides
+        // whether to silently de-list other Directory\Background packaged-COM
+        // extensions. We only act when (a) the protection service is wired AND
+        // (b) the current hide batch actually adds a Background-scoped packaged
+        // CLSID to Blocked. See CLAUDE.md "packaged-COM Directory\Background
+        // cascade" for the underlying Windows behaviour we're guarding against.
+        if (_cascadeProtector != null && _backgroundExtsByClsid.Count > 0)
+        {
+            foreach (var targets in _pendingHide.Values)
+            {
+                foreach (var t in targets)
+                {
+                    if (t.Kind != HideKind.BlockedShellExt) continue;
+                    if (string.IsNullOrEmpty(t.ValueName)) continue;
+                    if (!_backgroundExtsByClsid.ContainsKey(t.ValueName!)) continue;
+                    var plans = _cascadeProtector.PlanProtections(t.ValueName!, _backgroundExtsByClsid.Values);
+                    if (plans.Count > 0)
+                    {
+                        Log.Info("apply", $"cascade-protection: installing {plans.Count} classic-verb fallbacks for hide of {t.ValueName}");
+                        try { _cascadeProtector.Install(plans); }
+                        catch (Exception ex) { Log.Error("apply", $"cascade-protection install failed for {t.ValueName}", ex); }
+                    }
+                }
+            }
+        }
+
         foreach (var (id, targets) in _pendingHide)
         {
             Log.Debug("apply", $"hide id='{id}' targets={targets.Count}");
@@ -972,6 +1013,26 @@ public sealed class MainViewModel : ObservableObject
                 Log.Debug("apply", $"  unhide kind={t.Kind} hive={t.Hive} path='{t.Path}' value='{t.ValueName}'");
             try { _hideService.Unhide(targets); }
             catch (Exception ex) { Log.Error("apply", $"unhide id={id} failed", ex); }
+        }
+
+        // Post-unhide cleanup: when no Background-scoped packaged CLSID remains in
+        // HKCU Blocked, the cascade can't trigger, so we can sweep the protective
+        // verbs back out. The sweep is namespace-scoped (RcmmProtect_ prefix only)
+        // so user-authored classic verbs are untouched.
+        if (_cascadeProtector != null && _pendingUnhide.Count > 0 && _backgroundExtsByClsid.Count > 0)
+        {
+            try
+            {
+                bool anyBgStillBlocked = _backgroundExtsByClsid.Keys.Any(clsid =>
+                    _reg.GetValue(RegistryHive.CurrentUser, HideService.BlockedListPath, clsid) != null);
+                if (!anyBgStillBlocked)
+                {
+                    var removed = _cascadeProtector.UninstallAll();
+                    if (removed > 0)
+                        Log.Info("apply", $"cascade-protection: removed {removed} protection verbs (no Background ext remains blocked)");
+                }
+            }
+            catch (Exception ex) { Log.Error("apply", "cascade-protection sweep failed", ex); }
         }
         if (_addPage != null && _additionApplier != null && _addPage.HasPendingChanges)
         {
