@@ -42,7 +42,12 @@ public sealed partial class MainWindow : Window
         var shellexKeyIndex = new ShellexKeyNameIndex(registry);
         var shellexInvoker = new ShellexInvoker(registry, targets);
 
-        ViewModel = new MainViewModel(capture, targets, mapper, hide, registry, files, shellexIndex, entryScanner, packagedScanner, commandStore, shellexKeyIndex, shellexInvoker);
+        var additionApplier = new AdditionApplier(registry);
+        var addStore = new AdditionStore(AdditionStore.DefaultPath());
+        var addPage = new AddPageViewModel(addStore);
+        addPage.Load();
+
+        ViewModel = new MainViewModel(capture, targets, mapper, hide, registry, files, shellexIndex, entryScanner, packagedScanner, commandStore, shellexKeyIndex, shellexInvoker, addPage, additionApplier);
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);

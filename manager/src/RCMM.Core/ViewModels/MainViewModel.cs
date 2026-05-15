@@ -80,6 +80,12 @@ public sealed class MainViewModel : ObservableObject
     /// this to (re-)load icons for the new rows.</summary>
     public event Action? RescanComplete;
 
+    private readonly AddPageViewModel? _addPage;
+    private readonly AdditionApplier? _additionApplier;
+
+    /// <summary>View-model backing the Add page (templates / custom entries / folders).</summary>
+    public AddPageViewModel? AddPage => _addPage;
+
     public MainViewModel(
         IContextMenuCaptureService capture,
         TargetProvider targets,
@@ -92,7 +98,9 @@ public sealed class MainViewModel : ObservableObject
         PackagedShellExtScanner? packagedScanner = null,
         CommandStoreVerbIndex? commandStore = null,
         ShellexKeyNameIndex? shellexKey = null,
-        ShellexInvoker? shellexInvoker = null)
+        ShellexInvoker? shellexInvoker = null,
+        AddPageViewModel? addPage = null,
+        AdditionApplier? additionApplier = null)
     {
         _capture = capture;
         _targets = targets;
@@ -106,6 +114,8 @@ public sealed class MainViewModel : ObservableObject
         _commandStore = commandStore;
         _shellexKey = shellexKey;
         _shellexInvoker = shellexInvoker;
+        _addPage = addPage;
+        _additionApplier = additionApplier;
     }
 
     public bool RequiresExplorerRestart
@@ -837,6 +847,19 @@ public sealed class MainViewModel : ObservableObject
                 Log.Debug("apply", $"  unhide kind={t.Kind} hive={t.Hive} path='{t.Path}' value='{t.ValueName}'");
             try { _hideService.Unhide(targets); }
             catch (Exception ex) { Log.Error("apply", $"unhide id={id} failed", ex); }
+        }
+        if (_addPage != null && _additionApplier != null && _addPage.HasPendingChanges)
+        {
+            Log.Info("apply", $"additions begin entries={_addPage.Entries.Count} folders={_addPage.Folders.Count}");
+            var state = _addPage.Snapshot();
+            try
+            {
+                _additionApplier.Apply(state);
+                // Persist only after registry write succeeds so a failed Apply leaves the JSON on the previous state.
+                new AdditionStore(AdditionStore.DefaultPath()).Save(state);
+                _addPage.MarkClean();
+            }
+            catch (Exception ex) { Log.Error("apply", "additions failed", ex); }
         }
         _pendingHide.Clear();
         _pendingUnhide.Clear();
