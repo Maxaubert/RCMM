@@ -413,13 +413,18 @@ public sealed class MainViewModel : ObservableObject
                 var clsid = row.Entry.Id.Substring("clsid:".Length);
                 // A CLSID counts as "real" if any of: it's a packaged COM ext;
                 // we observed it on a live capture; we renamed it from a
-                // technical FileDescription (Share, Defender, NVIDIA); or
+                // technical FileDescription (Share, Defender, NVIDIA);
                 // CommandStore lists it as a handler for a Windows OS verb
-                // (modern verbs that legacy IContextMenu doesn't return).
+                // (modern verbs that legacy IContextMenu doesn't return); or
+                // it is *currently hidden* — without this last clause, a
+                // user-hidden shellex vanishes from the next rescan because
+                // Explorer no longer surfaces it via IContextMenu, leaving
+                // no way to un-hide it from RCMM's UI.
                 if (!_packagedClsids.Contains(clsid)
                     && !_observedClsids.Contains(clsid)
                     && !_renamedClsids.Contains(clsid)
-                    && !(_commandStore?.IsKnownClsid(clsid) ?? false))
+                    && !(_commandStore?.IsKnownClsid(clsid) ?? false)
+                    && !row.Entry.IsHidden)
                     continue;
             }
             AllEntries.Add(row);
