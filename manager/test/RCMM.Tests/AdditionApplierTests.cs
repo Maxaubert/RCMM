@@ -24,174 +24,197 @@ public class AdditionApplierTests
 
     [Fact]
     public void WrapForRunMode_VisibleTerminal_wraps_in_cmd_k()
-    {
-        var result = AdditionApplier.WrapForRunMode(RunMode.VisibleTerminal, "npm run dev");
-        Assert.Equal("cmd /k npm run dev", result);
-    }
+        => Assert.Equal("cmd /k npm run dev", AdditionApplier.WrapForRunMode(RunMode.VisibleTerminal, "npm run dev"));
 
     [Fact]
     public void WrapForRunMode_Background_returns_bare_command()
-    {
-        var result = AdditionApplier.WrapForRunMode(RunMode.Background, "start \"\" \"C:\\path\\app.exe\"");
-        Assert.Equal("start \"\" \"C:\\path\\app.exe\"", result);
-    }
+        => Assert.Equal("foo", AdditionApplier.WrapForRunMode(RunMode.Background, "foo"));
 
-    // ---------- WriteEntry ----------
+    // ---------- Apply: single entry ----------
 
     [Fact]
-    public void WriteEntry_top_level_FolderBackground_creates_expected_keys()
+    public void Apply_top_level_entry_uses_ordinal_001_in_verb_name()
     {
         var reg = new FakeRegistry();
-        var applier = new AdditionApplier(reg);
-        var entry = new AdditionEntry
+        new AdditionApplier(reg).Apply(new AdditionState
         {
-            Id = "abc",
-            Name = "npm run dev",
-            Command = "npm run dev",
-            WorkingDir = "%V",
-            Scope = AdditionScope.FolderBackground,
-            RunMode = RunMode.VisibleTerminal,
-        };
-        applier.WriteEntry(entry, parentContainer: null);
-        var verbPath = "Software\\Classes\\Directory\\Background\\shell\\RCMM.abc";
+            Entries = new[] { Entry("abc", "npm run dev", AdditionScope.FolderBackground) }
+        });
+
+        // Ordinal prefix forces Windows to render verbs in user order, so the verb
+        // name is RCMM.<3-digit-ord>.<id> not RCMM.<id>.
+        var verbPath = "Software\\Classes\\Directory\\Background\\shell\\RCMM.001.abc";
         Assert.True(reg.KeyExists(RegistryHive.CurrentUser, verbPath));
         Assert.Equal("npm run dev", reg.GetValue(RegistryHive.CurrentUser, verbPath, ""));
         Assert.Equal("cmd /k npm run dev", reg.GetValue(RegistryHive.CurrentUser, verbPath + "\\command", ""));
     }
 
     [Fact]
-    public void WriteEntry_with_icon_writes_Icon_value()
+    public void Apply_writes_Icon_when_set_omits_it_when_unset()
     {
         var reg = new FakeRegistry();
-        var applier = new AdditionApplier(reg);
-        var entry = new AdditionEntry
+        new AdditionApplier(reg).Apply(new AdditionState
         {
-            Id = "abc",
-            Name = "Test",
-            Icon = "C:\\Windows\\System32\\shell32.dll,42",
-            Command = "echo hi",
-            WorkingDir = "%V",
-            Scope = AdditionScope.FolderBackground,
-            RunMode = RunMode.VisibleTerminal,
-        };
-        applier.WriteEntry(entry, parentContainer: null);
-        Assert.Equal("C:\\Windows\\System32\\shell32.dll,42",
-            reg.GetValue(RegistryHive.CurrentUser,
-                "Software\\Classes\\Directory\\Background\\shell\\RCMM.abc", "Icon"));
+            Entries = new[]
+            {
+                Entry("withicon", "x", AdditionScope.FolderBackground) with { Icon = "shell32.dll,42" },
+                Entry("noicon",   "x", AdditionScope.FolderBackground),
+            }
+        });
+        Assert.Equal("shell32.dll,42",
+            reg.GetValue(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\Background\\shell\\RCMM.001.withicon", "Icon"));
+        Assert.Null(
+            reg.GetValue(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\Background\\shell\\RCMM.002.noicon", "Icon"));
     }
 
     [Fact]
-    public void WriteEntry_without_icon_does_not_write_Icon_value()
+    public void Apply_File_scope_with_multiple_extensions_writes_one_per_ext()
     {
         var reg = new FakeRegistry();
-        var applier = new AdditionApplier(reg);
-        var entry = new AdditionEntry
-        {
-            Id = "abc", Name = "Test", Command = "x", WorkingDir = "%V",
-            Scope = AdditionScope.FolderBackground, RunMode = RunMode.VisibleTerminal,
-        };
-        applier.WriteEntry(entry, parentContainer: null);
-        Assert.Null(reg.GetValue(RegistryHive.CurrentUser,
-            "Software\\Classes\\Directory\\Background\\shell\\RCMM.abc", "Icon"));
+        var entry = Entry("img", "fileinfo %1", AdditionScope.File) with { FileTypes = new[] { ".png", ".jpg" } };
+        new AdditionApplier(reg).Apply(new AdditionState { Entries = new[] { entry } });
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\.png\\shell\\RCMM.001.img"));
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\.jpg\\shell\\RCMM.001.img"));
     }
 
     [Fact]
-    public void WriteEntry_File_scope_with_multiple_extensions_writes_one_per_ext()
+    public void Apply_File_scope_without_extensions_uses_wildcard()
     {
         var reg = new FakeRegistry();
-        var applier = new AdditionApplier(reg);
-        var entry = new AdditionEntry
+        new AdditionApplier(reg).Apply(new AdditionState
         {
-            Id = "img", Name = "Hash this image", Command = "fileinfo %1",
-            WorkingDir = "%V",
-            Scope = AdditionScope.File,
-            FileTypes = new[] { ".png", ".jpg" },
-            RunMode = RunMode.VisibleTerminal,
-        };
-        applier.WriteEntry(entry, parentContainer: null);
-        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\.png\\shell\\RCMM.img"));
-        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\.jpg\\shell\\RCMM.img"));
+            Entries = new[] { Entry("x", "noop", AdditionScope.File) with { FileTypes = null } }
+        });
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\*\\shell\\RCMM.001.x"));
     }
 
+    // ---------- Apply: ordinal prefixes preserve insertion order ----------
+
     [Fact]
-    public void WriteEntry_File_scope_without_extensions_uses_wildcard()
+    public void Apply_assigns_ordinals_001_002_003_in_list_order()
     {
         var reg = new FakeRegistry();
-        var applier = new AdditionApplier(reg);
-        var entry = new AdditionEntry
+        new AdditionApplier(reg).Apply(new AdditionState
         {
-            Id = "x", Name = "Any file", Command = "noop",
-            WorkingDir = "%V",
-            Scope = AdditionScope.File,
-            FileTypes = null,
-            RunMode = RunMode.VisibleTerminal,
-        };
-        applier.WriteEntry(entry, parentContainer: null);
-        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\*\\shell\\RCMM.x"));
+            Entries = new[]
+            {
+                Entry("first",  "a", AdditionScope.FolderBackground),
+                Entry("second", "b", AdditionScope.FolderBackground),
+                Entry("third",  "c", AdditionScope.FolderBackground),
+            }
+        });
+        var keys = reg.GetSubKeyNames(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\Background\\shell").ToList();
+        Assert.Contains("RCMM.001.first",  keys);
+        Assert.Contains("RCMM.002.second", keys);
+        Assert.Contains("RCMM.003.third",  keys);
     }
 
-    // ---------- WriteFolder ----------
+    // ---------- Apply: single-level folder ----------
 
     [Fact]
-    public void WriteFolder_with_two_children_creates_parent_and_submenu_tree()
+    public void Apply_folder_with_two_children_builds_submenu_tree_with_ordinals()
     {
         var reg = new FakeRegistry();
-        var applier = new AdditionApplier(reg);
-        var folder = new AdditionFolder { Id = "folder1", Name = "Dev tools" };
-        var child1 = new AdditionEntry
+        var folder = new AdditionFolder { Id = "folder1", Name = "Dev tools", Scope = AdditionScope.FolderBackground };
+        new AdditionApplier(reg).Apply(new AdditionState
         {
-            Id = "c1", Name = "npm run dev", Command = "npm run dev", WorkingDir = "%V",
-            Scope = AdditionScope.FolderBackground, RunMode = RunMode.VisibleTerminal,
-            FolderId = "folder1",
-        };
-        var child2 = new AdditionEntry
-        {
-            Id = "c2", Name = "git pull", Command = "git pull", WorkingDir = "%V",
-            Scope = AdditionScope.FolderBackground, RunMode = RunMode.VisibleTerminal,
-            FolderId = "folder1",
-        };
-        applier.WriteFolder(folder, new[] { child1, child2 });
+            Folders = new[] { folder },
+            Entries = new[]
+            {
+                Entry("c1", "npm run dev", AdditionScope.FolderBackground) with { FolderId = "folder1" },
+                Entry("c2", "git pull",    AdditionScope.FolderBackground) with { FolderId = "folder1" },
+            }
+        });
 
-        var parentPath = "Software\\Classes\\Directory\\Background\\shell\\RCMM.folder1";
+        // Top-level folder verb is the only thing at the bucket (no top-level entries),
+        // so it gets RCMM.001.folder1.
+        var parentPath = "Software\\Classes\\Directory\\Background\\shell\\RCMM.001.folder1";
         Assert.Equal("Dev tools", reg.GetValue(RegistryHive.CurrentUser, parentPath, ""));
-        Assert.Equal("Directory\\Background\\ContextMenus\\RCMM.folder1",
+        Assert.Equal("Directory\\Background\\ContextMenus\\RCMM.001.folder1",
             reg.GetValue(RegistryHive.CurrentUser, parentPath, "ExtendedSubCommandsKey"));
 
-        Assert.Equal("npm run dev", reg.GetValue(RegistryHive.CurrentUser,
-            "Software\\Classes\\Directory\\Background\\ContextMenus\\RCMM.folder1\\shell\\RCMM.c1", ""));
-        Assert.Equal("cmd /k git pull", reg.GetValue(RegistryHive.CurrentUser,
-            "Software\\Classes\\Directory\\Background\\ContextMenus\\RCMM.folder1\\shell\\RCMM.c2\\command", ""));
+        Assert.Equal("npm run dev",
+            reg.GetValue(RegistryHive.CurrentUser,
+                "Software\\Classes\\Directory\\Background\\ContextMenus\\RCMM.001.folder1\\shell\\RCMM.001.c1", ""));
+        Assert.Equal("cmd /k git pull",
+            reg.GetValue(RegistryHive.CurrentUser,
+                "Software\\Classes\\Directory\\Background\\ContextMenus\\RCMM.001.folder1\\shell\\RCMM.002.c2\\command", ""));
     }
 
     [Fact]
-    public void WriteFolder_with_children_in_two_scopes_registers_parent_under_both()
+    public void Apply_folder_with_children_in_two_scopes_registers_under_both()
     {
         var reg = new FakeRegistry();
-        var applier = new AdditionApplier(reg);
         var folder = new AdditionFolder { Id = "f", Name = "Mixed" };
-        var bg = new AdditionEntry
+        new AdditionApplier(reg).Apply(new AdditionState
         {
-            Id = "a", Name = "BG", Command = "echo bg", WorkingDir = "%V",
-            Scope = AdditionScope.FolderBackground, RunMode = RunMode.VisibleTerminal, FolderId = "f",
-        };
-        var folderScope = new AdditionEntry
-        {
-            Id = "b", Name = "Folder", Command = "echo folder", WorkingDir = "%V",
-            Scope = AdditionScope.Folder, RunMode = RunMode.VisibleTerminal, FolderId = "f",
-        };
-        applier.WriteFolder(folder, new[] { bg, folderScope });
+            Folders = new[] { folder },
+            Entries = new[]
+            {
+                Entry("a", "echo bg",     AdditionScope.FolderBackground) with { FolderId = "f" },
+                Entry("b", "echo folder", AdditionScope.Folder)           with { FolderId = "f" },
+            }
+        });
 
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\Background\\shell\\RCMM.001.f"));
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\shell\\RCMM.001.f"));
         Assert.True(reg.KeyExists(RegistryHive.CurrentUser,
-            "Software\\Classes\\Directory\\Background\\shell\\RCMM.f"));
+            "Software\\Classes\\Directory\\Background\\ContextMenus\\RCMM.001.f\\shell\\RCMM.001.a"));
         Assert.True(reg.KeyExists(RegistryHive.CurrentUser,
-            "Software\\Classes\\Directory\\shell\\RCMM.f"));
-        Assert.True(reg.KeyExists(RegistryHive.CurrentUser,
-            "Software\\Classes\\Directory\\Background\\ContextMenus\\RCMM.f\\shell\\RCMM.a"));
-        Assert.True(reg.KeyExists(RegistryHive.CurrentUser,
-            "Software\\Classes\\Directory\\ContextMenus\\RCMM.f\\shell\\RCMM.b"));
+            "Software\\Classes\\Directory\\ContextMenus\\RCMM.001.f\\shell\\RCMM.001.b"));
         Assert.False(reg.KeyExists(RegistryHive.CurrentUser,
-            "Software\\Classes\\Directory\\Background\\ContextMenus\\RCMM.f\\shell\\RCMM.b"),
-            "child b should only appear in its own scope's ContextMenus");
+            "Software\\Classes\\Directory\\Background\\ContextMenus\\RCMM.001.f\\shell\\RCMM.001.b"),
+            "child b only belongs to its own scope's ContextMenus");
+    }
+
+    // ---------- Apply: nested folders (schema v2) ----------
+
+    [Fact]
+    public void Apply_nested_folder_builds_recursive_submenu_chain()
+    {
+        var reg = new FakeRegistry();
+        var outer = new AdditionFolder { Id = "outer", Name = "Outer" };
+        var inner = new AdditionFolder { Id = "inner", Name = "Inner", ParentFolderId = "outer" };
+        new AdditionApplier(reg).Apply(new AdditionState
+        {
+            Folders = new[] { outer, inner },
+            Entries = new[] { Entry("leaf", "x", AdditionScope.FolderBackground) with { FolderId = "inner" } }
+        });
+
+        // outer folder verb at top level
+        var outerVerb = "Software\\Classes\\Directory\\Background\\shell\\RCMM.001.outer";
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, outerVerb));
+        Assert.Equal("Directory\\Background\\ContextMenus\\RCMM.001.outer",
+            reg.GetValue(RegistryHive.CurrentUser, outerVerb, "ExtendedSubCommandsKey"));
+
+        // inner folder verb lives inside outer's ContextMenus subtree
+        var innerVerb = "Software\\Classes\\Directory\\Background\\ContextMenus\\RCMM.001.outer\\shell\\RCMM.001.inner";
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, innerVerb));
+        // …and points to a deeper ContextMenus path under outer's CM
+        Assert.Equal("Directory\\Background\\ContextMenus\\RCMM.001.outer\\ContextMenus\\RCMM.001.inner",
+            reg.GetValue(RegistryHive.CurrentUser, innerVerb, "ExtendedSubCommandsKey"));
+
+        // leaf entry sits inside inner's CM
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser,
+            "Software\\Classes\\Directory\\Background\\ContextMenus\\RCMM.001.outer\\ContextMenus\\RCMM.001.inner\\shell\\RCMM.001.leaf"));
+    }
+
+    [Fact]
+    public void Apply_skips_empty_folder_in_a_scope_it_doesnt_participate_in()
+    {
+        // A folder whose only entries are File-scope should not appear under Folder Background.
+        var reg = new FakeRegistry();
+        var f = new AdditionFolder { Id = "f", Name = "Files only" };
+        new AdditionApplier(reg).Apply(new AdditionState
+        {
+            Folders = new[] { f },
+            Entries = new[]
+            {
+                Entry("a", "fileinfo %1", AdditionScope.File) with { FolderId = "f", FileTypes = new[] { ".png" } }
+            }
+        });
+        Assert.False(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\Background\\shell\\RCMM.001.f"));
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\.png\\shell\\RCMM.001.f"));
     }
 
     // ---------- Purge ----------
@@ -200,65 +223,22 @@ public class AdditionApplierTests
     public void Purge_removes_all_RCMM_prefixed_keys_under_known_roots()
     {
         var reg = new FakeRegistry();
-        reg.SetValue(RegistryHive.CurrentUser,
-            "Software\\Classes\\Directory\\Background\\shell\\RCMM.old1", "", "Old 1");
-        reg.SetValue(RegistryHive.CurrentUser,
-            "Software\\Classes\\Directory\\Background\\shell\\RCMM.old2\\command", "", "x");
-        reg.SetValue(RegistryHive.CurrentUser,
-            "Software\\Classes\\Directory\\Background\\shell\\NotOurs", "", "leave alone");
-        reg.SetValue(RegistryHive.CurrentUser,
-            "Software\\Classes\\Directory\\Background\\ContextMenus\\RCMM.oldfolder\\shell\\RCMM.kid", "", "x");
-        reg.SetValue(RegistryHive.CurrentUser,
-            "Software\\Classes\\.png\\shell\\RCMM.imgverb", "", "x");
+        reg.SetValue(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\Background\\shell\\RCMM.old1", "", "Old 1");
+        reg.SetValue(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\Background\\shell\\RCMM.001.old2\\command", "", "x");
+        reg.SetValue(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\Background\\shell\\NotOurs", "", "leave alone");
+        reg.SetValue(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\Background\\ContextMenus\\RCMM.001.oldfolder\\shell\\RCMM.001.kid", "", "x");
+        reg.SetValue(RegistryHive.CurrentUser, "Software\\Classes\\.png\\shell\\RCMM.001.imgverb", "", "x");
 
-        var applier = new AdditionApplier(reg);
-        applier.PurgeOwnedKeys(new[] { ".png" });
+        new AdditionApplier(reg).PurgeOwnedKeys(new[] { ".png" });
 
-        Assert.False(reg.KeyExists(RegistryHive.CurrentUser,
-            "Software\\Classes\\Directory\\Background\\shell\\RCMM.old1"));
-        Assert.False(reg.KeyExists(RegistryHive.CurrentUser,
-            "Software\\Classes\\Directory\\Background\\shell\\RCMM.old2"));
-        Assert.False(reg.KeyExists(RegistryHive.CurrentUser,
-            "Software\\Classes\\Directory\\Background\\ContextMenus\\RCMM.oldfolder"));
-        Assert.False(reg.KeyExists(RegistryHive.CurrentUser,
-            "Software\\Classes\\.png\\shell\\RCMM.imgverb"));
-        Assert.True(reg.KeyExists(RegistryHive.CurrentUser,
-            "Software\\Classes\\Directory\\Background\\shell\\NotOurs"),
-            "non-RCMM-prefixed key should be left alone");
+        Assert.False(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\Background\\shell\\RCMM.old1"));
+        Assert.False(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\Background\\shell\\RCMM.001.old2"));
+        Assert.False(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\Background\\ContextMenus\\RCMM.001.oldfolder"));
+        Assert.False(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\.png\\shell\\RCMM.001.imgverb"));
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\Background\\shell\\NotOurs"));
     }
 
-    // ---------- Apply ----------
-
-    [Fact]
-    public void Apply_writes_top_level_entries_and_folder_entries()
-    {
-        var reg = new FakeRegistry();
-        var applier = new AdditionApplier(reg);
-        var folder = new AdditionFolder { Id = "f", Name = "Dev" };
-        var top = new AdditionEntry
-        {
-            Id = "top", Name = "Open Notes", Command = "notepad", WorkingDir = "%V",
-            Scope = AdditionScope.FolderBackground, RunMode = RunMode.VisibleTerminal,
-        };
-        var nested = new AdditionEntry
-        {
-            Id = "nested", Name = "npm run dev", Command = "npm run dev", WorkingDir = "%V",
-            Scope = AdditionScope.FolderBackground, RunMode = RunMode.VisibleTerminal,
-            FolderId = "f",
-        };
-        applier.Apply(new AdditionState
-        {
-            Folders = new[] { folder },
-            Entries = new[] { top, nested },
-        });
-
-        Assert.True(reg.KeyExists(RegistryHive.CurrentUser,
-            "Software\\Classes\\Directory\\Background\\shell\\RCMM.top"));
-        Assert.True(reg.KeyExists(RegistryHive.CurrentUser,
-            "Software\\Classes\\Directory\\Background\\shell\\RCMM.f"));
-        Assert.True(reg.KeyExists(RegistryHive.CurrentUser,
-            "Software\\Classes\\Directory\\Background\\ContextMenus\\RCMM.f\\shell\\RCMM.nested"));
-    }
+    // ---------- Apply: idempotence ----------
 
     [Fact]
     public void Apply_is_idempotent_running_twice_produces_same_state()
@@ -267,21 +247,12 @@ public class AdditionApplierTests
         var applier = new AdditionApplier(reg);
         var state = new AdditionState
         {
-            Entries = new[]
-            {
-                new AdditionEntry
-                {
-                    Id = "x", Name = "x", Command = "x", WorkingDir = "%V",
-                    Scope = AdditionScope.FolderBackground, RunMode = RunMode.VisibleTerminal,
-                }
-            }
+            Entries = new[] { Entry("x", "x", AdditionScope.FolderBackground) }
         };
         applier.Apply(state);
-        var afterFirst = reg.GetSubKeyNames(RegistryHive.CurrentUser,
-            "Software\\Classes\\Directory\\Background\\shell").ToList();
+        var afterFirst = reg.GetSubKeyNames(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\Background\\shell").ToList();
         applier.Apply(state);
-        var afterSecond = reg.GetSubKeyNames(RegistryHive.CurrentUser,
-            "Software\\Classes\\Directory\\Background\\shell").ToList();
+        var afterSecond = reg.GetSubKeyNames(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\Background\\shell").ToList();
         Assert.Equal(afterFirst, afterSecond);
     }
 
@@ -292,19 +263,18 @@ public class AdditionApplierTests
         var applier = new AdditionApplier(reg);
         applier.Apply(new AdditionState
         {
-            Entries = new[]
-            {
-                new AdditionEntry
-                {
-                    Id = "leftover", Name = "leftover", Command = "x", WorkingDir = "%V",
-                    Scope = AdditionScope.FolderBackground, RunMode = RunMode.VisibleTerminal,
-                }
-            }
+            Entries = new[] { Entry("leftover", "x", AdditionScope.FolderBackground) }
         });
-        Assert.True(reg.KeyExists(RegistryHive.CurrentUser,
-            "Software\\Classes\\Directory\\Background\\shell\\RCMM.leftover"));
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\Background\\shell\\RCMM.001.leftover"));
         applier.Apply(new AdditionState());
-        Assert.False(reg.KeyExists(RegistryHive.CurrentUser,
-            "Software\\Classes\\Directory\\Background\\shell\\RCMM.leftover"));
+        Assert.False(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\Background\\shell\\RCMM.001.leftover"));
     }
+
+    // ---------- helper ----------
+    private static AdditionEntry Entry(string id, string command, AdditionScope scope)
+        => new AdditionEntry
+        {
+            Id = id, Name = command, Command = command, WorkingDir = "%V",
+            Scope = scope, RunMode = RunMode.VisibleTerminal
+        };
 }

@@ -46,7 +46,8 @@ public sealed class AdditionStore
                 Log.Warn(Cat, "deserialize returned null — returning empty state");
                 return new AdditionState();
             }
-            Log.Info(Cat, $"loaded entries={state.Entries.Count} folders={state.Folders.Count}");
+            state = MigrateIfNeeded(state);
+            Log.Info(Cat, $"loaded entries={state.Entries.Count} folders={state.Folders.Count} schema=v{state.SchemaVersion}");
             return state;
         }
         catch (Exception ex)
@@ -54,6 +55,20 @@ public sealed class AdditionStore
             Log.Error(Cat, $"failed to read {_path} — returning empty state", ex);
             return new AdditionState();
         }
+    }
+
+    /// <summary>
+    /// Migrate older schemas to the current one. v1 → v2 sets
+    /// <see cref="AdditionFolder.ParentFolderId"/> = null and
+    /// <see cref="AdditionFolder.Scope"/> = FolderBackground on every folder
+    /// (both fields ship as defaults from the record, but we bump the version
+    /// explicitly so a subsequent save records v2 in the file). No data loss.
+    /// </summary>
+    internal static AdditionState MigrateIfNeeded(AdditionState state)
+    {
+        if (state.SchemaVersion >= AdditionState.CurrentSchemaVersion) return state;
+        Log.Info(Cat, $"migrating schema v{state.SchemaVersion} → v{AdditionState.CurrentSchemaVersion}");
+        return state with { SchemaVersion = AdditionState.CurrentSchemaVersion };
     }
 
     public void Save(AdditionState state)
