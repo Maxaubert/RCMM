@@ -115,8 +115,8 @@
                 </Grid>
             </Button>
 
-            <!-- Add to menu (disabled) -->
-            <Button Grid.Column="1" Style="{StaticResource NavCard}" IsEnabled="False" Opacity="0.55">
+            <!-- Add to menu -->
+            <Button Grid.Column="1" Style="{StaticResource NavCard}" Click="AddToMenu_Click">
                 <Grid RowSpacing="14">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -124,17 +124,14 @@
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
-                    <Grid Grid.Row="0">
-                        <Border Width="44" Height="44" CornerRadius="6" HorizontalAlignment="Left"
+                    <Grid Grid.Row="0" Width="56" Height="56" HorizontalAlignment="Left">
+                        <Border Width="56" Height="56" CornerRadius="10"
+                                Background="{ThemeResource AppAccentGlowSoft}"/>
+                        <Border Width="44" Height="44" CornerRadius="6"
                                 Background="{ThemeResource AppSurfaceHover}"
-                                BorderBrush="{ThemeResource AppBorder}" BorderThickness="1">
-                            <FontIcon Glyph="&#xE710;" FontSize="20" Foreground="{ThemeResource AppTextMuted}"/>
-                        </Border>
-                        <Border HorizontalAlignment="Right" VerticalAlignment="Top"
-                                Padding="8,3" CornerRadius="999"
-                                BorderBrush="#5a4615" BorderThickness="1" Background="#1d1606">
-                            <TextBlock Text="COMING SOON" FontSize="10" Foreground="#f5a524"
-                                       FontFamily="Consolas, Cascadia Code, monospace" CharacterSpacing="100"/>
+                                HorizontalAlignment="Center" VerticalAlignment="Center"
+                                BorderBrush="{ThemeResource AppAccentDim}" BorderThickness="1">
+                            <FontIcon Glyph="&#xE710;" FontSize="20" Foreground="{ThemeResource AppAccent}"/>
                         </Border>
                     </Grid>
                     <TextBlock Grid.Row="1" Text="Add to menu" FontSize="22" FontWeight="Medium"
@@ -145,10 +142,10 @@
                     <Border Grid.Row="3" BorderBrush="{ThemeResource AppBorder}" BorderThickness="0,1,0,0"
                             Padding="0,14,0,0" Margin="0,14,0,0">
                         <StackPanel Orientation="Horizontal" Spacing="10">
-                            <TextBlock Text="—" FontSize="24" FontWeight="Medium"
+                            <TextBlock x:Name="AddCountLabel" FontSize="24" FontWeight="Medium"
                                        FontFamily="Consolas, Cascadia Code, monospace"
-                                       Foreground="{ThemeResource AppTextDim}"/>
-                            <TextBlock Text="IN DEVELOPMENT" FontFamily="Consolas, Cascadia Code, monospace"
+                                       Foreground="{ThemeResource AppAccent}"/>
+                            <TextBlock Text="ENTRIES" FontFamily="Consolas, Cascadia Code, monospace"
                                        FontSize="11" Foreground="{ThemeResource AppTextDim}"
                                        VerticalAlignment="Center" CharacterSpacing="100"/>
                         </StackPanel>

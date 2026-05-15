@@ -27,6 +27,8 @@ public sealed partial class LandingPage : Page
         AppCountLabel.Text = app.ToString();
         WinCountLabel.Text = builtin.ToString();
         DrawDonut(app, builtin);
+
+        AddCountLabel.Text = (vm.AddPage?.Entries.Count ?? 0).ToString();
     }
 
     private void DrawDonut(int app, int win)
@@ -91,5 +93,10 @@ public sealed partial class LandingPage : Page
     private void ShowHide_Click(object sender, RoutedEventArgs e)
     {
         Frame.Navigate(typeof(ShowHidePage), _args);
+    }
+
+    private void AddToMenu_Click(object sender, RoutedEventArgs e)
+    {
+        Frame.Navigate(typeof(AddPage), _args);
     }
 }
