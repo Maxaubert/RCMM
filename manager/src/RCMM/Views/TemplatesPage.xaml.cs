@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using Microsoft.UI.Xaml;
@@ -26,20 +27,25 @@ public sealed partial class TemplatesPage : Page
 
         var grouped = AdditionTemplates.All
             .GroupBy(t => t.Ecosystem)
-            .Select(g => new TemplateGroup
-            {
-                Key = g.Key,
-                Templates = new ObservableCollection<AdditionTemplates.Template>(g),
-            })
+            .Select(g => new TemplateGroup(g.Key, g))
             .ToList();
         var view = new CollectionViewSource { IsSourceGrouped = true, Source = grouped };
         TemplatesList.ItemsSource = view.View;
     }
 
-    public sealed class TemplateGroup
+    /// <summary>
+    /// Group object for the Templates browser. CollectionViewSource's grouping
+    /// requires each group to itself be an iterable of items — inheriting from
+    /// ObservableCollection&lt;T&gt; gives that for free. Without this, the page
+    /// renders empty because WinUI can't enumerate the items inside a group.
+    /// </summary>
+    public sealed class TemplateGroup : ObservableCollection<AdditionTemplates.Template>
     {
-        public required string Key { get; init; }
-        public required ObservableCollection<AdditionTemplates.Template> Templates { get; init; }
+        public string Key { get; }
+        public TemplateGroup(string key, IEnumerable<AdditionTemplates.Template> items) : base(items.ToList())
+        {
+            Key = key;
+        }
     }
 
     private void Add_Click(object sender, RoutedEventArgs e)

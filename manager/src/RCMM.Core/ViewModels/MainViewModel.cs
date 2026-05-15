@@ -82,6 +82,7 @@ public sealed class MainViewModel : ObservableObject
 
     private readonly AddPageViewModel? _addPage;
     private readonly AdditionApplier? _additionApplier;
+    private readonly KnownEntriesStore _knownStore = new(KnownEntriesStore.DefaultPath());
 
     /// <summary>View-model backing the Add page (templates / custom entries / folders).</summary>
     public AddPageViewModel? AddPage => _addPage;
@@ -376,6 +377,16 @@ public sealed class MainViewModel : ObservableObject
         // with a Verb), union the hide targets.
         DeduplicateRowsByDisplayName();
 
+        // Restore ghost entries: any row we saw on a previous rescan that's
+        // no longer present in _allRows, but whose hide targets are currently
+        // set in the registry, gets injected back as a hidden row. This is the
+        // only recovery path for CommandStore-only verbs like Windows.Share
+        // ("Give access to") — they have no HKCR\<scope>\shell key the
+        // registry scanners can find, and the live IContextMenu probe stops
+        // returning them once the user hides them. Without this restore, the
+        // entry vanishes from RCMM and the user can't un-toggle it.
+        RestoreGhostEntries();
+
         FilterIntoAllEntries();
         _pendingHide.Clear();
         _pendingUnhide.Clear();
@@ -383,6 +394,8 @@ public sealed class MainViewModel : ObservableObject
         Raise(nameof(RequiresExplorerRestart));
         RescanComplete?.Invoke();
         Log.Info("rescan", $"end rows={_allRows.Count} withHideTargets={rowsWithHide} builtIn={rowsBuiltIn} visible={AllEntries.Count}");
+        // Persist the current snapshot so the next rescan can recover ghosts.
+        _knownStore.Save(_allRows.ConvertAll(r => r.Entry));
         for (int i = 0; i < _allRows.Count; i++)
         {
             var r = _allRows[i];
@@ -440,6 +453,118 @@ public sealed class MainViewModel : ObservableObject
             AllEntries.Add(row);
         }
     }
+
+    /// <summary>
+    /// Walks <see cref="_allRows"/>, groups by case-insensitive DisplayName, and
+    /// collapses each group into a single row. The winner is the row most likely
+    /// <summary>
+    /// Inject "ghost" rows: entries we persisted from a previous rescan that
+    /// aren't present in the current _allRows but whose hide targets are still
+    /// set in the registry. Without this pass, CommandStore-only verbs
+    /// (Windows.Share / "Give access to" and similar) disappear from RCMM
+    /// after the user hides them, leaving no way to un-toggle them.
+    ///
+    /// A ghost is added only if AllTargetsHidden reports true for its stored
+    /// hide targets — so entries the user has since unhidden, or entries that
+    /// were uninstalled and have no hide markers left, are not resurrected.
+    /// </summary>
+    private void RestoreGhostEntries()
+    {
+        var present = new HashSet<string>(_allRows.Select(r => r.Entry.Id), StringComparer.OrdinalIgnoreCase);
+        // Track which BlockedShellExt CLSIDs are already represented so a
+        // persisted entry doesn't duplicate an existing CLSID-based row.
+        var coveredClsids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var r in _allRows)
+            foreach (var t in r.Entry.HideTargets)
+                if (t.Kind == HideKind.BlockedShellExt && !string.IsNullOrEmpty(t.ValueName))
+                    coveredClsids.Add(t.ValueName);
+
+        int restored = 0;
+        foreach (var prev in _knownStore.Load())
+        {
+            if (present.Contains(prev.Id)) continue;
+            if (prev.HideTargets.Count == 0) continue;
+            if (!AllTargetsHidden(prev.HideTargets)) continue;
+            // Skip if every CLSID this entry would block is already covered
+            // — the existing row's toggle already manages the same handlers,
+            // so a duplicate ghost would just clutter the list.
+            var prevBlockClsids = prev.HideTargets
+                .Where(t => t.Kind == HideKind.BlockedShellExt && !string.IsNullOrEmpty(t.ValueName))
+                .Select(t => t.ValueName!)
+                .ToList();
+            if (prevBlockClsids.Count > 0 && prevBlockClsids.All(coveredClsids.Contains)) continue;
+            // Build a fresh MenuEntry with IsHidden recomputed and IconBytes
+            // cleared (the icon loader fetches them again from IconPath).
+            var ghost = prev with { IsHidden = true, IconBytes = null };
+            var row = new EntryRowViewModel(ghost) { HiddenChanged = OnRowToggled };
+            _allRows.Add(row);
+            present.Add(prev.Id);
+            foreach (var c in prevBlockClsids) coveredClsids.Add(c);
+            restored++;
+        }
+
+        // Second pass: walk CommandStore verbs and surface any whose handler
+        // CLSIDs are all currently in the BlockedShellExt list AND aren't
+        // already covered by an existing row. This recovers verbs the user
+        // hid before KnownEntriesStore was populated (e.g. before this fix
+        // shipped) — Windows.Share / "Give access to" is the canonical case.
+        // Without this they'd be permanently invisible until the user
+        // manually clears the registry block.
+        if (_commandStore != null)
+        {
+            // coveredClsids is already maintained by the first pass above
+            // (Mechanism A's loop adds each restored entry's CLSIDs into it),
+            // so candidate verbs whose CLSIDs are already represented by an
+            // existing row are naturally filtered out below.
+            int cmdStoreRestored = 0;
+            foreach (var verbKey in _commandStore.AllVerbKeys())
+            {
+                var verbId = "verb:" + verbKey.ToLowerInvariant();
+                if (present.Contains(verbId)) continue;
+
+                var clsids = _commandStore.LookupClsids(verbKey).ToList();
+                if (clsids.Count == 0) continue;
+                if (clsids.Any(c => coveredClsids.Contains(c))) continue;
+
+                var hideTargets = clsids.Select(c => HideService.BlockedShellExtTarget(c)).ToList();
+                if (!AllTargetsHidden(hideTargets)) continue;
+
+                var display = _wellKnownVerbDisplayNames.TryGetValue(verbKey, out var hardcoded)
+                    ? hardcoded
+                    : (_commandStore.FriendlyTitleForClsid(clsids[0]) ?? verbKey);
+                var entry = new MenuEntry
+                {
+                    Id = verbId,
+                    DisplayName = display,
+                    Source = "Microsoft Corporation",
+                    IsBuiltIn = true,
+                    IsHidden = true,
+                    IsSubmenu = false,
+                    HideTargets = hideTargets,
+                };
+                _allRows.Add(new EntryRowViewModel(entry) { HiddenChanged = OnRowToggled });
+                present.Add(verbId);
+                foreach (var c in clsids) coveredClsids.Add(c);
+                cmdStoreRestored++;
+            }
+            if (cmdStoreRestored > 0)
+                Log.Info("rescan", $"restored commandStoreBlockedVerbs={cmdStoreRestored}");
+        }
+
+        if (restored > 0) Log.Info("rescan", $"restored ghostEntries={restored}");
+    }
+
+    /// <summary>
+    /// Hardcoded display names for CommandStore verbs whose menu text is
+    /// localised by Windows and not derivable from the verb key. Keeps the
+    /// recovered ghost entry's label close to what the user actually saw in
+    /// their right-click menu before they hid it.
+    /// </summary>
+    private static readonly Dictionary<string, string> _wellKnownVerbDisplayNames
+        = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Windows.Share"] = "Give access to",
+    };
 
     /// <summary>
     /// Walks <see cref="_allRows"/>, groups by case-insensitive DisplayName, and

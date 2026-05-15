@@ -115,6 +115,22 @@ public sealed class CommandStoreVerbIndex
     }
 
     /// <summary>
+    /// Returns the raw verb key names (e.g. "Windows.Share",
+    /// "Windows.ModernShare") indexed from CommandStore. Used by the rescan
+    /// pipeline to walk verbs and check whether each is currently blocked —
+    /// the only recovery path for CommandStore-only verbs that have been
+    /// hidden but never live-captured by the current session.
+    /// </summary>
+    public IEnumerable<string> AllVerbKeys()
+    {
+        Build();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var verbs in _verbsByClsid!.Values)
+            foreach (var v in verbs)
+                if (seen.Add(v)) yield return v;
+    }
+
+    /// <summary>
     /// True when the CLSID is the ExplorerCommandHandler (or sibling field)
     /// of any CommandStore verb — i.e., it's a Windows-OS-known modern menu
     /// handler. The view-model uses this to exempt such rows from the
