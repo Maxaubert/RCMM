@@ -8,3 +8,4 @@ publish/
 dist/
 TestResults/
 *.binlog
+worktrees/
