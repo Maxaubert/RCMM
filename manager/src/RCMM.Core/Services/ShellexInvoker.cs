@@ -197,7 +197,8 @@ public sealed class ShellexInvoker
                 try
                 {
                     var title = Marshal.PtrToStringUni(pTitle);
-                    if (!string.IsNullOrWhiteSpace(title)) _titleByClsid[key] = title!;
+                    if (!string.IsNullOrWhiteSpace(title))
+                        _titleByClsid[key] = StripAccelerator(title!);
                 }
                 finally { Marshal.FreeCoTaskMem(pTitle); }
             }

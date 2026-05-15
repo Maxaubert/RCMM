@@ -18,4 +18,12 @@ public sealed record PackagedShellExt
     /// resources, which is the closest we can get without parsing AppxManifest.xml.
     /// </summary>
     public string? DllPath { get; init; }
+    /// <summary>
+    /// Absolute path to a PNG asset declared as the package's logo (resolved from
+    /// AppxManifest.xml — Square44x44Logo, falling back to Properties/Logo).
+    /// Many packaged shellex DLLs carry zero icon resources because the publisher
+    /// expects Windows to render the package's logo asset; this gives us the same
+    /// fallback even when the WindowsApps folder isn't otherwise enumerable.
+    /// </summary>
+    public string? LogoPath { get; init; }
 }

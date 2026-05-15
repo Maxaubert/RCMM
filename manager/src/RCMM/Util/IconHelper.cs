@@ -28,6 +28,17 @@ internal static class IconHelper
             if (string.IsNullOrEmpty(filePath)) return null;
             try
             {
+                // PNG / ICO assets shipped by a packaged AppX (resolved from
+                // AppxManifest.xml's Square44x44Logo / Properties.Logo): the
+                // UI's BitmapImage decodes both formats from raw bytes, so we
+                // hand the file through without going via ExtractIconEx.
+                if (filePath.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+                    || filePath.EndsWith(".ico", StringComparison.OrdinalIgnoreCase))
+                {
+                    var expanded = Environment.ExpandEnvironmentVariables(filePath);
+                    return File.Exists(expanded) ? File.ReadAllBytes(expanded) : null;
+                }
+
                 var (path, index) = ParseIconSpec(filePath);
                 if (!File.Exists(path)) return null;
 
@@ -36,6 +47,18 @@ internal static class IconHelper
                 // DLLs it returns Windows' generic "library" placeholder when the
                 // file has no icon resources — better to show no icon than that.
                 var icon = ExtractWithIndex(path, index);
+                if (icon == null && path.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Packaged shellex DLLs frequently carry zero icon resources
+                    // because the publisher emits the menu icon via HBITMAP at
+                    // runtime — atiacm64.dll (AMD Radeon Software),
+                    // WindowsTerminalShellExt.dll. Walk the same folder for an
+                    // exe whose first icon will stand in (RadeonSoftware.exe,
+                    // wt.exe). One directory listing per missing icon, cached
+                    // so a second rescan is free.
+                    var sibling = FindSiblingIconSource(path);
+                    if (sibling != null) icon = ExtractWithIndex(sibling, 0);
+                }
                 if (icon == null && !path.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
                     icon = System.Drawing.Icon.ExtractAssociatedIcon(path);
                 if (icon == null) return null;
@@ -51,16 +74,69 @@ internal static class IconHelper
             }
         });
 
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string?> _siblingIconCache
+        = new(StringComparer.OrdinalIgnoreCase);
+
+    private static string? FindSiblingIconSource(string dllPath)
+    {
+        return _siblingIconCache.GetOrAdd(dllPath, static p =>
+        {
+            try
+            {
+                var dir = Path.GetDirectoryName(p);
+                if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return null;
+                // Prefer the largest exe — typically the main app binary. Skip
+                // tiny launchers, uninstallers, and signed-but-iconless stubs.
+                string? best = null;
+                long bestSize = 0;
+                foreach (var exe in Directory.EnumerateFiles(dir, "*.exe", SearchOption.TopDirectoryOnly))
+                {
+                    int count = ExtractIconEx(exe, -1, null, null, 0);
+                    if (count <= 0) continue;
+                    var size = new FileInfo(exe).Length;
+                    if (size > bestSize) { best = exe; bestSize = size; }
+                }
+                return best;
+            }
+            catch { return null; }
+        });
+    }
+
     private static (string path, int index) ParseIconSpec(string raw)
     {
         var s = Environment.ExpandEnvironmentVariables(raw).Trim();
         if (s.StartsWith('@')) s = s[1..];
 
+        int index = 0;
+
+        // Form: "C:\path\exe" "%1" / "%V" (quoted exe followed by quoted arg).
+        // Verbs in the registry store their command as a quoted exe plus a
+        // %1 placeholder for the file; the outer-quote-strip below would
+        // turn that into "C:\path\exe" "%1 (mid-string quote) and break
+        // ExtractIconEx. Grab the bracketed exe explicitly first.
+        if (s.StartsWith('"'))
+        {
+            int closeQuote = s.IndexOf('"', 1);
+            if (closeQuote > 1)
+            {
+                var exe = s[1..closeQuote];
+                var rest = s[(closeQuote + 1)..].TrimStart();
+                if (rest.StartsWith(','))
+                {
+                    var idxText = rest.AsSpan(1).Trim();
+                    var spaceInIdx = idxText.IndexOf(' ');
+                    if (spaceInIdx >= 0) idxText = idxText[..spaceInIdx];
+                    if (int.TryParse(idxText, out var parsedIdx))
+                        index = parsedIdx;
+                }
+                return (ResolveBareFilename(exe), index);
+            }
+        }
+
         // path,index detection must come BEFORE quote-stripping because the index
         // sits outside the quotes: "C:\path with space\vlc.exe",0
         int comma = s.LastIndexOf(',');
         int lastSep = s.LastIndexOf('\\');
-        int index = 0;
         if (comma > lastSep && comma > 0 &&
             int.TryParse(s.AsSpan(comma + 1).Trim(), out var parsed))
         {
@@ -70,25 +146,34 @@ internal static class IconHelper
 
         if (s.Length >= 2 && s[0] == '"' && s[^1] == '"') s = s[1..^1];
 
-        // unquoted command-line: prefer the prefix that names a real file.
+        // Unquoted command-line: extract the exe prefix, then resolve bare
+        // filenames against System32. Without the second step a verb whose
+        // command is "notepad.exe %1" never finds notepad — File.Exists on
+        // the bare name fails, the original code's bare-filename check looks
+        // at the WHOLE string (which contains '\' from the args) and bails.
         if (!File.Exists(s))
         {
             var firstSpace = s.IndexOf(' ');
             if (firstSpace > 0)
             {
                 var candidate = s[..firstSpace];
-                if (File.Exists(candidate)) s = candidate;
+                s = File.Exists(candidate) ? candidate : ResolveBareFilename(candidate);
+            }
+            else
+            {
+                s = ResolveBareFilename(s);
             }
         }
 
-        // bare filename like "imageres.dll" — fall back to System32 search path.
-        if (!File.Exists(s) && !s.Contains('\\') && !s.Contains('/'))
-        {
-            var sys32 = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), s);
-            if (File.Exists(sys32)) s = sys32;
-        }
-
         return (s, index);
+    }
+
+    private static string ResolveBareFilename(string s)
+    {
+        if (File.Exists(s)) return s;
+        if (s.Contains('\\') || s.Contains('/')) return s;
+        var sys32 = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), s);
+        return File.Exists(sys32) ? sys32 : s;
     }
 
     private static System.Drawing.Icon? ExtractWithIndex(string path, int index)

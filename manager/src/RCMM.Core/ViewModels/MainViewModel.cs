@@ -29,8 +29,43 @@ public sealed class MainViewModel : ObservableObject
         new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _packagedDllByClsid =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _packagedLogoByClsid =
+        new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _observedClsids =
         new(StringComparer.OrdinalIgnoreCase);
+    // CLSIDs whose technical DisplayName the rename pass successfully replaced
+    // with a friendly one. Treated like "observed" by FilterIntoAllEntries so
+    // the unrelated unobserved-CLSID filter doesn't immediately re-hide the
+    // row we just made readable (Modern Share, Defender Scan, NVIDIA, ...).
+    private readonly HashSet<string> _renamedClsids =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    // Last-resort DisplayName overrides for shellex handlers whose menu text
+    // we can't recover from the registry or COM probes — typically because
+    // the handler refuses to populate IContextMenu without admin/admin-elevated
+    // context, and it doesn't implement IExplorerCommand. Keyed by the
+    // FileDescription that ClassicShellexScanner picks up.
+    private static readonly Dictionary<string, string> _technicalDisplayNameOverrides
+        = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Microsoft Security Client Shell Extension"] = "Scan with Microsoft Defender",
+        ["NVIDIA Display Shell Extension"] = "NVIDIA Control Panel",
+    };
+
+    // CLSID → icon-path overrides for shellexes whose registered DLL is
+    // empty of icon resources (Windows renders the menu icon via an HBITMAP
+    // the handler emits at runtime, which we can't intercept here). The
+    // override points at a sibling DLL/exe with the same publisher that does
+    // contain the right icon. Keyed by CLSID — CLSIDs are case-insensitive
+    // in the registry so the comparer is OrdinalIgnoreCase.
+    private static readonly Dictionary<string, string> _iconPathOverridesByClsid
+        = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // NVIDIA's NvCplDesktopContext shellex DLL (nvshext.dll in
+        // System32\DriverStore) has zero icon resources; nvcpl.dll alongside
+        // it carries the NVIDIA Control Panel icon at index 0.
+        ["{3D1975AF-48C6-4f8e-A182-BE0E08FA86A9}"] = @"%SystemRoot%\System32\nvcpl.dll",
+    };
 
 
     private readonly Dictionary<string, IReadOnlyList<HideTarget>> _pendingHide = new();
@@ -97,64 +132,98 @@ public sealed class MainViewModel : ObservableObject
         allItems.AddRange(_capture.CaptureAll(targets));
         int liveCount = allItems.Count;
 
+        _packagedClsids.Clear();
+        _packagedPublishers.Clear();
+        _packagedDllByClsid.Clear();
+        _packagedLogoByClsid.Clear();
+        _renamedClsids.Clear();
+
+        // Defer iteration: get the packaged + registry CLSIDs first so they can be
+        // registered alongside CommandStore CLSIDs in a single upfront invoker
+        // probe. ShellexInvoker.BuildDisplayNameToClsidMap caches per-process —
+        // anything not registered before that first call is invisible to the
+        // rename pass and stays labelled by its DLL FileDescription.
+        var pkgList = _packagedScanner?.Scan().ToList() ?? new List<PackagedShellExt>();
+        var registryItems = _registryScanner?.ScanAsCaptures().ToList() ?? new List<CapturedItem>();
+
+        if (_shellexInvoker != null)
+        {
+            foreach (var pkg in pkgList)
+                _shellexInvoker.RegisterExtraClsid(pkg.Clsid);
+            foreach (var item in allItems)
+                if (!string.IsNullOrEmpty(item.OwnerClsid))
+                    _shellexInvoker.RegisterExtraClsid(item.OwnerClsid!);
+            foreach (var item in registryItems)
+                if (!string.IsNullOrEmpty(item.OwnerClsid))
+                    _shellexInvoker.RegisterExtraClsid(item.OwnerClsid!);
+            // CommandStore handler CLSIDs (Windows.ModernShare, Windows.CompressTo,
+            // ...). On Windows 11 these modern verbs aren't returned by legacy
+            // IContextMenu, so the only way to learn their friendly menu text is
+            // to ask IExplorerCommand::GetTitle directly — that requires them to
+            // be in the invoker's probe set BEFORE BuildDisplayNameToClsidMap.
+            if (_commandStore != null)
+                foreach (var clsid in _commandStore.AllClsids())
+                    _shellexInvoker.RegisterExtraClsid(clsid);
+            // Also include verb-handler CLSIDs reachable from captured verbs'
+            // HKCR registrations (ExplorerCommandHandler / VerbHandler fields).
+            foreach (var captured in allItems)
+            {
+                if (string.IsNullOrEmpty(captured.Verb)) continue;
+                foreach (var t in _mapper.MapVerb(captured.Verb!))
+                {
+                    var hkcrPath = HkcrPathFor(t) ?? t.Path;
+                    foreach (var field in new[] { "ExplorerCommandHandler", "VerbHandler", "CommandStateHandler", "CanonicalName" })
+                        if (_reg.GetValue(RegistryHive.ClassesRoot, hkcrPath, field) is string c && LooksLikeClsid(c))
+                            _shellexInvoker.RegisterExtraClsid(c);
+                }
+            }
+            _shellexInvoker.BuildDisplayNameToClsidMap();
+        }
+
         // Packaged COM context menus go BEFORE the classic registry scan because
         // (a) their friendly DisplayName is more accurate than a DLL's FileDescription
         // and (b) they own the BlockedShellExt hide-target path; ResolveHideTargets
         // consults _packagedClsids to pick the right hide path.
-        _packagedClsids.Clear();
-        _packagedPublishers.Clear();
-        _packagedDllByClsid.Clear();
-        if (_packagedScanner != null)
+        int pos = 0;
+        int packagedAdded = 0;
+        foreach (var pkg in pkgList)
         {
-            // Register packaged CLSIDs with the invoker BEFORE the packaged scan so
-            // it can probe IExplorerCommand for the friendly title (e.g.
-            // "AMD Software: Adrenalin Edition" instead of "Catalyst Context Menu
-            // extension") which we then use as the row's DisplayName.
-            var pkgList = _packagedScanner.Scan().ToList();
-            if (_shellexInvoker != null)
-                foreach (var pkg in pkgList)
-                    _shellexInvoker.RegisterExtraClsid(pkg.Clsid);
-            _shellexInvoker?.BuildDisplayNameToClsidMap(); // forces probe so titles are ready
+            _packagedClsids.Add(pkg.Clsid);
+            if (!_packagedPublishers.ContainsKey(pkg.Clsid))
+                _packagedPublishers[pkg.Clsid] = pkg.PublisherDisplayName;
+            if (pkg.DllPath != null && !_packagedDllByClsid.ContainsKey(pkg.Clsid))
+                _packagedDllByClsid[pkg.Clsid] = pkg.DllPath;
+            if (pkg.LogoPath != null && !_packagedLogoByClsid.ContainsKey(pkg.Clsid))
+                _packagedLogoByClsid[pkg.Clsid] = pkg.LogoPath;
 
-            int pos = 0;
-            int packagedAdded = 0;
-            foreach (var pkg in pkgList)
+            // Display name priority:
+            //   1. IExplorerCommand::GetTitle — the exact menu text the shell renders.
+            //   2. PublisherDisplayName ("AMD Software", "Notepad++", "WinRAR") —
+            //      recognisable to the user, way cleaner than the technical
+            //      class label ("Catalyst Context Menu extension",
+            //      "WindowsTerminalShellExt").
+            //   3. Registry-reported DisplayName as a last resort.
+            var liveTitle = _shellexInvoker?.LookupTitle(pkg.Clsid);
+            var display = !string.IsNullOrWhiteSpace(liveTitle) ? liveTitle!
+                        : LooksTechnical(pkg.DisplayName) ? pkg.PublisherDisplayName
+                        : pkg.DisplayName;
+
+            allItems.Add(new CapturedItem
             {
-                _packagedClsids.Add(pkg.Clsid);
-                if (!_packagedPublishers.ContainsKey(pkg.Clsid))
-                    _packagedPublishers[pkg.Clsid] = pkg.PublisherDisplayName;
-                if (pkg.DllPath != null && !_packagedDllByClsid.ContainsKey(pkg.Clsid))
-                    _packagedDllByClsid[pkg.Clsid] = pkg.DllPath;
-
-                // Display name priority:
-                //   1. IExplorerCommand::GetTitle — the exact menu text the shell renders.
-                //   2. PublisherDisplayName ("AMD Software", "Notepad++", "WinRAR") —
-                //      recognisable to the user, way cleaner than the technical
-                //      class label ("Catalyst Context Menu extension",
-                //      "WindowsTerminalShellExt").
-                //   3. Registry-reported DisplayName as a last resort.
-                var liveTitle = _shellexInvoker?.LookupTitle(pkg.Clsid);
-                var display = !string.IsNullOrWhiteSpace(liveTitle) ? liveTitle!
-                            : LooksTechnical(pkg.DisplayName) ? pkg.PublisherDisplayName
-                            : pkg.DisplayName;
-
-                allItems.Add(new CapturedItem
-                {
-                    TargetPath = $"<packaged:{pkg.PackageFullName}>",
-                    Position = pos++,
-                    DisplayName = display,
-                    OwnerClsid = pkg.Clsid,
-                    IsSeparator = false,
-                    IsSubmenu = false
-                });
-                packagedAdded++;
-            }
-            Log.Info("rescan", $"packagedAdded={packagedAdded} clsids={_packagedClsids.Count}");
+                TargetPath = $"<packaged:{pkg.PackageFullName}>",
+                Position = pos++,
+                DisplayName = display,
+                OwnerClsid = pkg.Clsid,
+                IsSeparator = false,
+                IsSubmenu = false
+            });
+            packagedAdded++;
         }
+        Log.Info("rescan", $"packagedAdded={packagedAdded} clsids={_packagedClsids.Count}");
 
-        if (_registryScanner != null)
+        if (registryItems.Count > 0)
         {
-            allItems.AddRange(_registryScanner.ScanAsCaptures());
+            allItems.AddRange(registryItems);
             Log.Info("rescan", $"liveCaptured={liveCount} packaged+registry={allItems.Count - liveCount}");
         }
         var nameIndex = _shellexIndex.BuildNameToClsidMap();
@@ -166,11 +235,6 @@ public sealed class MainViewModel : ObservableObject
         // contribute to any sample right-click menu (Launches Sync Center,
         // Work Folders, Client Side Caching UI, etc.).
         _observedClsids.Clear();
-        if (_shellexInvoker != null)
-        {
-            // Force probe so emitted names are available now.
-            _shellexInvoker.BuildDisplayNameToClsidMap();
-        }
 
         // Pre-merge pass:
         //   (a) Attach OwnerClsid to live captures so the merge's clsid-key dedup
@@ -203,10 +267,42 @@ public sealed class MainViewModel : ObservableObject
 
             if (!string.IsNullOrEmpty(item.OwnerClsid) && LooksTechnical(item.DisplayName))
             {
-                var emitted = _shellexInvoker?.LookupEmittedNames(item.OwnerClsid)
+                // Fallback chain — first one with a non-technical, non-empty title wins.
+                //   (1) IShellExtInit+IContextMenu probe results ("Scan for deleted files"
+                //       for Recuva's CLSID once it emitted that string during probing).
+                //   (2) IExplorerCommand::GetTitle — Modern Share's CLSID returns "Share"
+                //       here even though the registry only has the COM ProgID
+                //       "Ribbon Modern Share Verb".
+                //   (3) CommandStore verb-name derivation — covers any OS modern verb
+                //       whose handler is registered in CommandStore but doesn't
+                //       implement IExplorerCommand.
+                //   (4) Static override table for well-known third-party handlers
+                //       (Defender, NVIDIA) that don't probe and have no CommandStore
+                //       entry; their menu text is well-known and stable enough to
+                //       hardcode rather than leave the row hidden.
+                string? renamed = _shellexInvoker?.LookupEmittedNames(item.OwnerClsid)
                     .FirstOrDefault(n => !string.IsNullOrWhiteSpace(n) && !LooksTechnical(n));
-                if (!string.IsNullOrWhiteSpace(emitted))
-                    item = item with { DisplayName = emitted! };
+                if (string.IsNullOrWhiteSpace(renamed))
+                {
+                    var title = _shellexInvoker?.LookupTitle(item.OwnerClsid);
+                    if (!string.IsNullOrWhiteSpace(title) && !LooksTechnical(title!))
+                        renamed = title;
+                }
+                if (string.IsNullOrWhiteSpace(renamed))
+                {
+                    var cs = _commandStore?.FriendlyTitleForClsid(item.OwnerClsid);
+                    if (!string.IsNullOrWhiteSpace(cs) && !LooksTechnical(cs!))
+                        renamed = cs;
+                }
+                if (string.IsNullOrWhiteSpace(renamed)
+                    && _technicalDisplayNameOverrides.TryGetValue(item.DisplayName, out var hardcoded))
+                    renamed = hardcoded;
+
+                if (!string.IsNullOrWhiteSpace(renamed))
+                {
+                    item = item with { DisplayName = renamed! };
+                    _renamedClsids.Add(item.OwnerClsid!);
+                }
             }
 
             // A CLSID counts as "observed" only when it's attached to a *live*
@@ -224,38 +320,9 @@ public sealed class MainViewModel : ObservableObject
         var merged = MergeCaptures(allItems).ToList();
         Log.Info("rescan", $"captured={allItems.Count} mergedUnique={merged.Count}");
 
-        // Feed the invoker every handler CLSID we know about — verb
-        // ExplorerCommandHandlers / VerbHandlers, CommandStore handlers, packaged
-        // CLSIDs — so its IExplorerCommand::GetIcon pass can resolve their icons.
-        if (_shellexInvoker != null)
-        {
-            foreach (var captured in allItems)
-                if (!string.IsNullOrEmpty(captured.OwnerClsid))
-                    _shellexInvoker.RegisterExtraClsid(captured.OwnerClsid!);
-            foreach (var captured in allItems)
-            {
-                if (string.IsNullOrEmpty(captured.Verb)) continue;
-                foreach (var cmdStoreClsid in _commandStore?.LookupClsids(captured.Verb!) ?? Array.Empty<string>())
-                    _shellexInvoker.RegisterExtraClsid(cmdStoreClsid);
-            }
-            // Also register handler CLSIDs from each verb registration. Walk MapVerb
-            // for every captured verb and read the handler-CLSID fields out of HKCR.
-            foreach (var captured in allItems)
-            {
-                if (string.IsNullOrEmpty(captured.Verb)) continue;
-                foreach (var t in _mapper.MapVerb(captured.Verb!))
-                {
-                    var hkcrPath = HkcrPathFor(t) ?? t.Path;
-                    foreach (var field in new[] { "ExplorerCommandHandler", "VerbHandler", "CommandStateHandler", "CanonicalName" })
-                        if (_reg.GetValue(RegistryHive.ClassesRoot, hkcrPath, field) is string c && LooksLikeClsid(c))
-                            _shellexInvoker.RegisterExtraClsid(c);
-                }
-            }
-        }
-
-        // Heaviest lookup last so cheaper resolvers win: instantiate each shellex
-        // handler and ask what it emits. Catches Recuva / Library Location / PlayTo,
-        // which have no name overlap with their FileDescription. Cached per-process.
+        // Every handler CLSID we care about was already registered with the
+        // invoker in the upfront pass, so a second BuildDisplayNameToClsidMap
+        // call returns the cached map. We still log its size for diagnostics.
         var invokerMap = _shellexInvoker?.BuildDisplayNameToClsidMap();
         Log.Debug("rescan", $"shellexNameIndex entries={nameIndex.Count} wordIndexClsids={wordIndex.Count} invokerNames={invokerMap?.Count ?? 0}");
 
@@ -344,7 +411,15 @@ public sealed class MainViewModel : ObservableObject
             if (row.Entry.Id.StartsWith("clsid:", StringComparison.Ordinal))
             {
                 var clsid = row.Entry.Id.Substring("clsid:".Length);
-                if (!_packagedClsids.Contains(clsid) && !_observedClsids.Contains(clsid))
+                // A CLSID counts as "real" if any of: it's a packaged COM ext;
+                // we observed it on a live capture; we renamed it from a
+                // technical FileDescription (Share, Defender, NVIDIA); or
+                // CommandStore lists it as a handler for a Windows OS verb
+                // (modern verbs that legacy IContextMenu doesn't return).
+                if (!_packagedClsids.Contains(clsid)
+                    && !_observedClsids.Contains(clsid)
+                    && !_renamedClsids.Contains(clsid)
+                    && !(_commandStore?.IsKnownClsid(clsid) ?? false))
                     continue;
             }
             AllEntries.Add(row);
@@ -475,6 +550,18 @@ public sealed class MainViewModel : ObservableObject
 
     private string? ResolveIconPath(CapturedItem item, IReadOnlyList<HideTarget> targets)
     {
+        // 0a. Hardcoded CLSID → icon-path override for shellexes whose
+        // registered DLL has no icon resources (NVIDIA's nvshext.dll, ...).
+        // These handlers emit the menu icon via HBITMAP at runtime, which we
+        // can't intercept here; the override points at a sibling binary
+        // shipped by the same publisher that does carry the icon.
+        if (!string.IsNullOrEmpty(item.OwnerClsid)
+            && _iconPathOverridesByClsid.TryGetValue(item.OwnerClsid, out var iconOverride))
+        {
+            var expanded = Environment.ExpandEnvironmentVariables(iconOverride);
+            if (System.IO.File.Exists(expanded)) return expanded;
+        }
+
         // 0. IExplorerCommand::GetIcon for any handler we've probed. Modern verbs
         // (Notepad++'s ANotepad++64, packaged context menus, many CommandStore
         // entries) implement IExplorerCommand and return an explicit icon path
@@ -538,14 +625,14 @@ public sealed class MainViewModel : ObservableObject
                     && LooksLikeClsid(handlerClsid))
                 {
                     var dll = _reg.GetValue(RegistryHive.ClassesRoot, $@"CLSID\{handlerClsid}\InprocServer32", "") as string;
-                    if (!IsSystemDll(dll) && !string.IsNullOrWhiteSpace(dll)) return dll;
+                    if (!IsGenericIconLibrary(dll) && !string.IsNullOrWhiteSpace(dll)) return dll;
                 }
             }
             if (_reg.GetValue(RegistryHive.ClassesRoot, hkcrPath + @"\command", "DelegateExecute") is string delegateClsid
                 && LooksLikeClsid(delegateClsid))
             {
                 var dll = _reg.GetValue(RegistryHive.ClassesRoot, $@"CLSID\{delegateClsid}\InprocServer32", "") as string;
-                if (!IsSystemDll(dll) && !string.IsNullOrWhiteSpace(dll)) return dll;
+                if (!IsGenericIconLibrary(dll) && !string.IsNullOrWhiteSpace(dll)) return dll;
             }
         }
 
@@ -568,26 +655,47 @@ public sealed class MainViewModel : ObservableObject
             var defaultIcon = _reg.GetValue(RegistryHive.ClassesRoot, clsidPath + @"\DefaultIcon", "") as string;
             if (!string.IsNullOrWhiteSpace(defaultIcon)) return defaultIcon;
             var dll = _reg.GetValue(RegistryHive.ClassesRoot, clsidPath + @"\InprocServer32", "") as string;
-            if (!string.IsNullOrWhiteSpace(dll) && !IsSystemDll(dll)) return dll;
+            if (!string.IsNullOrWhiteSpace(dll) && !IsGenericIconLibrary(dll)) return dll;
 
             // Packaged COM extensions aren't in classic HKCR\CLSID; their DLL lives
             // under C:\Program Files\WindowsApps\<package>\… resolved from the AppX
             // store and PackagedCom\Package\<pkg>\Class\<CLSID>\DllPath.
+            //
+            // Prefer the AppxManifest-declared logo PNG over the DLL for packaged
+            // shellexes: the registered DLL often has zero icon resources because
+            // the publisher expects the package's Square44x44Logo asset to be
+            // rendered, and PNG assets are usually readable even when the rest of
+            // the package folder isn't enumerable for non-admin users (PowerToys
+            // ImageResizer, Notepad++ Microsoft Store build, etc.).
+            if (_packagedLogoByClsid.TryGetValue(item.OwnerClsid!, out var packagedLogo))
+                return packagedLogo;
             if (_packagedDllByClsid.TryGetValue(item.OwnerClsid!, out var packagedDll))
                 return packagedDll;
         }
+
+        // 4. Registry-scanner pre-resolved hint. ClassicShellexScanner already
+        // walks CLSID\<clsid>\InprocServer32 to read FileDescription; the same
+        // path is the cheapest valid icon source when steps 0-3 returned nothing
+        // (e.g. the scanner used a resolution route — Shell key, alternate
+        // server registration — that the HKCR\CLSID lookup at step 3 misses).
+        if (!string.IsNullOrWhiteSpace(item.IconHint) && !IsGenericIconLibrary(item.IconHint))
+            return item.IconHint;
 
         return null;
     }
 
     /// <summary>
-    /// True when the path resolves to a DLL inside Windows\System32 or SysWOW64.
-    /// Used as an icon-source filter: the shell's generic DLLs (shell32.dll,
-    /// windows.storage.dll, ntshrui.dll, …) host hundreds of icons and the first
-    /// one is a placeholder, so the menu's real icon comes from a runtime HBITMAP
-    /// the handler emits — not from index 0 of the DLL.
+    /// True for the handful of generic-icon Windows libraries whose index-0
+    /// resource is a placeholder (the shell uses an HBITMAP the handler emits
+    /// at runtime, not a resource we can read here). Used as a last-mile filter
+    /// in ResolveIconPath so we don't return a generic key/folder/document icon.
+    ///
+    /// Match is by *filename* not "path is anywhere under System32" — that
+    /// earlier rule misfiled third-party DLLs like NVIDIA's
+    /// System32\DriverStore\...\nvshext.dll as generic and stripped a perfectly
+    /// good icon source, leaving "NVIDIA Control Panel" with no icon in the UI.
     /// </summary>
-    private static bool IsSystemDll(string? path)
+    private static bool IsGenericIconLibrary(string? path)
     {
         if (string.IsNullOrEmpty(path)) return false;
         try
@@ -599,9 +707,11 @@ public sealed class MainViewModel : ObservableObject
                 if (end > 1) s = s[1..end];
             }
             var comma = s.LastIndexOf(',');
-            if (comma > 0 && comma > s.LastIndexOf('\\')) s = s[..comma];
-            return s.Contains(@"\windows\system32\")
-                || s.Contains(@"\windows\syswow64\");
+            if (comma > 0 && comma > s.LastIndexOf('\\') && comma > s.LastIndexOf('/'))
+                s = s[..comma];
+            var fileName = System.IO.Path.GetFileName(s.Trim());
+            return fileName is "shell32.dll" or "imageres.dll" or "windows.storage.dll"
+                            or "ntshrui.dll" or "ddores.dll" or "explorer.exe";
         }
         catch { return false; }
     }
@@ -809,10 +919,19 @@ public sealed class MainViewModel : ObservableObject
             if (!string.IsNullOrEmpty(company) || LooksWindowsPath(probe))
             {
                 // IsBuiltIn means "Windows component, not a third-party app". DLL in
-                // Windows folder is the strict signal. Don't include "Microsoft app
-                // in Program Files / WindowsApps" — Visual Studio Code, Clipchamp,
-                // PowerToys are published by Microsoft but are user-installed apps.
-                return (company, LooksWindowsPath(probe));
+                // a Windows folder is the necessary signal but not sufficient: NVIDIA,
+                // AMD, and other vendors install shellex DLLs into System32
+                // (nvshext.dll, ...). A bare-name probe then resolves to a Windows
+                // path even though the publisher is a third party — flagging
+                // "NVIDIA Control Panel" as built-in even though it's an app.
+                // Require BOTH "in Windows folder" AND "no third-party CompanyName"
+                // to flag the row as built-in. Conversely, "Microsoft app in
+                // Program Files / WindowsApps" (VS Code, Clipchamp, PowerToys)
+                // still stays third-party because they live outside Windows folder.
+                bool inWindowsFolder = LooksWindowsPath(probe);
+                bool publishedByMicrosoft = string.IsNullOrEmpty(company)
+                    || company!.IndexOf("Microsoft", StringComparison.OrdinalIgnoreCase) >= 0;
+                return (company, inWindowsFolder && publishedByMicrosoft);
             }
         }
 

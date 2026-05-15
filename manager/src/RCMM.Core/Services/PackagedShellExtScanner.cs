@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using RCMM.Core.Diagnostics;
 using RCMM.Core.Models;
 
@@ -79,7 +80,8 @@ public sealed class PackagedShellExtScanner
                     PackageFullName = pkg,
                     DisplayName = chosenDisplay!,
                     PublisherDisplayName = publisher!,
-                    DllPath = absDll
+                    DllPath = absDll,
+                    LogoPath = installFolder != null ? ResolvePackageLogo(installFolder) : null,
                 };
             }
         }
@@ -110,6 +112,103 @@ public sealed class PackagedShellExtScanner
             // let ExtractIconEx do its own File.Exists check on the joined path.
             return candidate;
         }
+        return null;
+    }
+
+    // Cached per-package: AppxManifest.xml parsing isn't free and we may see
+    // multiple CLSIDs from the same package in one Scan() pass.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string?> _logoCache = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Reads &lt;package&gt;\AppxManifest.xml, pulls the smallest declared visual
+    /// element logo (Square44x44Logo or Properties/Logo as fallback), and
+    /// resolves it to a real file on disk — handling AppX scale variants
+    /// (".scale-100.png" / ".targetsize-44.png" appended to the declared
+    /// stem). Returns null if no usable asset is found; callers fall through
+    /// to the existing icon-resolution chain.
+    /// </summary>
+    private string? ResolvePackageLogo(string installFolder)
+    {
+        return _logoCache.GetOrAdd(installFolder, folder =>
+        {
+            try
+            {
+                var manifest = System.IO.Path.Combine(folder, "AppxManifest.xml");
+                if (!System.IO.File.Exists(manifest)) return null;
+                var doc = new System.Xml.XmlDocument();
+                doc.Load(manifest);
+                // Smallest first — closer to the 32-44 px icon the list shows.
+                var candidates = new System.Collections.Generic.List<string>();
+                foreach (System.Xml.XmlNode? app in doc.GetElementsByTagName("Application"))
+                {
+                    if (app is not System.Xml.XmlElement el) continue;
+                    foreach (System.Xml.XmlNode ve in el.ChildNodes)
+                    {
+                        if (ve is not System.Xml.XmlElement veEl) continue;
+                        if (!veEl.LocalName.Equals("VisualElements", StringComparison.Ordinal)) continue;
+                        var sq44 = veEl.GetAttribute("Square44x44Logo");
+                        var sq71 = veEl.GetAttribute("Square71x71Logo");
+                        var sq150 = veEl.GetAttribute("Square150x150Logo");
+                        if (!string.IsNullOrWhiteSpace(sq44)) candidates.Add(sq44);
+                        if (!string.IsNullOrWhiteSpace(sq71)) candidates.Add(sq71);
+                        if (!string.IsNullOrWhiteSpace(sq150)) candidates.Add(sq150);
+                    }
+                }
+                foreach (System.Xml.XmlNode? prop in doc.GetElementsByTagName("Properties"))
+                {
+                    if (prop is not System.Xml.XmlElement el) continue;
+                    foreach (System.Xml.XmlNode child in el.ChildNodes)
+                    {
+                        if (child is System.Xml.XmlElement c && c.LocalName.Equals("Logo", StringComparison.Ordinal))
+                            candidates.Add(c.InnerText);
+                    }
+                }
+                foreach (var rel in candidates)
+                {
+                    var resolved = ResolveAppxAsset(folder, rel);
+                    if (resolved != null) return resolved;
+                }
+            }
+            catch (Exception ex) { Log.Debug(Cat, $"manifest parse failed for {folder}: {ex.Message}"); }
+            return null;
+        });
+    }
+
+    private static string? ResolveAppxAsset(string installFolder, string relativePath)
+    {
+        // 1. Literal path — older / hand-packed manifests (PowerToys ImageResizer,
+        //    Notepad++ via Maximus/MSIX) ship the asset at the declared name.
+        var literal = System.IO.Path.Combine(installFolder, relativePath);
+        if (System.IO.File.Exists(literal)) return literal;
+
+        // 2. Scale variants — MakeAppx splits one logical asset into multiple
+        //    physical files. Try the conventional suffixes in order of preference.
+        var dir = System.IO.Path.GetDirectoryName(literal);
+        if (string.IsNullOrEmpty(dir)) return null;
+        var stem = System.IO.Path.GetFileNameWithoutExtension(literal);
+        var ext = System.IO.Path.GetExtension(literal);
+        foreach (var suffix in new[]
+        {
+            ".scale-100", ".scale-125", ".scale-150", ".scale-200", ".scale-400",
+            ".targetsize-44", ".targetsize-32", ".targetsize-48", ".targetsize-96",
+            ".scale-100_contrast-standard", ".scale-200_contrast-standard"
+        })
+        {
+            var guess = System.IO.Path.Combine(dir, stem + suffix + ext);
+            if (System.IO.File.Exists(guess)) return guess;
+        }
+
+        // 3. Fallback: if the parent is enumerable, glob for any file whose name
+        //    starts with the stem. WindowsApps subfolders are usually readable.
+        try
+        {
+            if (System.IO.Directory.Exists(dir))
+            {
+                var hit = System.IO.Directory.EnumerateFiles(dir, stem + "*" + ext).FirstOrDefault();
+                if (hit != null) return hit;
+            }
+        }
+        catch { }
         return null;
     }
 

@@ -42,6 +42,7 @@ public sealed class EntryScanner
                 DisplayName = entry.DisplayName,
                 Verb = entry.Kind == EntryKind.ShellVerb ? entry.OriginalKeyName : null,
                 OwnerClsid = entry.Kind == EntryKind.ShellExtension ? entry.Clsid : null,
+                IconHint = entry.IconPath,
                 IsSeparator = false,
                 IsSubmenu = false
             };
