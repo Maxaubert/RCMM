@@ -36,7 +36,7 @@ public class CascadeProtectionServiceTests
     }
 
     [Fact]
-    public void PlanProtections_targets_other_background_extensions_in_both_scopes()
+    public void PlanProtections_targets_other_background_extensions_only_in_background_scope()
     {
         var reg = new FakeRegistry();
         var sut = new CascadeProtectionService(reg);
@@ -45,15 +45,36 @@ public class CascadeProtectionServiceTests
 
         var plans = sut.PlanProtections(amd.Clsid, new[] { amd, term });
 
-        // Expect one plan per scope for Terminal (the OTHER background ext).
-        Assert.Equal(2, plans.Count);
-        Assert.All(plans, p => Assert.Equal(term.Clsid, p.SourceClsid));
-        Assert.Contains(plans, p => p.Scope == "Directory");
-        Assert.Contains(plans, p => p.Scope == "Directory\\Background");
-        // Verb name uses the source CLSID without braces.
-        Assert.All(plans, p => Assert.Contains("9F156763", p.VerbPath));
-        // Command launches via AppsFolder + AUMID.
-        Assert.All(plans, p => Assert.Equal("explorer.exe shell:AppsFolder\\Microsoft.WindowsTerminal_8wekyb3d8bbwe!App", p.Command));
+        // Only Directory\Background is protectable — the cascade lives in the
+        // modern flyout, which is the Background scope. Protecting the
+        // folder-as-item Directory scope produced a duplicate menu row.
+        Assert.Single(plans);
+        Assert.Equal(term.Clsid, plans[0].SourceClsid);
+        Assert.Equal("Directory\\Background", plans[0].Scope);
+        Assert.Contains("9F156763", plans[0].VerbPath);
+        Assert.Equal("explorer.exe shell:AppsFolder\\Microsoft.WindowsTerminal_8wekyb3d8bbwe!App", plans[0].Command);
+    }
+
+    [Fact]
+    public void PurgeStaleDirectoryScopeProtections_removes_only_RcmmProtect_under_Directory_shell()
+    {
+        var reg = new FakeRegistry();
+        // Legacy duplicate from a prior build (Directory scope).
+        reg.CreateKey(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\shell\\RcmmProtect_DEAD");
+        reg.CreateKey(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\shell\\RcmmProtect_BEEF");
+        // User-authored verb under the same scope — must survive.
+        reg.CreateKey(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\shell\\MyCustomVerb");
+        // Background-scope protection (still legitimate) — must survive.
+        reg.CreateKey(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\Background\\shell\\RcmmProtect_CAFE");
+
+        var sut = new CascadeProtectionService(reg);
+        var removed = sut.PurgeStaleDirectoryScopeProtections();
+
+        Assert.Equal(2, removed);
+        Assert.False(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\shell\\RcmmProtect_DEAD"));
+        Assert.False(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\shell\\RcmmProtect_BEEF"));
+        Assert.True (reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\shell\\MyCustomVerb"));
+        Assert.True (reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\Background\\shell\\RcmmProtect_CAFE"));
     }
 
     [Fact]
@@ -210,7 +231,8 @@ public class CascadeProtectionServiceTests
 
         var removed = sut.UninstallAll();
 
-        Assert.True(removed >= 2); // two scopes for Terminal
+        // One protection per Background-scope OTHER extension.
+        Assert.Equal(1, removed);
         Assert.True(reg.KeyExists(RegistryHive.CurrentUser, userVerb)); // user-authored verb untouched
         // No RCMM-prefixed verbs survive.
         Assert.DoesNotContain(

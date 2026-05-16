@@ -145,24 +145,45 @@ public sealed class CascadeProtectionService
     {
         int removed = 0;
         foreach (var scope in new[] { "Directory\\Background", "Directory" })
+            removed += PurgeProtectionsIn(scope);
+        return removed;
+    }
+
+    /// <summary>
+    /// Remove any RCMM-owned protection verbs under <c>Directory\shell</c>.
+    /// Earlier versions installed protections in this scope too, which
+    /// duplicated each row in the folder-selected right-click menu — the
+    /// cascade we're defending against lives in the modern flyout
+    /// (<c>Directory\Background</c>) and never affected the folder-as-item
+    /// scope, so a Directory protection was always extra noise. Safe to call
+    /// every Apply; idempotent on a clean registry.
+    /// </summary>
+    public int PurgeStaleDirectoryScopeProtections() => PurgeProtectionsIn("Directory");
+
+    private int PurgeProtectionsIn(string scope)
+    {
+        int removed = 0;
+        var shellPath = $"Software\\Classes\\{scope}\\shell";
+        if (!_reg.KeyExists(RegistryHive.CurrentUser, shellPath)) return 0;
+        foreach (var name in _reg.GetSubKeyNames(RegistryHive.CurrentUser, shellPath).ToList())
         {
-            var shellPath = $"Software\\Classes\\{scope}\\shell";
-            if (!_reg.KeyExists(RegistryHive.CurrentUser, shellPath)) continue;
-            foreach (var name in _reg.GetSubKeyNames(RegistryHive.CurrentUser, shellPath).ToList())
-            {
-                if (!name.StartsWith(VerbPrefix, StringComparison.Ordinal)) continue;
-                var verbPath = shellPath + "\\" + name;
-                Log.Info(Cat, $"removing protection verb={verbPath}");
-                _reg.DeleteKey(RegistryHive.CurrentUser, verbPath);
-                removed++;
-            }
+            if (!name.StartsWith(VerbPrefix, StringComparison.Ordinal)) continue;
+            var verbPath = shellPath + "\\" + name;
+            Log.Info(Cat, $"removing protection verb={verbPath}");
+            _reg.DeleteKey(RegistryHive.CurrentUser, verbPath);
+            removed++;
         }
         return removed;
     }
 
+    /// <summary>
+    /// Only <c>Directory\Background</c> (the modern flyout's source) is
+    /// protectable. The folder-as-item <c>Directory</c> scope uses a
+    /// different code path and isn't affected by the cascade — protecting
+    /// it just duplicated the verb in the folder-selected right-click menu.
+    /// </summary>
     private static bool IsProtectableScope(string scope)
-        => string.Equals(scope, "Directory\\Background", StringComparison.OrdinalIgnoreCase)
-        || string.Equals(scope, "Directory", StringComparison.OrdinalIgnoreCase);
+        => string.Equals(scope, "Directory\\Background", StringComparison.OrdinalIgnoreCase);
 
     private static string StripBraces(string clsid)
         => clsid.Replace("{", "").Replace("}", "");

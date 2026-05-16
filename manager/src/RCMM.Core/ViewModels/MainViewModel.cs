@@ -1034,6 +1034,21 @@ public sealed class MainViewModel : ObservableObject
             }
             catch (Exception ex) { Log.Error("apply", "cascade-protection sweep failed", ex); }
         }
+
+        // Always purge any Directory\shell\RcmmProtect_* verbs left behind by
+        // earlier builds that protected the folder-selected scope too. Those
+        // produced a duplicate "Open in Terminal" / "AMD Software" row on
+        // right-click of a selected folder. Cheap and idempotent.
+        if (_cascadeProtector != null)
+        {
+            try
+            {
+                var stale = _cascadeProtector.PurgeStaleDirectoryScopeProtections();
+                if (stale > 0)
+                    Log.Info("apply", $"cascade-protection: purged {stale} stale Directory-scope protection verbs");
+            }
+            catch (Exception ex) { Log.Error("apply", "cascade-protection Directory purge failed", ex); }
+        }
         if (_addPage != null && _additionApplier != null && _addPage.HasPendingChanges)
         {
             Log.Info("apply", $"additions begin entries={_addPage.Entries.Count} folders={_addPage.Folders.Count}");
