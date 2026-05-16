@@ -292,6 +292,73 @@
                 </Setter>
             </Style>
 
+            <!-- Pill-shaped category chip. Bare-bones template (no halo, no
+                 focus visual, no Mica fallback) so the active chip just shows
+                 its accent fill without bleeding any default WinUI button
+                 glow. Background / Foreground / BorderBrush are driven from
+                 code-behind to flip active/inactive state. -->
+            <Style x:Key="ChipButton" TargetType="Button">
+                <Setter Property="Background" Value="{ThemeResource AppSurface}"/>
+                <Setter Property="Foreground" Value="{ThemeResource AppText}"/>
+                <Setter Property="BorderBrush" Value="{ThemeResource AppBorder}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="CornerRadius" Value="16"/>
+                <Setter Property="Padding" Value="18,0"/>
+                <Setter Property="Height" Value="32"/>
+                <Setter Property="MinHeight" Value="0"/>
+                <Setter Property="MinWidth" Value="0"/>
+                <Setter Property="FontSize" Value="13"/>
+                <Setter Property="FontWeight" Value="SemiBold"/>
+                <Setter Property="UseSystemFocusVisuals" Value="False"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Body"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="{TemplateBinding CornerRadius}">
+                                <ContentPresenter
+                                    Content="{TemplateBinding Content}"
+                                    ContentTemplate="{TemplateBinding ContentTemplate}"
+                                    Padding="{TemplateBinding Padding}"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    Foreground="{TemplateBinding Foreground}"
+                                    FontSize="{TemplateBinding FontSize}"
+                                    FontWeight="{TemplateBinding FontWeight}"/>
+                                <VisualStateManager.VisualStateGroups>
+                                    <VisualStateGroup x:Name="CommonStates">
+                                        <VisualState x:Name="Normal"/>
+                                        <VisualState x:Name="PointerOver">
+                                            <Storyboard>
+                                                <DoubleAnimation Storyboard.TargetName="Body"
+                                                                 Storyboard.TargetProperty="Opacity"
+                                                                 To="0.85" Duration="0:0:0.12"/>
+                                            </Storyboard>
+                                        </VisualState>
+                                        <VisualState x:Name="Pressed">
+                                            <Storyboard>
+                                                <DoubleAnimation Storyboard.TargetName="Body"
+                                                                 Storyboard.TargetProperty="Opacity"
+                                                                 To="0.7" Duration="0"/>
+                                            </Storyboard>
+                                        </VisualState>
+                                        <VisualState x:Name="Disabled">
+                                            <Storyboard>
+                                                <DoubleAnimation Storyboard.TargetName="Body"
+                                                                 Storyboard.TargetProperty="Opacity"
+                                                                 To="0.35" Duration="0"/>
+                                            </Storyboard>
+                                        </VisualState>
+                                    </VisualStateGroup>
+                                </VisualStateManager.VisualStateGroups>
+                            </Border>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
             <!-- Title-bar icon button: small, transparent, lime-on-hover -->
             <Style x:Key="TitleBarIconButton" TargetType="Button">
                 <Setter Property="Background" Value="Transparent"/>

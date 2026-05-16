@@ -45,7 +45,8 @@ public sealed partial class AddPage : Page
     private string? _selectedKind; // "entry" | "folder"
     private string? _selectedId;
 
-    // Drag-state — captured on DragItemsStarting; consumed in DragOver/Drop.
+    // Drag-state — captured on DragItemsStarting; consumed in
+    // LeftRows_CollectionChanged (Move action) and MiddleRows_CollectionChanged.
     private string? _dragKind;
     private string? _dragId;
     private string? _dragBucket;
@@ -54,9 +55,11 @@ public sealed partial class AddPage : Page
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
+        Log.Info(Cat, "AddPage.OnNavigatedTo: entering");
         _args = (NavArgs)e.Parameter;
         _vm = _args.ViewModel.AddPage
               ?? throw new InvalidOperationException("AddPageViewModel not initialised on MainViewModel");
+        Log.Info(Cat, $"OnNavigatedTo: vm has {_vm.Entries.Count} entries, {_vm.Folders.Count} folders");
 
         // Static combo sources
         ScopeBox.ItemsSource    = Enum.GetValues<AdditionScope>().Cast<object>().ToList();
@@ -70,13 +73,42 @@ public sealed partial class AddPage : Page
         RenderEditor();
 
         // Refresh on every VM mutation. Apply/Discard land here too.
-        _vm.Entries.CollectionChanged += (_, __) => RefreshAll();
-        _vm.Folders.CollectionChanged += (_, __) => RefreshAll();
+        _vm.Entries.CollectionChanged += (_, ev) => { Log.Info(Cat, $"vm.Entries changed: {ev.Action}"); RefreshAll(); };
+        _vm.Folders.CollectionChanged += (_, ev) => { Log.Info(Cat, $"vm.Folders changed: {ev.Action}"); RefreshAll(); };
+
+        // Detect when WinUI's CanReorderItems reorders the row collection. The
+        // framework calls Move(oldIdx, newIdx) on the ItemsSource — that's our
+        // signal that the user finished a drag, and it's far more reliable
+        // than DragItemsCompleted, which in WinUI 3 2.0.x simply doesn't fire
+        // after an internal reorder.
+        _leftRows.CollectionChanged += LeftRows_CollectionChanged;
+        _middleRows.CollectionChanged += MiddleRows_CollectionChanged;
+    }
+
+    // CollectionChanged.Move handlers — kept as a safety net for whoever
+    // shoves a Move through the row collection. Skipped when the pointer
+    // drag is mid-flight (its many Move calls during the drag would otherwise
+    // trigger VM persistence and a RefreshAll that yanks the list out from
+    // under the user's cursor).
+    private void LeftRows_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+    {
+        if (_suppressMovePersist) return;
+        if (e.Action != System.Collections.Specialized.NotifyCollectionChangedAction.Move) return;
+        Log.Info(Cat, $"_leftRows MOVE old={e.OldStartingIndex} new={e.NewStartingIndex} dragId={_dragId}");
+    }
+
+    private void MiddleRows_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+    {
+        if (_suppressMovePersist) return;
+        if (e.Action != System.Collections.Specialized.NotifyCollectionChangedAction.Move) return;
+        Log.Info(Cat, $"_middleRows MOVE old={e.OldStartingIndex} new={e.NewStartingIndex} dragId={_dragId}");
     }
 
     private void RefreshAll()
     {
+        Log.Info(Cat, $"RefreshAll: triggered (selected kind={_selectedKind} id={_selectedId})");
         RebuildLeftRows();
+        ApplySelectionToRows();
         RebuildMiddleRows();
         RenderEditor();
     }
@@ -87,6 +119,7 @@ public sealed partial class AddPage : Page
 
     private void RebuildLeftRows()
     {
+        Log.Info(Cat, $"RebuildLeftRows: clearing {_leftRows.Count} rows (vm: {_vm.Entries.Count} entries, {_vm.Folders.Count} folders)");
         _leftRows.Clear();
         void Emit(string? bucketId, int depth)
         {
@@ -137,12 +170,14 @@ public sealed partial class AddPage : Page
         {
             MiddlePane.Visibility = Visibility.Collapsed;
             MiddleCol.Width = new GridLength(0);
-            LeftCol.Width = new GridLength(340);
+            // Leave LeftCol's width untouched — flipping it between 300 and 340
+            // every time the user picks an entry vs a folder causes ListView to
+            // reflow and lose scroll position, which the user sees as a
+            // "list jumps then resets" glitch on row click.
             return;
         }
         MiddlePane.Visibility = Visibility.Visible;
         MiddleCol.Width = new GridLength(1, GridUnitType.Star);
-        LeftCol.Width = new GridLength(300);
 
         var f = _vm.Folders.FirstOrDefault(x => x.Id == folderId);
         if (f == null) { MiddlePane.Visibility = Visibility.Collapsed; return; }
@@ -246,53 +281,85 @@ public sealed partial class AddPage : Page
     // ROW VISUAL HOOKS — per-row Loaded handler to paint indent/twist/icon
     // -------------------------------------------------------------------------
 
-    /// <summary>Fires when a left-pane row's content Grid is realised. Renders
-    /// indent margin, selection bar, and the library icon (if any).</summary>
+    /// <summary>Fires when a left-pane row's content Grid is realised — initial
+    /// container mount. Paints every visual from the AddRow.</summary>
     private void RowRoot_Loaded(object sender, RoutedEventArgs e)
     {
         if (sender is not Grid g || g.DataContext is not AddRow r) return;
         ApplyLeftRowVisuals(g, r);
     }
 
+    /// <summary>Fires when WinUI recycles a container onto a different AddRow
+    /// (virtualization). Without this, recycled rows keep their previous visuals
+    /// — the root cause of the original "highlight stuck on wrong row" bug.</summary>
+    private void RowRoot_DataContextChanged(FrameworkElement sender, DataContextChangedEventArgs args)
+    {
+        if (sender is Grid g && args.NewValue is AddRow r) ApplyLeftRowVisuals(g, r);
+    }
+
+    /// <summary>Paint every visual of a left-pane row from its AddRow + current
+    /// selection. Driven from code (not XAML bindings) because INPC bindings
+    /// under WinUI 3 virtualization left stale subscriptions across container
+    /// recycles, which caused the SelBar to appear on the wrong rows.</summary>
     private void ApplyLeftRowVisuals(Grid g, AddRow r)
     {
-        // Indent (column 0)
         if (g.FindName("IndentSpacer") is Border indent)
             indent.Width = r.Indent * 22;
-        // Selection bar
         if (g.FindName("SelBar") is Microsoft.UI.Xaml.Shapes.Rectangle selBar)
             selBar.Visibility = (r.Kind == _selectedKind && r.Id == _selectedId) ? Visibility.Visible : Visibility.Collapsed;
-        // Icon
-        if (g.FindName("IconPath") is Microsoft.UI.Xaml.Shapes.Path iconPath)
+        if (g.FindName("Twist") is TextBlock twist)
+            twist.Text = r.TwistGlyph;
+        if (g.FindName("Label") is TextBlock label)
+            label.Text = r.Label;
+        if (g.FindName("Badge") is TextBlock badge)
+        {
+            badge.Text = r.Badge ?? "";
+            badge.Visibility = string.IsNullOrEmpty(r.Badge) ? Visibility.Collapsed : Visibility.Visible;
+        }
+        // Icon — fresh Path per row (Geometry can't be shared across Paths).
+        if (g.FindName("IconHost") is Border iconHost)
         {
             if (IconLibrary.IsLibraryName(r.IconValue))
             {
-                var name = IconLibrary.StripPrefix(r.IconValue)!;
-                var geom = IconRender.GetGeometry(name);
-                if (geom != null)
-                {
-                    iconPath.Data = geom;
-                    iconPath.Visibility = Visibility.Visible;
-                }
-                else iconPath.Visibility = Visibility.Collapsed;
+                var p = IconRender.BuildIconElement(r.IconValue!, 16,
+                    (Brush)Application.Current.Resources["AppTextMuted"], thickness: 1.75);
+                if (p != null) { iconHost.Child = p; iconHost.Visibility = Visibility.Visible; }
+                else { iconHost.Child = null; iconHost.Visibility = Visibility.Collapsed; }
             }
-            else iconPath.Visibility = Visibility.Collapsed;
+            else { iconHost.Child = null; iconHost.Visibility = Visibility.Collapsed; }
         }
     }
 
     private void MidRowRoot_Loaded(object sender, RoutedEventArgs e)
     {
         if (sender is not Grid g || g.DataContext is not AddRow r) return;
-        if (g.FindName("MidIconPath") is Microsoft.UI.Xaml.Shapes.Path iconPath)
+        ApplyMidRowVisuals(g, r);
+    }
+
+    private void MidRowRoot_DataContextChanged(FrameworkElement sender, DataContextChangedEventArgs args)
+    {
+        if (sender is Grid g && args.NewValue is AddRow r) ApplyMidRowVisuals(g, r);
+    }
+
+    private void ApplyMidRowVisuals(Grid g, AddRow r)
+    {
+        if (g.FindName("MidOrder") is TextBlock ord) ord.Text = r.Ordinal ?? "";
+        if (g.FindName("MidLabel") is TextBlock lab) lab.Text = r.Label;
+        if (g.FindName("MidSub") is TextBlock sub)
+        {
+            sub.Text = r.SubText ?? "";
+            sub.Visibility = string.IsNullOrEmpty(r.SubText) ? Visibility.Collapsed : Visibility.Visible;
+        }
+        if (g.FindName("MidIconHost") is Border iconHost)
         {
             if (IconLibrary.IsLibraryName(r.IconValue))
             {
-                var name = IconLibrary.StripPrefix(r.IconValue)!;
-                var geom = IconRender.GetGeometry(name);
-                if (geom != null) { iconPath.Data = geom; iconPath.Visibility = Visibility.Visible; }
-                else iconPath.Visibility = Visibility.Collapsed;
+                var p = IconRender.BuildIconElement(r.IconValue!, 20,
+                    (Brush)Application.Current.Resources["AppTextMuted"], thickness: 1.75);
+                if (p != null) { iconHost.Child = p; iconHost.Visibility = Visibility.Visible; }
+                else { iconHost.Child = null; iconHost.Visibility = Visibility.Collapsed; }
             }
-            else iconPath.Visibility = Visibility.Collapsed;
+            else { iconHost.Child = null; iconHost.Visibility = Visibility.Collapsed; }
         }
     }
 
@@ -302,28 +369,61 @@ public sealed partial class AddPage : Page
 
     private void LeftList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (LeftList.SelectedItem is not AddRow row) return;
+        Log.Info(Cat, $"LeftList_SelectionChanged added={e.AddedItems.Count} removed={e.RemovedItems.Count} selected={(LeftList.SelectedItem as AddRow)?.Id ?? "<null>"}");
+        if (LeftList.SelectedItem is not AddRow row)
+        {
+            Log.Info(Cat, "LeftList_SelectionChanged: SelectedItem isn't AddRow, returning");
+            return;
+        }
         _selectedKind = row.Kind;
         _selectedId = row.Id;
         _middlePath.Clear();
+        ApplySelectionToRows();
         RebuildMiddleRows();
         RenderEditor();
-        // Repaint selection bars on currently realised rows
-        RepaintSelectionBars();
+        Log.Info(Cat, $"LeftList_SelectionChanged: end selectedKind={_selectedKind} selectedId={_selectedId}");
     }
 
-    private void RepaintSelectionBars()
+    /// <summary>
+    /// Refresh the SelBar visibility on every realized container. We walk the
+    /// containers directly instead of going through INPC + binding because
+    /// WinUI 3 ListView container recycling under {Binding} kept stale INPC
+    /// subscriptions, which caused SelBar to appear on the wrong rows.
+    /// </summary>
+    private void ApplySelectionToRows()
     {
-        foreach (var item in _leftRows)
+        int matched = 0;
+        for (int i = 0; i < _leftRows.Count; i++)
         {
-            if (LeftList.ContainerFromItem(item) is ListViewItem li
-                && li.ContentTemplateRoot is Grid g
-                && g.FindName("SelBar") is Microsoft.UI.Xaml.Shapes.Rectangle bar)
+            var r = _leftRows[i];
+            bool sel = r.Kind == _selectedKind && r.Id == _selectedId;
+            if (sel) matched++;
+            if (LeftList.ContainerFromIndex(i) is ListViewItem container)
             {
-                bar.Visibility = (item.Kind == _selectedKind && item.Id == _selectedId)
-                    ? Visibility.Visible : Visibility.Collapsed;
+                var rowRoot = FindDescendantByName(container, "RowRoot") as Grid;
+                if (rowRoot?.FindName("SelBar") is Microsoft.UI.Xaml.Shapes.Rectangle bar)
+                    bar.Visibility = sel ? Visibility.Visible : Visibility.Collapsed;
             }
         }
+        for (int i = 0; i < _middleRows.Count; i++)
+        {
+            // Middle pane has no SelBar (selection is implicit there), but we
+            // still iterate for parity in case we add one later.
+        }
+        Log.Debug(Cat, $"ApplySelectionToRows: {matched} row(s) marked selected in left list");
+    }
+
+    private static DependencyObject? FindDescendantByName(DependencyObject root, string name)
+    {
+        if (root is FrameworkElement fe && fe.Name == name) return root;
+        int n = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < n; i++)
+        {
+            var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(root, i);
+            var hit = FindDescendantByName(child, name);
+            if (hit != null) return hit;
+        }
+        return null;
     }
 
     private void MiddleList_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -341,8 +441,8 @@ public sealed partial class AddPage : Page
             _selectedKind = "entry"; _selectedId = row.Id;
             _middlePath.Clear();
             RebuildLeftRows();
+            ApplySelectionToRows();
             RenderEditor();
-            RepaintSelectionBars();
         }
     }
 
@@ -521,32 +621,17 @@ public sealed partial class AddPage : Page
 
     private void RenderIconPicker(string? iconValue)
     {
-        // Clear preview
         IconPreviewCell.Children.Clear();
         IconCustomBox.Text = "";
         if (IconLibrary.IsLibraryName(iconValue))
         {
-            var name = IconLibrary.StripPrefix(iconValue)!;
-            var geom = IconRender.GetGeometry(name);
-            if (geom != null)
-            {
-                var p = new Microsoft.UI.Xaml.Shapes.Path
-                {
-                    Data = geom,
-                    Width = 24, Height = 24,
-                    Stretch = Stretch.Uniform,
-                    Stroke = (Brush)Application.Current.Resources["AppText"],
-                    StrokeThickness = 2,
-                    StrokeLineJoin = PenLineJoin.Round,
-                    StrokeStartLineCap = PenLineCap.Round,
-                    StrokeEndLineCap = PenLineCap.Round,
-                    Fill = null,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center,
-                };
-                IconPreviewCell.Children.Add(p);
-            }
-            IconLabelText.Text = name;
+            // Build a fresh Path (with its own Geometry) — sharing a cached
+            // Geometry across multiple Paths throws E_INVALIDARG on the second
+            // consumer because a Geometry can only have one parent.
+            var fresh = IconRender.BuildIconElement(iconValue!, 24,
+                (Brush)Application.Current.Resources["AppText"], thickness: 2);
+            if (fresh != null) IconPreviewCell.Children.Add(fresh);
+            IconLabelText.Text = IconLibrary.StripPrefix(iconValue);
             IconSubText.Text = "library icon";
             IconPickButton.Content = "Change icon";
         }
@@ -573,20 +658,35 @@ public sealed partial class AddPage : Page
     private void Field_SelectionChanged(object sender, SelectionChangedEventArgs e) => SaveCurrent();
     private void NameBox_TextChanged(object sender, TextChangedEventArgs e)
     {
-        // Live-update label as the user types
+        // Live-update label as the user types. WinUI 3's TextChanged event for
+        // TextBox can fire AFTER our _suppressFieldChange flag has been reset,
+        // so we can't rely on the flag alone — also short-circuit when the
+        // current text already matches what the record holds.
         if (_suppressFieldChange) return;
         if (_selectedKind == "entry" && _vm.Entries.FirstOrDefault(x => x.Id == _selectedId) is { } entry)
+        {
+            if (entry.Name == NameBox.Text) return;
             _vm.ReplaceEntry(entry with { Name = NameBox.Text });
+        }
         else if ((_selectedKind == "folder" || CurrentMiddleFolderId() != null))
         {
             var fid = CurrentMiddleFolderId() ?? _selectedId;
             if (fid != null && _vm.Folders.FirstOrDefault(f => f.Id == fid) is { } folder)
+            {
+                if (folder.Name == NameBox.Text) return;
                 _vm.ReplaceFolder(folder with { Name = NameBox.Text });
+            }
         }
     }
 
     private void SaveCurrent()
     {
+        // Same async-event hazard as NameBox_TextChanged: ComboBox.SelectionChanged
+        // and TextBox.LostFocus can fire after _suppressFieldChange has been reset.
+        // Compute the new record and short-circuit when it equals the existing one —
+        // records have value equality, so an unchanged editor never triggers a
+        // Replace and the spurious vm.Entries Replace→RefreshAll→RebuildLeftRows
+        // cascade that was wiping the list mid-interaction.
         if (_suppressFieldChange) return;
         if (_selectedKind == "entry" && _vm.Entries.FirstOrDefault(x => x.Id == _selectedId) is { } entry)
         {
@@ -603,9 +703,10 @@ public sealed partial class AddPage : Page
                     : FileTypesBox.Text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
                 FolderId = newFolderId,
             };
+            if (RecordsEffectivelyEqual(entry, updated)) return;
             _vm.ReplaceEntry(updated);
             if ((entry.FolderId ?? null) != (newFolderId ?? null))
-                _vm.MoveEntry(entry.Id, newFolderId); // also reflows order
+                _vm.MoveEntry(entry.Id, newFolderId);
         }
         else
         {
@@ -618,13 +719,13 @@ public sealed partial class AddPage : Page
                     Name = NameBox.Text,
                     Scope = ScopeBox.SelectedItem is AdditionScope s ? s : AdditionScope.FolderBackground,
                 };
-                _vm.ReplaceFolder(updated);
+                if (folder == updated && (folder.ParentFolderId ?? null) == (newParent ?? null)) return;
+                if (folder != updated) _vm.ReplaceFolder(updated);
                 if ((folder.ParentFolderId ?? null) != (newParent ?? null))
                 {
                     if (!_vm.MoveFolder(folder.Id, newParent))
                     {
                         Log.Warn(Cat, $"folder move refused: depth cap or cycle (id={folder.Id} new parent={newParent})");
-                        // Revert UI selection back to current
                         ParentFolderBox.SelectedItem = folder.ParentFolderId == null
                             ? (object)TopLevelLabel
                             : _vm.Folders.FirstOrDefault(x => x.Id == folder.ParentFolderId) ?? (object)TopLevelLabel;
@@ -632,6 +733,27 @@ public sealed partial class AddPage : Page
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Record-equality check that also normalises <see cref="AdditionEntry.FileTypes"/>
+    /// (record equality on IReadOnlyList compares references, so a freshly-parsed
+    /// list would never match an existing-but-identical list).
+    /// </summary>
+    private static bool RecordsEffectivelyEqual(AdditionEntry a, AdditionEntry b)
+    {
+        if (a.Name != b.Name) return false;
+        if (a.Command != b.Command) return false;
+        if (a.WorkingDir != b.WorkingDir) return false;
+        if (a.Scope != b.Scope) return false;
+        if (a.RunMode != b.RunMode) return false;
+        if ((a.Icon ?? "") != (b.Icon ?? "")) return false;
+        if ((a.FolderId ?? "") != (b.FolderId ?? "")) return false;
+        var fa = a.FileTypes ?? Array.Empty<string>();
+        var fb = b.FileTypes ?? Array.Empty<string>();
+        if (fa.Count != fb.Count) return false;
+        for (int i = 0; i < fa.Count; i++) if (fa[i] != fb[i]) return false;
+        return true;
     }
 
     private void Delete_Click(object sender, RoutedEventArgs e)
@@ -656,11 +778,41 @@ public sealed partial class AddPage : Page
 
     private async void IconPick_Click(object sender, RoutedEventArgs e)
     {
-        var current = CurrentIconValue();
-        var dialog = new IconPickerDialog(current) { XamlRoot = this.XamlRoot };
-        await dialog.ShowAsync();
-        if (dialog.PickedValue != null && dialog.PickedValue != current)
-            SetCurrentIcon(dialog.PickedValue);
+        // Instrument every step so a crash narrows to a specific line in the log.
+        Log.Info(Cat, "IconPick_Click: start");
+        try
+        {
+            var current = CurrentIconValue();
+            Log.Info(Cat, $"IconPick_Click: current='{current}', XamlRoot={(this.XamlRoot != null)}");
+            IconPickerDialog dialog;
+            try
+            {
+                dialog = new IconPickerDialog(current);
+                Log.Info(Cat, "IconPick_Click: dialog ctor OK");
+            }
+            catch (Exception ex)
+            {
+                Log.Error(Cat, "IconPick_Click: dialog ctor threw", ex);
+                return;
+            }
+            try { dialog.XamlRoot = this.XamlRoot; Log.Info(Cat, "IconPick_Click: XamlRoot assigned"); }
+            catch (Exception ex) { Log.Error(Cat, "IconPick_Click: XamlRoot assign threw", ex); return; }
+
+            try
+            {
+                Log.Info(Cat, "IconPick_Click: about to ShowAsync");
+                await dialog.ShowAsync();
+                Log.Info(Cat, $"IconPick_Click: ShowAsync returned, picked='{dialog.PickedValue}'");
+            }
+            catch (Exception ex) { Log.Error(Cat, "IconPick_Click: ShowAsync threw", ex); return; }
+
+            if (dialog.PickedValue != null && dialog.PickedValue != current)
+                SetCurrentIcon(dialog.PickedValue);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(Cat, "IconPick_Click: outer", ex);
+        }
     }
 
     private void IconClear_Click(object sender, RoutedEventArgs e) => SetCurrentIcon(null);
@@ -704,236 +856,486 @@ public sealed partial class AddPage : Page
     }
 
     // -------------------------------------------------------------------------
-    // DRAG & DROP — left list
+    // DRAG & DROP — manual pointer-driven reorder
     // -------------------------------------------------------------------------
+    //
+    // We tried every flavour of WinUI 3 built-in drag and drop:
+    //   • ListView.CanReorderItems + CanDragItems → fires DragItemsStarting
+    //     but the framework's internal drop never completes, no Move event
+    //     on the ItemsSource, no DragItemsCompleted callback.
+    //   • CanDragItems + AllowDrop + custom DragOver/Drop → DragItemsStarting
+    //     fires, then no DragOver follows (same-ListView self-drop refused).
+    //   • CanDrag="True" on a child Border (per-row drag handle) → no
+    //     DragStarting ever fires; ListViewItem swallows the pointer first.
+    //
+    // Root cause: unpackaged WinUI 3 apps (WindowsPackageType=None) don't get
+    // the OS-level drag/drop infrastructure (IDropTargetHelper et al.) COM-
+    // registered, so the framework's StartDragAsync produces no useful events
+    // even though DragItemsStarting fires.
+    //
+    // Implementation: bypass all of that. Each row has a DragHandle grip on
+    // the right (custom Border subclass that sets a 4-way move cursor on
+    // hover). PointerPressed on the grip captures the pointer; PointerMoved
+    // hit-tests sibling rows and live-Moves the dragged row in the
+    // ObservableCollection (the ListView animates the swap); PointerReleased
+    // persists the final position to the view-model.
 
-    private void LeftList_DragItemsStarting(object sender, DragItemsStartingEventArgs e)
+    private enum DropZone { None, Above, Below, Into, IntoMiddlePane }
+
+    private AddRow? _gripRow;
+    private ListView? _gripList;                             // source list
+    private ListView? _gripTargetList;                       // list under cursor (may differ from source)
+    private bool _gripActive;
+    private Windows.Foundation.Point _gripPressOrigin;       // source-list-local
+    private Windows.Foundation.Point _gripPressCanvasOrigin; // Canvas-local
+    private double _ghostOffsetX;                            // cursor → ghost top-left
+    private double _ghostOffsetY;
+    private DropZone _gripTargetZone = DropZone.None;
+    private int _gripTargetSlot = -1;                        // insertion slot (above/below)
+    private AddRow? _gripTargetRow;                          // for "into folder" zone
+    private FrameworkElement? _gripSourceContainer;          // dimmed during drag
+    private bool _suppressMovePersist;
+
+    /// <summary>Press on a row grip. Captures the pointer on the Page so the
+    /// ListView's internal ScrollViewer can't steal capture for pan detection.
+    /// Sets up but doesn't show the drag visuals — those appear once the user
+    /// moves past the drag threshold.</summary>
+    private void GripHost_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
-        if (e.Items.Count == 0) { e.Cancel = true; return; }
-        if (e.Items[0] is not AddRow row) { e.Cancel = true; return; }
-        _dragKind = row.Kind; _dragId = row.Id; _dragBucket = row.Bucket;
-        e.Data.RequestedOperation = DataPackageOperation.Move;
-        e.Data.SetText("rcmm:" + row.Kind + ":" + row.Id);
+        if (sender is not FrameworkElement fe) return;
+        if (fe.DataContext is not AddRow row) { Log.Warn(Cat, "GripHost_PointerPressed: no AddRow"); return; }
+        var list = FindAncestorListView(fe);
+        if (list == null) { Log.Warn(Cat, "GripHost_PointerPressed: no ancestor ListView"); return; }
+
+        _gripRow = row; _gripList = list;
+        _gripActive = false;
+        _gripTargetZone = DropZone.None;
+        _gripTargetSlot = -1;
+        _gripTargetRow = null;
+        _gripPressOrigin = e.GetCurrentPoint(list).Position;
+        _gripPressCanvasOrigin = e.GetCurrentPoint(DragOverlay).Position;
+
+        // Offset such that the ghost trails slightly down-right of the cursor.
+        _ghostOffsetX = 14;
+        _ghostOffsetY = 8;
+
+        // Capture on the PAGE — not on the grip — so the ScrollViewer inside
+        // the ListView can't claim capture for pan detection.
+        bool ok = this.CapturePointer(e.Pointer);
+        Log.Info(Cat, $"GripHost_PointerPressed kind={row.Kind} id={row.Id} bucket={row.Bucket} list={(ReferenceEquals(list, LeftList) ? "left" : "middle")} pageCapture={ok}");
+        e.Handled = true;
     }
 
-    private void LeftList_DragOver(object sender, DragEventArgs e)
+    private void Page_PointerMoved(object sender, PointerRoutedEventArgs e)
     {
-        e.AcceptedOperation = DataPackageOperation.Move;
-        ClearAllDropMarks();
-        // Find which row container is under the pointer
-        var (row, container, zone) = HitTestRow(LeftList, e, isLeft: true);
-        if (row == null || container == null) return;
-        if (row.Kind == _dragKind && row.Id == _dragId) return;
-
-        // Validate folder-nesting depth on into/cross-bucket
-        if (_dragKind == "folder")
+        if (_gripRow == null || _gripList == null) return;
+        var sourcePos = e.GetCurrentPoint(_gripList).Position;
+        var dy = sourcePos.Y - _gripPressOrigin.Y;
+        if (!_gripActive && Math.Abs(dy) < 4) return;
+        if (!_gripActive)
         {
-            if (zone == "into")
-            {
-                if (!_vm.CanNest(_dragId!, row.Id))
-                { e.AcceptedOperation = DataPackageOperation.None; return; }
-            }
-            else
-            {
-                // above/below — target bucket must accept this folder
-                var targetBucket = row.Bucket == "root" ? null : row.Bucket;
-                if (targetBucket != null && !_vm.CanNest(_dragId!, targetBucket))
-                { e.AcceptedOperation = DataPackageOperation.None; return; }
-            }
+            _gripActive = true;
+            Log.Info(Cat, $"drag active threshold crossed dy={dy:F1}");
+            BeginDragVisuals(_gripRow, _gripList);
         }
 
-        ShowDropMark(container, zone, isLeft: true);
-        e.DragUIOverride.Caption = zone == "into"
-            ? "Move into " + row.Label
-            : (zone == "above" ? "Move above " + row.Label : "Move below " + row.Label);
-        e.DragUIOverride.IsCaptionVisible = true;
-        e.DragUIOverride.IsContentVisible = false;
-    }
+        // Ghost follows the cursor in Canvas-local coords.
+        var canvasPos = e.GetCurrentPoint(DragOverlay).Position;
+        Canvas.SetLeft(DragGhost, canvasPos.X + _ghostOffsetX);
+        Canvas.SetTop(DragGhost,  canvasPos.Y + _ghostOffsetY);
 
-    private void LeftList_Drop(object sender, DragEventArgs e)
-    {
-        ClearAllDropMarks();
-        var (row, _, zone) = HitTestRow(LeftList, e, isLeft: true);
-        if (row == null || _dragKind == null || _dragId == null) return;
-        if (row.Kind == _dragKind && row.Id == _dragId) return;
+        // Re-resolve the target list every move — the user can drag from the
+        // left list into the middle pane (or vice-versa).
+        var pagePos = e.GetCurrentPoint(this).Position;
+        var targetList = CurrentTargetList(pagePos);
+        _gripTargetList = targetList;
 
-        try
+        DropZone zone; int slot; AddRow? targetRow;
+        if (targetList == null)
         {
-            if (zone == "into" && row.Kind == "folder")
-            {
-                MoveDragToBucket(row.Id);
-            }
-            else
-            {
-                // above/below in target's bucket
-                var targetBucket = row.Bucket == "root" ? null : row.Bucket;
-                if (_dragBucket != row.Bucket)
-                    MoveDragToBucket(targetBucket);
-                // Now reorder within that bucket so dragged lands adjacent to row.
-                if (_dragKind == "entry") _vm.ReorderEntryWithinBucket(_dragId, beforeEntryId: zone == "above" ? row.Id : NextSiblingEntryId(row));
-                else _vm.ReorderFolderWithinBucket(_dragId, beforeFolderId: zone == "above" ? row.Id : NextSiblingFolderId(row));
-            }
+            // Cursor outside any list: clear indicators but keep ghost.
+            zone = DropZone.None; slot = -1; targetRow = null;
         }
-        finally
-        {
-            _dragKind = null; _dragId = null; _dragBucket = null;
-        }
-    }
-
-    private string? NextSiblingEntryId(AddRow row)
-    {
-        // Used when dropping BELOW `row` — we need to move before the NEXT entry
-        // in the same bucket, or to the end (null) if there isn't one.
-        var bucketId = row.Bucket == "root" ? null : row.Bucket;
-        var siblings = _vm.Entries.Where(e => (e.FolderId ?? null) == bucketId).ToList();
-        var idx = siblings.FindIndex(e => e.Id == row.Id);
-        if (idx < 0 || idx + 1 >= siblings.Count) return null;
-        return siblings[idx + 1].Id;
-    }
-    private string? NextSiblingFolderId(AddRow row)
-    {
-        var bucketId = row.Bucket == "root" ? null : row.Bucket;
-        var siblings = _vm.Folders.Where(f => (f.ParentFolderId ?? null) == bucketId).ToList();
-        var idx = siblings.FindIndex(f => f.Id == row.Id);
-        if (idx < 0 || idx + 1 >= siblings.Count) return null;
-        return siblings[idx + 1].Id;
-    }
-
-    private void MoveDragToBucket(string? newBucketFolderId)
-    {
-        if (_dragKind == "entry")
-            _vm.MoveEntry(_dragId!, newBucketFolderId);
         else
-            _vm.MoveFolder(_dragId!, newBucketFolderId);
-        _dragBucket = newBucketFolderId ?? "root";
-        // Auto-expand the target folder so the user sees the move land
-        if (newBucketFolderId != null) _expanded.Add(newBucketFolderId);
-    }
-
-    // -------------------------------------------------------------------------
-    // DRAG & DROP — middle list
-    // -------------------------------------------------------------------------
-
-    private void MiddleList_DragItemsStarting(object sender, DragItemsStartingEventArgs e)
-    {
-        if (e.Items.Count == 0) { e.Cancel = true; return; }
-        if (e.Items[0] is not AddRow row) { e.Cancel = true; return; }
-        _dragKind = row.Kind; _dragId = row.Id; _dragBucket = row.Bucket;
-        e.Data.RequestedOperation = DataPackageOperation.Move;
-        e.Data.SetText("rcmm:" + row.Kind + ":" + row.Id);
-    }
-
-    private void MiddleList_DragOver(object sender, DragEventArgs e)
-    {
-        e.AcceptedOperation = DataPackageOperation.Move;
-        ClearAllDropMarks();
-        var (row, container, zone) = HitTestRow(MiddleList, e, isLeft: false);
-        if (row != null && container != null)
         {
-            if (row.Kind == _dragKind && row.Id == _dragId) return;
-            ShowDropMark(container, zone, isLeft: false);
-            return;
-        }
-        // Empty area in middle pane → drop-into current folder
-        var folderId = CurrentMiddleFolderId();
-        if (folderId == null) return;
-        if (_dragBucket == folderId) return; // already in here
-        if (_dragKind == "folder" && !_vm.CanNest(_dragId!, folderId))
-        { e.AcceptedOperation = DataPackageOperation.None; return; }
-        // Visual: tint the whole pane briefly via the count text. (Simple hint.)
-        MiddleCount.Foreground = (Brush)Application.Current.Resources["AppAccent"];
-    }
+            var listPos = e.GetCurrentPoint(targetList).Position;
+            var rows = ReferenceEquals(targetList, LeftList) ? _leftRows : _middleRows;
+            (zone, slot, targetRow) = ComputeDropTarget(targetList, rows, listPos.Y, _gripRow);
 
-    private void MiddleList_Drop(object sender, DragEventArgs e)
-    {
-        MiddleCount.Foreground = (Brush)Application.Current.Resources["AppTextMuted"];
-        ClearAllDropMarks();
-        var (row, _, zone) = HitTestRow(MiddleList, e, isLeft: false);
-        var folderId = CurrentMiddleFolderId();
-        if (folderId == null || _dragKind == null || _dragId == null) return;
-        try
-        {
-            if (row != null && row.Kind != null && (row.Kind != _dragKind || row.Id != _dragId))
+            // Middle pane: "off any row but inside the pane" → drop into the
+            // current middle folder. Likewise, dragging in from the side: a
+            // middle pane with zero rows always means IntoMiddlePane.
+            if (ReferenceEquals(targetList, MiddleList) && zone != DropZone.Into)
             {
-                if (zone == "into" && row.Kind == "folder")
-                    MoveDragToBucket(row.Id);
-                else
+                bool hitNothing = targetRow == null && _middleRows.Count == 0;
+                if (hitNothing || OutsideRowsButInPane(MiddleList, listPos.Y))
                 {
-                    if (_dragBucket != folderId) MoveDragToBucket(folderId);
-                    if (_dragKind == "entry") _vm.ReorderEntryWithinBucket(_dragId, beforeEntryId: zone == "above" ? row.Id : NextSiblingEntryId(row));
-                    else _vm.ReorderFolderWithinBucket(_dragId, beforeFolderId: zone == "above" ? row.Id : NextSiblingFolderId(row));
+                    var folderId = CurrentMiddleFolderId();
+                    if (folderId != null && _gripRow.Id != folderId)
+                    {
+                        zone = DropZone.IntoMiddlePane; slot = -1; targetRow = null;
+                    }
                 }
             }
-            else
-            {
-                // Drop in the empty area → add to current folder at the end
-                if (_dragKind == "folder" && !_vm.CanNest(_dragId, folderId)) return;
-                MoveDragToBucket(folderId);
-            }
         }
+
+        if (zone != _gripTargetZone || slot != _gripTargetSlot || !ReferenceEquals(targetRow, _gripTargetRow))
+        {
+            _gripTargetZone = zone; _gripTargetSlot = slot; _gripTargetRow = targetRow;
+            PositionDropTarget(targetList, zone, slot, targetRow);
+        }
+    }
+
+    /// <summary>
+    /// Hit-test the cursor (in Page coords) against the visible lists. Middle
+    /// pane wins when visible and hit — that's the user-facing intent of
+    /// "drag onto the open folder's contents".
+    /// </summary>
+    private ListView? CurrentTargetList(Windows.Foundation.Point pagePos)
+    {
+        if (MiddlePane.Visibility == Visibility.Visible)
+        {
+            var mb = MiddlePane.TransformToVisual(this).TransformBounds(
+                new Windows.Foundation.Rect(0, 0, MiddlePane.ActualWidth, MiddlePane.ActualHeight));
+            if (pagePos.X >= mb.Left && pagePos.X <= mb.Right) return MiddleList;
+        }
+        var lb = LeftList.TransformToVisual(this).TransformBounds(
+            new Windows.Foundation.Rect(0, 0, LeftList.ActualWidth, LeftList.ActualHeight));
+        if (pagePos.X >= lb.Left && pagePos.X <= lb.Right) return LeftList;
+        return null;
+    }
+
+    private static bool OutsideRowsButInPane(ListView list, double y)
+    {
+        // True if y is past the last row of the list (i.e. the cursor is in
+        // the pane's empty area below the items). list.ActualHeight is the
+        // pane's full height in its own coord space, so it's a safe bound.
+        for (int i = list.Items.Count - 1; i >= 0; i--)
+        {
+            if (list.ContainerFromIndex(i) is not FrameworkElement c) continue;
+            var b = c.TransformToVisual(list).TransformBounds(new Windows.Foundation.Rect(0, 0, c.ActualWidth, c.ActualHeight));
+            return y > b.Bottom;
+        }
+        return true; // no rows realised → pane is empty
+    }
+
+    private void Page_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        bool wasActive = _gripActive;
+        var row = _gripRow;
+        var sourceList = _gripList;
+        var targetList = _gripTargetList;
+        var zone = _gripTargetZone;
+        int slot = _gripTargetSlot;
+        var intoFolder = _gripTargetRow;
+        this.ReleasePointerCapture(e.Pointer);
+        EndDragVisuals();
+        _gripRow = null; _gripList = null; _gripTargetList = null; _gripActive = false;
+        _gripTargetZone = DropZone.None; _gripTargetSlot = -1; _gripTargetRow = null;
+
+        if (!wasActive || row == null || sourceList == null)
+        {
+            Log.Info(Cat, $"Page_PointerReleased wasActive={wasActive} row={row?.Id ?? "<null>"}");
+            return;
+        }
+
+        // Drop INTO a folder row (cursor on the middle 50% of a folder).
+        if (zone == DropZone.Into && intoFolder != null && intoFolder.Kind == "folder")
+        {
+            Log.Info(Cat, $"release: INTO folder={intoFolder.Id} src={row.Kind}:{row.Id}");
+            MoveRowIntoFolder(row, intoFolder.Id);
+            return;
+        }
+
+        // Drop INTO the middle pane (cursor over the open folder's pane area
+        // but not on a child row). Acts on the folder currently shown in the
+        // middle pane.
+        if (zone == DropZone.IntoMiddlePane)
+        {
+            var midFolderId = CurrentMiddleFolderId();
+            if (midFolderId == null) { Log.Warn(Cat, "release: IntoMiddlePane but no current folder"); return; }
+            Log.Info(Cat, $"release: INTO MIDDLE PANE folder={midFolderId} src={row.Kind}:{row.Id}");
+            MoveRowIntoFolder(row, midFolderId);
+            return;
+        }
+
+        // Drop ABOVE/BELOW in some list. If the target list differs from the
+        // source, we're crossing buckets — do the row's Move in the target
+        // collection so ApplyDropResultToVm can read its neighbours there.
+        if (zone == DropZone.None || targetList == null)
+        {
+            Log.Info(Cat, "release: no zone — drop cancelled");
+            return;
+        }
+
+        var rows = ReferenceEquals(targetList, LeftList) ? _leftRows : _middleRows;
+        if (!ReferenceEquals(sourceList, targetList))
+        {
+            // Cross-list drop. The middle pane only ever represents the
+            // current folder's children, so a cross-list above/below drop
+            // here is effectively "move into the middle folder, at this slot".
+            var midFolderId = CurrentMiddleFolderId();
+            if (ReferenceEquals(targetList, MiddleList) && midFolderId != null)
+            {
+                Log.Info(Cat, $"release: cross-list to middle pane folder={midFolderId} src={row.Kind}:{row.Id} slot={slot}");
+                MoveRowIntoFolder(row, midFolderId);
+                return;
+            }
+            // Cross-list to left pane: fall through. We can't preview a
+            // position via _middleRows for a row not in it, so just do an
+            // approximate move-to-root.
+            if (ReferenceEquals(targetList, LeftList))
+            {
+                Log.Info(Cat, $"release: cross-list to left pane src={row.Kind}:{row.Id}");
+                if (row.Kind == "entry") _vm.MoveEntry(row.Id, null);
+                else _vm.MoveFolder(row.Id, null);
+                return;
+            }
+            return;
+        }
+
+        // Same-list above/below.
+        int srcIdx = rows.IndexOf(row);
+        if (srcIdx < 0) { Log.Warn(Cat, "release: row no longer in collection"); return; }
+
+        int targetIdx;
+        if (slot < 0) targetIdx = srcIdx;
+        else if (slot > rows.Count) targetIdx = rows.Count - 1;
+        else if (slot > srcIdx) targetIdx = slot - 1;
+        else targetIdx = slot;
+        if (targetIdx < 0) targetIdx = 0;
+        if (targetIdx >= rows.Count) targetIdx = rows.Count - 1;
+        if (targetIdx == srcIdx)
+        {
+            Log.Info(Cat, $"release: no-op (slot={slot} srcIdx={srcIdx})");
+            return;
+        }
+
+        Log.Info(Cat, $"release: zone={zone} srcIdx={srcIdx} slot={slot} → targetIdx={targetIdx}");
+        _dragKind = row.Kind; _dragId = row.Id; _dragBucket = row.Bucket;
+        _suppressMovePersist = true;
+        try { rows.Move(srcIdx, targetIdx); }
+        finally { _suppressMovePersist = false; }
+        try { ApplyDropResultToVm(rows); }
+        catch (Exception ex) { Log.Error(Cat, "ApplyDropResultToVm threw", ex); }
         finally { _dragKind = null; _dragId = null; _dragBucket = null; }
     }
 
-    // -------------------------------------------------------------------------
-    // HIT TEST + DROP MARKS
-    // -------------------------------------------------------------------------
-
-    /// <summary>Find which row's container the pointer is over and classify the
-    /// drop into above/below/into. Returns nulls for the row when no row is hit.</summary>
-    private (AddRow? row, FrameworkElement? container, string zone) HitTestRow(ListView list, DragEventArgs e, bool isLeft)
+    /// <summary>Move the dragged row to be a child of the given folder.
+    /// Validates nesting for folder-into-folder and auto-expands the target.</summary>
+    private void MoveRowIntoFolder(AddRow row, string folderId)
     {
-        var pos = e.GetPosition(list);
-        var listSource = isLeft ? _leftRows : _middleRows;
-        foreach (var item in listSource)
+        if (row.Kind == "entry")
         {
-            if (list.ContainerFromItem(item) is not ListViewItem li) continue;
-            var bounds = li.TransformToVisual(list).TransformBounds(new Windows.Foundation.Rect(0, 0, li.ActualWidth, li.ActualHeight));
-            if (pos.Y < bounds.Top || pos.Y > bounds.Bottom) continue;
-            var rel = (pos.Y - bounds.Top) / Math.Max(1, bounds.Height);
-            // Folders get a middle "drop into" zone occupying 50% of the row.
-            // Entries split top/bottom 50/50.
-            bool isFolder = item.Kind == "folder";
-            string zone;
-            if (isFolder)
-            {
-                if (rel < 0.25) zone = "above";
-                else if (rel > 0.75) zone = "below";
-                else zone = "into";
-            }
-            else
-            {
-                zone = rel < 0.5 ? "above" : "below";
-            }
-            return (item, li, zone);
+            _vm.MoveEntry(row.Id, folderId);
         }
-        return (null, null, "");
-    }
-
-    private void ShowDropMark(FrameworkElement container, string zone, bool isLeft)
-    {
-        if (container is not ListViewItem li || li.ContentTemplateRoot is not Grid g) return;
-        // Names differ between left and middle templates — try both.
-        var topName    = isLeft ? "DropTop"    : "MidDropTop";
-        var bottomName = isLeft ? "DropBottom" : "MidDropBottom";
-        var intoName   = isLeft ? "DropIntoFill" : "MidDropIntoFill";
-        if (g.FindName(topName)    is Microsoft.UI.Xaml.Shapes.Rectangle t) t.Visibility = zone == "above" ? Visibility.Visible : Visibility.Collapsed;
-        if (g.FindName(bottomName) is Microsoft.UI.Xaml.Shapes.Rectangle b) b.Visibility = zone == "below" ? Visibility.Visible : Visibility.Collapsed;
-        if (g.FindName(intoName)   is Microsoft.UI.Xaml.Shapes.Rectangle into) into.Visibility = zone == "into" ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    private void ClearAllDropMarks()
-    {
-        foreach (var src in new[] { (_leftRows, LeftList, true), (_middleRows, MiddleList, false) })
+        else
         {
-            foreach (var item in src.Item1)
+            if (!_vm.CanNest(row.Id, folderId))
             {
-                if (src.Item2.ContainerFromItem(item) is not ListViewItem li) continue;
-                if (li.ContentTemplateRoot is not Grid g) continue;
-                foreach (var n in new[] { "DropTop","DropBottom","DropIntoFill","MidDropTop","MidDropBottom","MidDropIntoFill" })
-                {
-                    if (g.FindName(n) is Microsoft.UI.Xaml.Shapes.Rectangle r) r.Visibility = Visibility.Collapsed;
-                }
+                Log.Warn(Cat, $"MoveRowIntoFolder: CanNest refused id={row.Id} parent={folderId}");
+                return;
             }
+            _vm.MoveFolder(row.Id, folderId);
+        }
+        _expanded.Add(folderId);
+    }
+
+    private void Page_PointerCaptureLost(object sender, PointerRoutedEventArgs e)
+    {
+        Log.Info(Cat, $"Page_PointerCaptureLost active={_gripActive}");
+        EndDragVisuals();
+        _gripRow = null; _gripList = null; _gripActive = false;
+        _gripTargetZone = DropZone.None; _gripTargetSlot = -1; _gripTargetRow = null;
+    }
+
+    // ---- Drag overlay helpers ------------------------------------------------
+
+    private void BeginDragVisuals(AddRow row, ListView list)
+    {
+        // Populate the ghost label + icon.
+        DragGhostLabel.Text = row.Label;
+        if (IconLibrary.IsLibraryName(row.IconValue))
+        {
+            var p = IconRender.BuildIconElement(row.IconValue!, 16,
+                (Brush)Application.Current.Resources["AppText"], thickness: 1.75);
+            if (p != null) { DragGhostIconHost.Child = p; DragGhostIconHost.Visibility = Visibility.Visible; }
+            else { DragGhostIconHost.Child = null; DragGhostIconHost.Visibility = Visibility.Collapsed; }
+        }
+        else { DragGhostIconHost.Child = null; DragGhostIconHost.Visibility = Visibility.Collapsed; }
+
+        // Dim the source row container so it reads as "lifted".
+        if (list.ContainerFromItem(row) is FrameworkElement src)
+        {
+            _gripSourceContainer = src;
+            src.Opacity = 0.35;
+        }
+        DragGhost.Visibility = Visibility.Visible;
+        DropIndicator.Visibility = Visibility.Collapsed;
+    }
+
+    private void EndDragVisuals()
+    {
+        DragGhost.Visibility = Visibility.Collapsed;
+        DropIndicator.Visibility = Visibility.Collapsed;
+        DropIntoBorder.Visibility = Visibility.Collapsed;
+        if (_gripSourceContainer != null) { _gripSourceContainer.Opacity = 1.0; _gripSourceContainer = null; }
+    }
+
+    /// <summary>
+    /// Compute the drop target under the cursor.
+    /// • Folder rows have three zones — top 25% = Above (slot=i),
+    ///   middle 50% = Into (move INTO this folder),
+    ///   bottom 25% = Below (slot=i+1).
+    /// • Entry rows are just split 50/50: Above (slot=i) or Below (slot=i+1).
+    /// • Cursor above the first row → Above slot=0.
+    /// • Cursor below the last row  → Below slot=Count.
+    /// Self-drops are filtered (can't drop a row onto itself).
+    /// </summary>
+    private static (DropZone zone, int slot, AddRow? row) ComputeDropTarget(
+        ListView list, System.Collections.Generic.IList<AddRow> rows, double y, AddRow draggedRow)
+    {
+        for (int i = 0; i < rows.Count; i++)
+        {
+            if (list.ContainerFromIndex(i) is not FrameworkElement c) continue;
+            var b = c.TransformToVisual(list).TransformBounds(new Windows.Foundation.Rect(0, 0, c.ActualWidth, c.ActualHeight));
+            if (y < b.Top || y > b.Bottom) continue;
+
+            var item = rows[i];
+            // Skip self-drop entirely; let the cursor "fall through" to the
+            // next row's hit-test slot.
+            bool isSelf = item.Kind == draggedRow.Kind && item.Id == draggedRow.Id;
+
+            double rel = (y - b.Top) / Math.Max(1, b.Height);
+            if (item.Kind == "folder" && !isSelf)
+            {
+                if (rel < 0.25) return (DropZone.Above, i, null);
+                if (rel > 0.75) return (DropZone.Below, i + 1, null);
+                return (DropZone.Into, -1, item);
+            }
+            // Entry row (or the dragged folder itself — treat as a pure boundary).
+            return rel < 0.5 ? (DropZone.Above, i, null) : (DropZone.Below, i + 1, null);
+        }
+        // Cursor not on any row → above/below the list.
+        if (rows.Count == 0) return (DropZone.Above, 0, null);
+        if (list.ContainerFromIndex(0) is FrameworkElement first)
+        {
+            var fb = first.TransformToVisual(list).TransformBounds(new Windows.Foundation.Rect(0, 0, first.ActualWidth, first.ActualHeight));
+            if (y < fb.Top) return (DropZone.Above, 0, null);
+        }
+        return (DropZone.Below, rows.Count, null);
+    }
+
+    private void PositionDropTarget(ListView? list, DropZone zone, int slot, AddRow? intoRow)
+    {
+        // Reset every move; only the relevant indicator is enabled below.
+        DropIndicator.Visibility = Visibility.Collapsed;
+        DropIntoBorder.Visibility = Visibility.Collapsed;
+
+        if (zone == DropZone.None || list == null) return;
+
+        if (zone == DropZone.IntoMiddlePane)
+        {
+            // Highlight the entire middle pane.
+            var mb = MiddlePane.TransformToVisual(DragOverlay).TransformBounds(
+                new Windows.Foundation.Rect(0, 0, MiddlePane.ActualWidth, MiddlePane.ActualHeight));
+            Canvas.SetLeft(DropIntoBorder, mb.Left + 1);
+            Canvas.SetTop(DropIntoBorder, mb.Top + 1);
+            DropIntoBorder.Width = mb.Width - 2;
+            DropIntoBorder.Height = mb.Height - 2;
+            DropIntoBorder.Visibility = Visibility.Visible;
+            return;
+        }
+
+        if (zone == DropZone.Into && intoRow != null)
+        {
+            if (list.ContainerFromItem(intoRow) is FrameworkElement c)
+            {
+                var b = c.TransformToVisual(DragOverlay).TransformBounds(new Windows.Foundation.Rect(0, 0, c.ActualWidth, c.ActualHeight));
+                Canvas.SetLeft(DropIntoBorder, b.Left + 2);
+                Canvas.SetTop(DropIntoBorder, b.Top + 1);
+                DropIntoBorder.Width = b.Width - 4;
+                DropIntoBorder.Height = b.Height - 2;
+                DropIntoBorder.Visibility = Visibility.Visible;
+            }
+            return;
+        }
+
+        // Above/Below: thin horizontal line at the slot boundary.
+        var rows = ReferenceEquals(list, LeftList) ? _leftRows : _middleRows;
+        FrameworkElement? anchor = null;
+        bool below = false;
+        if (slot >= rows.Count && rows.Count > 0)
+        {
+            anchor = list.ContainerFromIndex(rows.Count - 1) as FrameworkElement;
+            below = true;
+        }
+        else if (slot >= 0 && slot < rows.Count)
+        {
+            anchor = list.ContainerFromIndex(slot) as FrameworkElement;
+        }
+        if (anchor == null) return;
+
+        var ab = anchor.TransformToVisual(DragOverlay).TransformBounds(new Windows.Foundation.Rect(0, 0, anchor.ActualWidth, anchor.ActualHeight));
+        double y = below ? ab.Bottom : ab.Top;
+        Canvas.SetLeft(DropIndicator, ab.Left + 2);
+        Canvas.SetTop(DropIndicator, y - 1);
+        DropIndicator.Width = ab.Width - 4;
+        DropIndicator.Visibility = Visibility.Visible;
+    }
+
+    private static ListView? FindAncestorListView(DependencyObject el)
+    {
+        var p = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(el);
+        while (p != null)
+        {
+            if (p is ListView lv) return lv;
+            p = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(p);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Persist the row's new bucket + position to the view-model after a
+    /// successful manual drag. Reads the dragged row's neighbours in the
+    /// post-drag <paramref name="rows"/> snapshot to infer the new bucket.
+    /// The view-model mutation triggers <see cref="RefreshAll"/>, which
+    /// rebuilds the row collections from canonical state — matches the
+    /// visual order iff our inference is correct.
+    /// </summary>
+    private void ApplyDropResultToVm(System.Collections.Generic.IList<AddRow> rows)
+    {
+        if (_dragId == null || _dragKind == null) return;
+        int newIdx = -1;
+        for (int i = 0; i < rows.Count; i++)
+            if (rows[i].Kind == _dragKind && rows[i].Id == _dragId) { newIdx = i; break; }
+        if (newIdx < 0) { Log.Warn(Cat, "ApplyDropResultToVm: dragged row not found"); return; }
+
+        AddRow? next = newIdx + 1 < rows.Count ? rows[newIdx + 1] : null;
+        AddRow? prev = newIdx > 0 ? rows[newIdx - 1] : null;
+        string? newBucketId;
+        if (next != null) newBucketId = next.Bucket == "root" ? null : next.Bucket;
+        else if (prev != null) newBucketId = prev.Bucket == "root" ? null : prev.Bucket;
+        else newBucketId = null;
+
+        Log.Info(Cat, $"ApplyDropResultToVm: newIdx={newIdx} oldBucket={_dragBucket} newBucket={newBucketId ?? "<root>"}");
+
+        if (_dragKind == "entry")
+        {
+            _vm.MoveEntry(_dragId, newBucketId);
+            _vm.ReorderEntryWithinBucket(_dragId,
+                beforeEntryId: next?.Kind == "entry" && (next.Bucket == "root" ? null : next.Bucket) == newBucketId ? next.Id : null);
+        }
+        else
+        {
+            if (!_vm.MoveFolder(_dragId, newBucketId))
+            {
+                Log.Warn(Cat, $"MoveFolder refused — id={_dragId} newParent={newBucketId}");
+                RefreshAll();
+                return;
+            }
+            _vm.ReorderFolderWithinBucket(_dragId,
+                beforeFolderId: next?.Kind == "folder" && (next.Bucket == "root" ? null : next.Bucket) == newBucketId ? next.Id : null);
         }
     }
 
@@ -941,21 +1343,4 @@ public sealed partial class AddPage : Page
     // ROW ADAPTER
     // -------------------------------------------------------------------------
 
-    public sealed class AddRow
-    {
-        public required string Kind { get; init; }     // "folder" | "entry"
-        public required string Id   { get; init; }
-        public required string Bucket { get; init; }   // "root" | parent folder id
-        public int Indent { get; init; }
-        public required string Label { get; init; }
-        public string? Badge { get; init; }
-        public string? IconValue { get; init; }
-        public bool IsExpanded { get; init; }
-        public string? SubText { get; init; }           // middle pane only
-        public string? Ordinal { get; init; }           // middle pane only
-
-        public string TwistGlyph => Kind == "folder" ? (IsExpanded ? "▾" : "▸") : "";
-        public Visibility BadgeVisibility => string.IsNullOrEmpty(Badge) ? Visibility.Collapsed : Visibility.Visible;
-        public Visibility SubVisibility => string.IsNullOrEmpty(SubText) ? Visibility.Collapsed : Visibility.Visible;
-    }
 }

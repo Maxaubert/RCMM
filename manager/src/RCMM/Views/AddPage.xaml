@@ -4,7 +4,10 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:RCMM.Views"
-    xmlns:controls="using:Microsoft.UI.Xaml.Controls">
+    xmlns:controls="using:Microsoft.UI.Xaml.Controls"
+    PointerMoved="Page_PointerMoved"
+    PointerReleased="Page_PointerReleased"
+    PointerCaptureLost="Page_PointerCaptureLost">
 
     <Grid Padding="48,28,48,28" RowSpacing="20">
         <Grid.RowDefinitions>
@@ -57,11 +60,6 @@
                 <ListView x:Name="LeftList"
                           SelectionMode="Single"
                           SelectionChanged="LeftList_SelectionChanged"
-                          CanDragItems="True"
-                          AllowDrop="True"
-                          DragItemsStarting="LeftList_DragItemsStarting"
-                          DragOver="LeftList_DragOver"
-                          Drop="LeftList_Drop"
                           Background="Transparent"
                           BorderThickness="0">
                     <ListView.ItemContainerStyle>
@@ -70,14 +68,23 @@
                             <Setter Property="Margin" Value="0"/>
                             <Setter Property="MinHeight" Value="34"/>
                             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                            <Setter Property="AllowDrop" Value="True"/>
+                            <!-- AllowDrop is set on the ListView itself; setting it
+                                 on individual ListViewItems intercepts drops before
+                                 the framework reorder logic, so DragItemsCompleted
+                                 never fires. -->
                         </Style>
                     </ListView.ItemContainerStyle>
                     <ListView.ItemTemplate>
                         <DataTemplate>
+                            <!-- Row visuals are painted from code-behind
+                                 (ApplyLeftRowVisuals) — see AddPage.xaml.cs. We
+                                 dropped {Binding} + INPC because container recycling
+                                 under WinUI 3 virtualization left stale binding
+                                 subscriptions, which painted the selection bar on
+                                 the wrong rows. -->
                             <Grid x:Name="RowRoot" Padding="14,7,12,7" ColumnSpacing="2"
-                                  AllowDrop="True"
-                                  Loaded="RowRoot_Loaded">
+                                  Loaded="RowRoot_Loaded"
+                                  DataContextChanged="RowRoot_DataContextChanged">
                                 <Grid.ColumnDefinitions>
                                     <!-- Indent spacer driven from code-behind via Margin -->
                                     <ColumnDefinition Width="Auto"/>
@@ -97,7 +104,8 @@
                                      ListView's own selection bg is hidden by ItemContainerStyle. -->
                                 <Rectangle x:Name="SelBar" Grid.Column="0" Grid.ColumnSpan="6"
                                            Width="3" HorizontalAlignment="Left"
-                                           Fill="{ThemeResource AppAccent}" Visibility="Collapsed"/>
+                                           Fill="{ThemeResource AppAccent}"
+                                           Visibility="Collapsed"/>
 
                                 <!-- Drop indicator lines (top/bottom) for reorder, row fill for drop-into -->
                                 <Rectangle x:Name="DropTop" Grid.Column="0" Grid.ColumnSpan="6"
@@ -115,44 +123,50 @@
                                 <Border x:Name="IndentSpacer" Grid.Column="0" Width="0"/>
 
                                 <TextBlock x:Name="Twist" Grid.Column="1"
-                                           Text="{Binding TwistGlyph}"
                                            Foreground="{ThemeResource AppTextMuted}"
                                            FontSize="10" VerticalAlignment="Center"
                                            HorizontalAlignment="Center"
                                            Tapped="Twist_Tapped"/>
 
-                                <Path
-                                    x:Name="IconPath" Grid.Column="2"
+                                <Border
+                                    x:Name="IconHost" Grid.Column="2"
                                     Width="16" Height="16"
-                                    Stretch="Uniform"
-                                    Stroke="{ThemeResource AppTextMuted}"
-                                    StrokeThickness="1.75"
-                                    StrokeLineJoin="Round"
-                                    StrokeStartLineCap="Round"
-                                    StrokeEndLineCap="Round"
-                                    Fill="{x:Null}"
                                     Margin="0,0,8,0"
                                     VerticalAlignment="Center"
                                     Visibility="Collapsed"/>
 
                                 <TextBlock x:Name="Label" Grid.Column="3"
-                                           Text="{Binding Label}"
                                            Foreground="{ThemeResource AppText}"
                                            TextTrimming="CharacterEllipsis"
                                            VerticalAlignment="Center"/>
 
                                 <TextBlock x:Name="Badge" Grid.Column="4"
-                                           Text="{Binding Badge}"
                                            Foreground="{ThemeResource AppTextDim}"
                                            FontSize="11" Margin="8,0,8,0"
                                            VerticalAlignment="Center"
-                                           Visibility="{Binding BadgeVisibility}"/>
+                                           Visibility="Collapsed"/>
 
-                                <TextBlock x:Name="Grip" Grid.Column="5"
-                                           Text="&#xE76F;" FontFamily="Segoe Fluent Icons"
-                                           Foreground="{ThemeResource AppTextDim}"
-                                           FontSize="12" Opacity="0"
-                                           VerticalAlignment="Center"/>
+                                <!-- Drag handle. Custom DragHandle subclass flips the
+                                     cursor to a 4-way move on hover; the pointer
+                                     handlers below drive a manual reorder of the row
+                                     collection. We don't use WinUI's CanDragItems /
+                                     CanReorderItems because they're broken in
+                                     unpackaged WinUI 3 apps — the OS-level drag
+                                     infrastructure (IDropTargetHelper et al.) isn't
+                                     COM-registered, so the framework's drag never
+                                     produces drop events. -->
+                                <local:DragHandle x:Name="GripHost" Grid.Column="5"
+                                                  Background="Transparent"
+                                                  Padding="8,0,4,0" MinWidth="28"
+                                                  VerticalAlignment="Stretch"
+                                                  ManipulationMode="None"
+                                                  PointerPressed="GripHost_PointerPressed">
+                                    <TextBlock x:Name="Grip"
+                                               Text="&#xE76F;" FontFamily="Segoe Fluent Icons"
+                                               Foreground="{ThemeResource AppTextDim}"
+                                               FontSize="12" Opacity="0.55"
+                                               VerticalAlignment="Center"/>
+                                </local:DragHandle>
                             </Grid>
                         </DataTemplate>
                     </ListView.ItemTemplate>
@@ -197,11 +211,6 @@
                     <ListView Grid.Row="1" x:Name="MiddleList"
                               SelectionMode="Single"
                               SelectionChanged="MiddleList_SelectionChanged"
-                              CanDragItems="True"
-                              AllowDrop="True"
-                              DragItemsStarting="MiddleList_DragItemsStarting"
-                              DragOver="MiddleList_DragOver"
-                              Drop="MiddleList_Drop"
                               Background="Transparent"
                               BorderThickness="0">
                         <ListView.ItemContainerStyle>
@@ -210,14 +219,13 @@
                                 <Setter Property="Margin" Value="0"/>
                                 <Setter Property="MinHeight" Value="50"/>
                                 <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                                <Setter Property="AllowDrop" Value="True"/>
                             </Style>
                         </ListView.ItemContainerStyle>
                         <ListView.ItemTemplate>
                             <DataTemplate>
                                 <Grid x:Name="MidRowRoot" Padding="14,9,14,9" ColumnSpacing="10"
-                                      AllowDrop="True"
-                                      Loaded="MidRowRoot_Loaded">
+                                      Loaded="MidRowRoot_Loaded"
+                                      DataContextChanged="MidRowRoot_DataContextChanged">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="20"/>
                                         <ColumnDefinition Width="Auto"/>
@@ -238,43 +246,42 @@
                                                Visibility="Collapsed"/>
 
                                     <TextBlock x:Name="MidOrder" Grid.Column="0"
-                                               Text="{Binding Ordinal}"
                                                Foreground="{ThemeResource AppTextDim}" FontSize="11"
                                                VerticalAlignment="Center"
                                                HorizontalAlignment="Right" Margin="0,0,4,0"/>
 
-                                    <Path
-                                        x:Name="MidIconPath" Grid.Column="1"
+                                    <Border
+                                        x:Name="MidIconHost" Grid.Column="1"
                                         Width="20" Height="20"
-                                        Stretch="Uniform"
-                                        Stroke="{ThemeResource AppTextMuted}"
-                                        StrokeThickness="1.75"
-                                        StrokeLineJoin="Round"
-                                        StrokeStartLineCap="Round"
-                                        StrokeEndLineCap="Round"
-                                        Fill="{x:Null}"
                                         VerticalAlignment="Center"
                                         Visibility="Collapsed"/>
 
                                     <StackPanel Grid.Column="2" Orientation="Vertical" Spacing="2"
                                                 VerticalAlignment="Center">
-                                        <TextBlock Text="{Binding Label}"
+                                        <TextBlock x:Name="MidLabel"
                                                    Foreground="{ThemeResource AppText}"
                                                    FontSize="14"
                                                    TextTrimming="CharacterEllipsis"/>
-                                        <TextBlock Text="{Binding SubText}"
+                                        <TextBlock x:Name="MidSub"
                                                    Foreground="{ThemeResource AppTextMuted}"
                                                    FontSize="11.5"
                                                    FontFamily="Cascadia Code, Consolas, Courier New"
                                                    TextTrimming="CharacterEllipsis"
-                                                   Visibility="{Binding SubVisibility}"/>
+                                                   Visibility="Collapsed"/>
                                     </StackPanel>
 
-                                    <TextBlock x:Name="MidGrip" Grid.Column="3"
-                                               Text="&#xE76F;" FontFamily="Segoe Fluent Icons"
-                                               Foreground="{ThemeResource AppTextDim}"
-                                               FontSize="12" Opacity="0"
-                                               VerticalAlignment="Center"/>
+                                    <local:DragHandle x:Name="MidGripHost" Grid.Column="3"
+                                                      Background="Transparent"
+                                                      Padding="10,0,6,0" MinWidth="32"
+                                                      VerticalAlignment="Stretch"
+                                                      ManipulationMode="None"
+                                                      PointerPressed="GripHost_PointerPressed">
+                                        <TextBlock x:Name="MidGrip"
+                                                   Text="&#xE76F;" FontFamily="Segoe Fluent Icons"
+                                                   Foreground="{ThemeResource AppTextDim}"
+                                                   FontSize="12" Opacity="0.55"
+                                                   VerticalAlignment="Center"/>
+                                    </local:DragHandle>
                                 </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>
@@ -373,7 +380,7 @@
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
                                         <Border Grid.Column="0" Width="44" Height="44"
-                                                Background="{ThemeResource AppBg}"
+                                                Background="{ThemeResource WindowBackground}"
                                                 BorderBrush="{ThemeResource AppBorder}" BorderThickness="1"
                                                 CornerRadius="6">
                                             <Grid x:Name="IconPreviewCell"/>
@@ -386,7 +393,7 @@
                                         </StackPanel>
                                         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                                             <Button x:Name="IconPickButton" Click="IconPick_Click"
-                                                    Background="{ThemeResource AppBg}"
+                                                    Background="{ThemeResource WindowBackground}"
                                                     BorderBrush="{ThemeResource AppBorder}"
                                                     Foreground="{ThemeResource AppText}"
                                                     CornerRadius="6" Padding="10,5"
@@ -424,5 +431,43 @@
                 </ScrollViewer>
             </Border>
         </Grid>
+
+        <!-- Drag overlay. Lives in the same Grid cell as MasterGrid so it
+             paints on top of the lists. IsHitTestVisible=False so it doesn't
+             swallow pointer events; the drag itself is captured on the Page. -->
+        <Canvas x:Name="DragOverlay" Grid.Row="2" IsHitTestVisible="False">
+            <Border x:Name="DragGhost"
+                    Visibility="Collapsed"
+                    Background="{ThemeResource AppSurfaceHover}"
+                    BorderBrush="{ThemeResource AppAccent}"
+                    BorderThickness="1"
+                    CornerRadius="6"
+                    Padding="12,6,12,6"
+                    Opacity="0.92">
+                <Border.Shadow>
+                    <ThemeShadow/>
+                </Border.Shadow>
+                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <Border x:Name="DragGhostIconHost" Width="16" Height="16"
+                            Visibility="Collapsed" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="DragGhostLabel"
+                               Foreground="{ThemeResource AppText}"
+                               FontSize="13"/>
+                </StackPanel>
+            </Border>
+            <Rectangle x:Name="DropIndicator"
+                       Visibility="Collapsed"
+                       Height="2"
+                       Fill="{ThemeResource AppAccent}"
+                       RadiusX="1" RadiusY="1"/>
+            <!-- "Drop into folder" highlight. Visible when the cursor hovers
+                 the middle of a folder row during a drag. -->
+            <Border x:Name="DropIntoBorder"
+                    Visibility="Collapsed"
+                    BorderBrush="{ThemeResource AppAccent}"
+                    BorderThickness="2"
+                    CornerRadius="4"
+                    Background="{ThemeResource AppAccentGlow}"/>
+        </Canvas>
     </Grid>
 </Page>

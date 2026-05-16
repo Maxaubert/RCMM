@@ -1,7 +1,9 @@
+using System;
 using System.Linq;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using RCMM.Core.Diagnostics;
 using RCMM.Core.Services;
 using RCMM.Util;
 
@@ -25,12 +27,12 @@ public sealed class IconPickerDialog : ContentDialog
     public IconPickerDialog(string? currentValue)
     {
         PickedValue = currentValue;
+        Log.Info("iconpicker", "ctor: setting basic props");
         Title = "Choose icon";
         CloseButtonText = "Cancel";
         DefaultButton = ContentDialogButton.Close;
-        Background = (Brush)Application.Current.Resources["AppSurface"];
-        Foreground = (Brush)Application.Current.Resources["AppText"];
 
+        Log.Info("iconpicker", "ctor: building outer");
         var outer = new StackPanel { Spacing = 10, MinWidth = 600, MaxWidth = 660 };
         _searchBox.TextChanged += (_, __) => RenderGrid(_searchBox.Text ?? "");
         outer.Children.Add(_searchBox);
@@ -44,7 +46,9 @@ public sealed class IconPickerDialog : ContentDialog
         outer.Children.Add(scroller);
         Content = outer;
 
-        RenderGrid("");
+        Log.Info("iconpicker", "ctor: rendering grid");
+        try { RenderGrid(""); Log.Info("iconpicker", "ctor: grid rendered"); }
+        catch (Exception ex) { Log.Error("iconpicker", "ctor: RenderGrid threw", ex); throw; }
     }
 
     private void RenderGrid(string query)
@@ -52,36 +56,56 @@ public sealed class IconPickerDialog : ContentDialog
         _body.Children.Clear();
         var q = query.Trim().ToLowerInvariant();
         bool any = false;
+        int catIdx = -1;
         foreach (var cat in IconLibrary.Categories)
         {
+            catIdx++;
+            Log.Debug("iconpicker", $"cat[{catIdx}] {cat.Name}: filtering");
             var matches = cat.Icons
                 .Where(n => q.Length == 0 || n.ToLowerInvariant().Contains(q) || cat.Name.ToLowerInvariant().Contains(q))
                 .ToList();
             if (matches.Count == 0) continue;
             any = true;
 
-            _body.Children.Add(new TextBlock
+            try
             {
-                Text = cat.Name.ToUpperInvariant(),
-                Foreground = (Brush)Application.Current.Resources["AppTextMuted"],
-                FontSize = 11,
-                CharacterSpacing = 80,
-                Margin = new Thickness(2, 8, 0, 2),
-            });
+                var head = new TextBlock();
+                head.Text = cat.Name;
+                head.Foreground = (Brush)Application.Current.Resources["AppTextMuted"];
+                head.FontSize = 11;
+                head.Margin = new Thickness(2, 8, 0, 2);
+                _body.Children.Add(head);
+            }
+            catch (Exception ex) { Log.Error("iconpicker", $"cat[{catIdx}] head failed", ex); throw; }
 
-            var grid = new Grid();
-            for (int c = 0; c < Columns; c++)
-                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            Grid grid;
+            try
+            {
+                grid = new Grid();
+                for (int c = 0; c < Columns; c++)
+                    grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            }
+            catch (Exception ex) { Log.Error("iconpicker", $"cat[{catIdx}] grid setup failed", ex); throw; }
 
             int row = 0, col = 0;
+            int tileIdx = -1;
             foreach (var name in matches)
             {
-                if (col == 0) grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                var tile = BuildTile(name);
-                tile.Margin = new Thickness(3);
-                Grid.SetRow(tile, row);
-                Grid.SetColumn(tile, col);
-                grid.Children.Add(tile);
+                tileIdx++;
+                try
+                {
+                    if (col == 0) grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                    var tile = BuildTile(name);
+                    tile.Margin = new Thickness(3);
+                    Grid.SetRow(tile, row);
+                    Grid.SetColumn(tile, col);
+                    grid.Children.Add(tile);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error("iconpicker", $"cat[{catIdx}].tile[{tileIdx}] name={name} failed", ex);
+                    throw;
+                }
                 col++;
                 if (col >= Columns) { col = 0; row++; }
             }
@@ -101,26 +125,42 @@ public sealed class IconPickerDialog : ContentDialog
 
     private Button BuildTile(string name)
     {
-        var btn = new Button
+        Button btn;
+        try
         {
-            Background = (Brush)Application.Current.Resources["AppSurfaceHover"],
-            BorderBrush = (Brush)Application.Current.Resources["AppBorder"],
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(7),
-            Padding = new Thickness(0),
-            Height = 56,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Stretch,
-        };
-        var path = IconRender.BuildIconElement(IconLibrary.MakeLibValue(name), 24,
-            (Brush)Application.Current.Resources["AppText"], thickness: 2);
-        if (path != null) btn.Content = path;
-        if (PickedValue == IconLibrary.MakeLibValue(name))
-        {
-            btn.BorderBrush = (Brush)Application.Current.Resources["AppAccent"];
-            btn.BorderThickness = new Thickness(2);
+            btn = new Button();
+            btn.Background = (Brush)Application.Current.Resources["AppSurfaceHover"];
+            btn.BorderBrush = (Brush)Application.Current.Resources["AppBorder"];
+            btn.BorderThickness = new Thickness(1);
+            btn.CornerRadius = new CornerRadius(7);
+            btn.Padding = new Thickness(0);
+            btn.Height = 56;
+            btn.HorizontalAlignment = HorizontalAlignment.Stretch;
+            btn.VerticalAlignment = VerticalAlignment.Stretch;
         }
-        ToolTipService.SetToolTip(btn, name);
+        catch (Exception ex) { Log.Error("iconpicker", $"BuildTile {name}: btn props failed", ex); throw; }
+
+        try
+        {
+            var path = IconRender.BuildIconElement(IconLibrary.MakeLibValue(name), 24,
+                (Brush)Application.Current.Resources["AppText"], thickness: 2);
+            if (path != null) btn.Content = path;
+        }
+        catch (Exception ex) { Log.Error("iconpicker", $"BuildTile {name}: path failed", ex); throw; }
+
+        try
+        {
+            if (PickedValue == IconLibrary.MakeLibValue(name))
+            {
+                btn.BorderBrush = (Brush)Application.Current.Resources["AppAccent"];
+                btn.BorderThickness = new Thickness(2);
+            }
+        }
+        catch (Exception ex) { Log.Error("iconpicker", $"BuildTile {name}: highlight failed", ex); throw; }
+
+        try { ToolTipService.SetToolTip(btn, name); }
+        catch (Exception ex) { Log.Error("iconpicker", $"BuildTile {name}: tooltip failed", ex); throw; }
+
         btn.Click += (_, __) =>
         {
             PickedValue = IconLibrary.MakeLibValue(name);

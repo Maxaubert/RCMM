@@ -42,7 +42,8 @@ public sealed partial class MainWindow : Window
         var shellexKeyIndex = new ShellexKeyNameIndex(registry);
         var shellexInvoker = new ShellexInvoker(registry, targets);
 
-        var additionApplier = new AdditionApplier(registry);
+        var iconMaterializer = new IconMaterializer(IconMaterializer.DefaultDir());
+        var additionApplier = new AdditionApplier(registry, iconMaterializer);
         var addStore = new AdditionStore(AdditionStore.DefaultPath());
         var addPage = new AddPageViewModel(addStore);
         addPage.Load();
@@ -62,6 +63,14 @@ public sealed partial class MainWindow : Window
         RootGrid.RequestedTheme = ElementTheme.Dark;
         ViewModel.RescanComplete += () => DispatcherQueue.TryEnqueue(LoadIconsForAllEntries);
         ViewModel.PendingChangeIds.CollectionChanged += (_, __) => DispatcherQueue.TryEnqueue(UpdateFooterApply);
+        if (ViewModel.AddPage != null)
+        {
+            ViewModel.AddPage.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(AddPageViewModel.HasPendingChanges))
+                    DispatcherQueue.TryEnqueue(UpdateFooterApply);
+            };
+        }
         ViewModel.Rescan();
         UpdateFooterApply();
 
@@ -90,9 +99,9 @@ public sealed partial class MainWindow : Window
 
     private void UpdateFooterApplyVisibility(Type pageType)
     {
-        bool isListView = pageType == typeof(ScopePage);
-        FooterApplyButton.Visibility = isListView ? Visibility.Visible : Visibility.Collapsed;
-        if (isListView)
+        bool needsApply = pageType == typeof(ScopePage) || pageType == typeof(AddPage);
+        FooterApplyButton.Visibility = needsApply ? Visibility.Visible : Visibility.Collapsed;
+        if (needsApply)
         {
             FooterContainer.Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["FooterBackground"];
             FooterContainer.BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBorder"];
@@ -109,7 +118,8 @@ public sealed partial class MainWindow : Window
     private void UpdateFooterApply()
     {
         int n = ViewModel.PendingChangeIds.Count;
-        FooterApplyButton.IsEnabled = n > 0;
+        bool addDirty = ViewModel.AddPage?.HasPendingChanges == true;
+        FooterApplyButton.IsEnabled = n > 0 || addDirty;
         FooterApplyButton.Content = n > 0 ? $"Apply ({n})" : "Apply";
     }
 
