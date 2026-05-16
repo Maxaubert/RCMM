@@ -127,8 +127,8 @@ public static class AdditionTemplates
         Cmd("cargo test",  "cargo test",  "Rust", "lib:settings"),
 
         // Go
-        Cmd("go run .",  "go run .",  "Go", "lib:zap"),
-        Cmd("go build",  "go build",  "Go", "lib:zap"),
+        Cmd("go run",   "go run .", "Go", "lib:zap"),
+        Cmd("go build", "go build", "Go", "lib:zap"),
     };
 
     // ---- Section / kind helpers ---------------------------------------------

@@ -80,6 +80,7 @@ public class AdditionTemplatesTests
     [InlineData("dotnet test")]
     [InlineData("cargo test")]
     [InlineData("go build")]
+    [InlineData("go run .")]
     public void Specific_command_template_exists(string expectedCommand)
     {
         Assert.Contains(AdditionTemplates.All, t => t.Command == expectedCommand);
