@@ -9,5 +9,8 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" />
+    <!-- GDI+ for rendering library SVG icons to .ico files (used by
+         IconMaterializer at apply-time so Windows shell can show them). -->
+    <PackageReference Include="System.Drawing.Common" Version="8.0.7" />
   </ItemGroup>
 </Project>

@@ -111,6 +111,12 @@ public static class IconLibrary
 
     public static string MakeLibValue(string name) => LibPrefix + name;
 
+    /// <summary>Returns the raw SVG-child XML fragment for a library icon, or
+    /// null if the name isn't known. Used by IconMaterializer to render the
+    /// icon to a .ico file for the Windows shell at Apply time.</summary>
+    public static string? RawSvgFragment(string name)
+        => _svg.TryGetValue(name, out var f) ? f : null;
+
     private static readonly ConcurrentDictionary<string, string> _pathDataCache = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>

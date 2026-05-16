@@ -37,8 +37,25 @@ public sealed class AdditionApplier
     };
 
     private readonly IRegistry _reg;
+    private readonly IconMaterializer? _icons;
 
-    public AdditionApplier(IRegistry reg) { _reg = reg; }
+    public AdditionApplier(IRegistry reg, IconMaterializer? icons = null)
+    {
+        _reg = reg;
+        _icons = icons;
+    }
+
+    /// <summary>Resolve an Icon value for the registry: library refs
+    /// (<c>lib:&lt;name&gt;</c>) get materialized to an .ico file path; raw
+    /// values pass through. Null materialization (unknown name / failure)
+    /// falls back to skipping the Icon write so the shell doesn't try to
+    /// resolve an unresolvable string.</summary>
+    private string? ResolveIcon(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        if (_icons == null) return IconLibrary.IsLibraryName(raw) ? null : raw;
+        return _icons.Materialize(raw);
+    }
 
     public static string ScopeRootFor(AdditionScope scope) => scope switch
     {
@@ -192,8 +209,9 @@ public sealed class AdditionApplier
             : $"{parentContainer}\\ContextMenus\\{verbName}";
 
         _reg.SetValue(RegistryHive.CurrentUser, verbPath, "", folder.Name);
-        if (!string.IsNullOrWhiteSpace(folder.Icon))
-            _reg.SetValue(RegistryHive.CurrentUser, verbPath, "Icon", folder.Icon!);
+        var folderIcon = ResolveIcon(folder.Icon);
+        if (!string.IsNullOrWhiteSpace(folderIcon))
+            _reg.SetValue(RegistryHive.CurrentUser, verbPath, "Icon", folderIcon!);
         _reg.SetValue(RegistryHive.CurrentUser, verbPath, "ExtendedSubCommandsKey", contextMenusPath);
 
         // Recurse: write children of `folder` under `contextMenusPath`.
@@ -213,12 +231,14 @@ public sealed class AdditionApplier
         var verbName = VerbName(ordinal, entry.Id);
         var commandText = WrapForRunMode(entry.RunMode, entry.Command);
 
+        var resolvedIcon = ResolveIcon(entry.Icon);
+
         if (parentContainer != null)
         {
             var path = $"{ClassesRoot}\\{parentContainer}\\shell\\{verbName}";
             _reg.SetValue(RegistryHive.CurrentUser, path, "", entry.Name);
-            if (!string.IsNullOrWhiteSpace(entry.Icon))
-                _reg.SetValue(RegistryHive.CurrentUser, path, "Icon", entry.Icon!);
+            if (!string.IsNullOrWhiteSpace(resolvedIcon))
+                _reg.SetValue(RegistryHive.CurrentUser, path, "Icon", resolvedIcon!);
             _reg.SetValue(RegistryHive.CurrentUser, path + "\\command", "", commandText);
             return;
         }
@@ -234,8 +254,8 @@ public sealed class AdditionApplier
                 continue;
             var path = $"{ClassesRoot}\\{scopePrefix}\\shell\\{verbName}";
             _reg.SetValue(RegistryHive.CurrentUser, path, "", entry.Name);
-            if (!string.IsNullOrWhiteSpace(entry.Icon))
-                _reg.SetValue(RegistryHive.CurrentUser, path, "Icon", entry.Icon!);
+            if (!string.IsNullOrWhiteSpace(resolvedIcon))
+                _reg.SetValue(RegistryHive.CurrentUser, path, "Icon", resolvedIcon!);
             _reg.SetValue(RegistryHive.CurrentUser, path + "\\command", "", commandText);
         }
     }
