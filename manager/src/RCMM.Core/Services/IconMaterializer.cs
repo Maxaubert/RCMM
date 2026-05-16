@@ -48,7 +48,7 @@ public sealed class IconMaterializer
         {
             Directory.CreateDirectory(_dir);
             var path = Path.Combine(_dir, name + ".ico");
-            if (!File.Exists(path)) Render(raw, path);
+            if (!File.Exists(path)) Render(name, raw, path);
             return path;
         }
         catch (Exception ex)
@@ -60,13 +60,14 @@ public sealed class IconMaterializer
 
     private static readonly int[] _sizes = { 16, 24, 32, 48, 64, 128, 256 };
 
-    private static void Render(string svgFragment, string outPath)
+    private static void Render(string iconName, string svgFragment, string outPath)
     {
         Log.Info(Cat, $"rendering {Path.GetFileName(outPath)}");
+        bool filled = IconLibrary.IsFilled(iconName);
         var pngs = new List<(int size, byte[] data)>(_sizes.Length);
         foreach (var size in _sizes)
         {
-            using var bmp = RenderToBitmap(svgFragment, size);
+            using var bmp = RenderToBitmap(svgFragment, size, filled);
             using var ms = new MemoryStream();
             bmp.Save(ms, ImageFormat.Png);
             pngs.Add((size, ms.ToArray()));
@@ -74,12 +75,12 @@ public sealed class IconMaterializer
         WriteIcoFile(outPath, pngs);
     }
 
-    /// <summary>Render the SVG fragment to a transparent ARGB bitmap. The
-    /// Lucide outline style is a stroke-only design at viewBox 24x24, stroke
-    /// 2px. We render in white because Windows uses the icon's alpha channel
-    /// for the menu background but draws the icon itself unmodified — white
-    /// strokes work on both light and dark menus.</summary>
-    private static Bitmap RenderToBitmap(string svgFragment, int size)
+    /// <summary>Render the SVG fragment to a transparent ARGB bitmap.
+    /// Lucide outline icons are stroked at 1.75px on a 24x24 viewBox; brand
+    /// marks (claude, openai) are filled solids. White ink either way so the
+    /// glyph is legible against any Explorer menu background — Windows uses
+    /// only the alpha channel for compositing.</summary>
+    private static Bitmap RenderToBitmap(string svgFragment, int size, bool filled)
     {
         var bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
         using var g = Graphics.FromImage(bmp);
@@ -91,21 +92,31 @@ public sealed class IconMaterializer
         float scale = size / 24f;
         g.ScaleTransform(scale, scale);
 
-        // Stroke thickness scales inversely so the visual weight matches the
-        // picker UI at any output size.
-        float stroke = 1.75f;
-        using var pen = new Pen(Color.White, stroke)
+        using var pen = new Pen(Color.White, 1.75f)
         {
             LineJoin = LineJoin.Round,
             StartCap = LineCap.Round,
             EndCap = LineCap.Round,
         };
+        using var fillBrush = new SolidBrush(Color.White);
 
         var doc = XDocument.Parse("<svg xmlns='http://www.w3.org/2000/svg'>" + svgFragment + "</svg>");
         foreach (var el in doc.Root!.Elements())
         {
             using var path = ToGraphicsPath(el);
-            if (path != null) g.DrawPath(pen, path);
+            if (path == null) continue;
+            if (filled)
+            {
+                // SVG default is fill-rule=nonzero; GDI+ defaults to Alternate
+                // (even-odd), so set Winding explicitly. Brand marks rely on
+                // nonzero for sub-shapes to fill correctly.
+                path.FillMode = FillMode.Winding;
+                g.FillPath(fillBrush, path);
+            }
+            else
+            {
+                g.DrawPath(pen, path);
+            }
         }
         return bmp;
     }

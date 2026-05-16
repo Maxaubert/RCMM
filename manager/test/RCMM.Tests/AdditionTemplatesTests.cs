@@ -95,6 +95,8 @@ public class AdditionTemplatesTests
     [InlineData("Git Bash here",            "Shell",        "git-bash.exe")]
     [InlineData("WSL here",                 "Shell",        "wsl.exe")]
     [InlineData("Windows Terminal here",    "Shell",        "wt.exe")]
+    [InlineData("Open Claude here",         "Shell",        "wt.exe")]
+    [InlineData("Open Codex here",          "Shell",        "wt.exe")]
     public void Binary_template_metadata(string name, string ecosystem, string expectedBinary)
     {
         var t = AdditionTemplates.All.SingleOrDefault(x => x.Name == name);

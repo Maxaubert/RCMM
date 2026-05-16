@@ -109,10 +109,14 @@ public sealed partial class TemplatesPage : Page
         if (sender is not Button btn || btn.DataContext is not AdditionTemplates.Template t) return;
 
         // For "Open in…" templates we resolve the target binary at +Add time:
-        //   • Icon = absolute path to the .exe (Windows extracts the icon)
-        //   • %bin% in Command substitutes for the resolved path (needed for
-        //     Git Bash which isn't on PATH).
-        // Falls back to the template's Lucide icon if the binary isn't found.
+        //   • Command: %bin% substitutes for the resolved absolute path.
+        //   • Icon priority:
+        //       1. template.Icon (e.g. "lib:claude") wins if set — used so the
+        //          AI CLI launchers show a brand icon instead of the host
+        //          terminal's icon.
+        //       2. Otherwise: resolved binary path (Windows extracts the icon
+        //          from .exe resources).
+        //       3. Otherwise: null.
         string command = t.Command;
         string? icon = t.Icon;
         if (!string.IsNullOrEmpty(t.IconBinary))
@@ -120,7 +124,7 @@ public sealed partial class TemplatesPage : Page
             var resolved = BinaryResolver.Find(t.IconBinary!, t.IconBinaryFallbacks);
             if (resolved != null)
             {
-                icon = resolved;
+                if (string.IsNullOrEmpty(icon)) icon = resolved;
                 command = command.Replace("%bin%", resolved);
             }
             else

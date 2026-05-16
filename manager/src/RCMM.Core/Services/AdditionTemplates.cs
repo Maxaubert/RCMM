@@ -111,6 +111,14 @@ public static class AdditionTemplates
         Shell("WSL here",              "\"%bin%\" --cd \"%V\"",     "wsl.exe", null),
         Shell("Windows Terminal here", "\"%bin%\" -d \"%V\"",       "wt.exe", null),
 
+        // AI CLI launchers — open Windows Terminal in the folder and
+        // immediately drop into a tool's REPL/session. The trailing token
+        // (`claude`, `codex`) is the command wt runs in the default profile.
+        // Requires the CLI to be on PATH (`npm install -g @anthropic-ai/claude-code`
+        // for Claude; OpenAI Codex CLI for codex).
+        Shell("Open Claude here", "\"%bin%\" -d \"%V\" claude", "wt.exe", null, icon: "lib:claude"),
+        Shell("Open Codex here",  "\"%bin%\" -d \"%V\" codex",  "wt.exe", null, icon: "lib:openai"),
+
         // Python
         Cmd("python -m venv .venv",            "python -m venv .venv",            "Python", "lib:code-square"),
         Cmd("pip install -r requirements",     "pip install -r requirements.txt", "Python", "lib:code-square"),
@@ -161,9 +169,13 @@ public static class AdditionTemplates
 
     /// <summary>Terminal/shell launcher. Same shape as <see cref="Editor"/> but
     /// in its own Ecosystem so the Templates page can filter editors/shells
-    /// independently via the chip row.</summary>
+    /// independently via the chip row. An optional <paramref name="icon"/>
+    /// (library ref like "lib:claude") wins over the binary's icon — used by
+    /// AI-CLI launchers so the entry shows the tool's brand mark rather than
+    /// the host terminal's icon.</summary>
     private static Template Shell(string name, string command, string binaryName,
-                                  IReadOnlyList<string>? fallbacks)
+                                  IReadOnlyList<string>? fallbacks,
+                                  string? icon = null)
         => new()
         {
             Name = name,
@@ -171,6 +183,7 @@ public static class AdditionTemplates
             Ecosystem = "Shell",
             Scope = AdditionScope.FolderBackground,
             RunMode = RunMode.Background,
+            Icon = icon,
             IconBinary = binaryName,
             IconBinaryFallbacks = fallbacks,
         };

@@ -33,6 +33,7 @@ public static class IconRender
         var data = IconLibrary.TryGetPathData(name);
         if (string.IsNullOrEmpty(data)) return null;
 
+        bool filled = IconLibrary.IsFilled(name);
         // Build the Path entirely via XamlReader so the Geometry is born
         // already parented to this Path — no detach/reparent issues.
         var encoded = System.Net.WebUtility.HtmlEncode(data);
@@ -43,8 +44,18 @@ public static class IconRender
         try
         {
             var p = (Path)XamlReader.Load(xaml);
-            p.Stroke = stroke;
-            p.StrokeThickness = thickness;
+            // Filled brand marks (claude, openai) use Fill; Lucide outline
+            // icons use Stroke. The caller passes the desired brush either
+            // way — same colour, different application.
+            if (filled)
+            {
+                p.Fill = stroke;
+            }
+            else
+            {
+                p.Stroke = stroke;
+                p.StrokeThickness = thickness;
+            }
             p.Width = size;
             p.Height = size;
             p.HorizontalAlignment = HorizontalAlignment.Center;
