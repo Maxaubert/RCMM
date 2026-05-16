@@ -122,6 +122,15 @@
 
                                 <Border x:Name="IndentSpacer" Grid.Column="0" Width="0"/>
 
+                                <!-- Vertical guide rail shown for indented (child)
+                                     rows so the hierarchy is visible at a glance.
+                                     Position + visibility set in
+                                     ApplyLeftRowVisuals based on AddRow.Indent. -->
+                                <Rectangle x:Name="IndentGuide" Grid.Column="0" Grid.ColumnSpan="6"
+                                           Width="1" HorizontalAlignment="Left"
+                                           Fill="{ThemeResource AppBorder}"
+                                           Visibility="Collapsed"/>
+
                                 <TextBlock x:Name="Twist" Grid.Column="1"
                                            Foreground="{ThemeResource AppTextMuted}"
                                            FontSize="10" VerticalAlignment="Center"

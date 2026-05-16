@@ -301,10 +301,27 @@ public sealed partial class AddPage : Page
     /// selection. Driven from code (not XAML bindings) because INPC bindings
     /// under WinUI 3 virtualization left stale subscriptions across container
     /// recycles, which caused the SelBar to appear on the wrong rows.</summary>
+    private const double IndentUnit = 28.0;
+
     private void ApplyLeftRowVisuals(Grid g, AddRow r)
     {
         if (g.FindName("IndentSpacer") is Border indent)
-            indent.Width = r.Indent * 22;
+            indent.Width = r.Indent * IndentUnit;
+        // Vertical guide rail at the midpoint of the deepest indent unit, so
+        // an indented row visually "branches" off the column where its parent
+        // folder sits. Hidden on root rows.
+        if (g.FindName("IndentGuide") is Microsoft.UI.Xaml.Shapes.Rectangle guide)
+        {
+            if (r.Indent > 0)
+            {
+                guide.Margin = new Thickness((r.Indent - 1) * IndentUnit + IndentUnit / 2, 0, 0, 0);
+                guide.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                guide.Visibility = Visibility.Collapsed;
+            }
+        }
         if (g.FindName("SelBar") is Microsoft.UI.Xaml.Shapes.Rectangle selBar)
             selBar.Visibility = (r.Kind == _selectedKind && r.Id == _selectedId) ? Visibility.Visible : Visibility.Collapsed;
         if (g.FindName("Twist") is TextBlock twist)
