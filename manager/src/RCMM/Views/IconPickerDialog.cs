@@ -17,7 +17,7 @@ namespace RCMM.Views;
 /// </summary>
 public sealed class IconPickerDialog : ContentDialog
 {
-    private const int Columns = 9;
+    private const int Columns = 7;
 
     public string? PickedValue { get; private set; }
 
