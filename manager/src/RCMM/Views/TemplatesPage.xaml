@@ -6,6 +6,7 @@
     <Grid Padding="48,28,48,40" RowSpacing="20">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
@@ -16,15 +17,35 @@
                        Foreground="{ThemeResource AppTextMuted}" FontSize="13" TextWrapping="Wrap" MaxWidth="780"/>
         </StackPanel>
 
-        <Border Grid.Row="1"
+        <!-- Category chips. The pill geometry / hover behaviour comes from
+             ChipButton (App.xaml). Active vs inactive Background / Foreground /
+             BorderBrush are still flipped from code-behind so the single-select
+             behaviour can be reflected without per-chip toggle plumbing. -->
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
+            <Button x:Name="ChipDev"     Tag="dev"     Content="Dev tools"    Click="Chip_Click" Style="{StaticResource ChipButton}"/>
+            <Button x:Name="ChipProject" Tag="project" Content="Open project" Click="Chip_Click" Style="{StaticResource ChipButton}"/>
+            <Button x:Name="ChipShell"   Tag="shell"   Content="Shell"        Click="Chip_Click" Style="{StaticResource ChipButton}"/>
+        </StackPanel>
+
+        <Border Grid.Row="2"
                 Background="{ThemeResource AppSurface}"
                 BorderBrush="{ThemeResource AppBorder}"
                 BorderThickness="1" CornerRadius="10">
-            <ListView x:Name="TemplatesList"
-                      Background="Transparent"
-                      BorderThickness="0"
-                      SelectionMode="None"
-                      IsItemClickEnabled="False">
+            <Grid>
+                <!-- Empty state shown when a chip other than Dev tools is active. -->
+                <TextBlock x:Name="EmptyState"
+                           Visibility="Collapsed"
+                           Text="No templates here yet."
+                           Foreground="{ThemeResource AppTextMuted}"
+                           FontSize="13"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           Padding="0,60"/>
+                <ListView x:Name="TemplatesList"
+                          Background="Transparent"
+                          BorderThickness="0"
+                          SelectionMode="None"
+                          IsItemClickEnabled="False">
                 <ListView.GroupStyle>
                     <GroupStyle HidesIfEmpty="True">
                         <GroupStyle.HeaderTemplate>
@@ -45,14 +66,10 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0" Spacing="2">
-                                <TextBlock Text="{Binding Name}"
-                                           Foreground="{ThemeResource AppText}"
-                                           FontWeight="SemiBold"/>
-                                <TextBlock Text="{Binding AppliesWhen}"
-                                           Foreground="{ThemeResource AppTextDim}"
-                                           FontSize="11"/>
-                            </StackPanel>
+                            <TextBlock Grid.Column="0" Text="{Binding Name}"
+                                       Foreground="{ThemeResource AppText}"
+                                       FontWeight="SemiBold"
+                                       VerticalAlignment="Center"/>
                             <Button Grid.Column="1"
                                     Content="+ Add"
                                     Click="Add_Click"
@@ -64,6 +81,7 @@
                     </DataTemplate>
                 </ListView.ItemTemplate>
             </ListView>
+            </Grid>
         </Border>
     </Grid>
 </Page>
