@@ -20,6 +20,7 @@ public sealed partial class MainWindow : Window
 
     private Windows.UI.ViewManagement.UISettings? _uiSettings;
     private WindowMinSize? _minSize;
+    private bool _busy;
 
     public MainWindow()
     {
@@ -50,7 +51,8 @@ public sealed partial class MainWindow : Window
 
         var cascadeProtector = new CascadeProtectionService(registry);
 
-        ViewModel = new MainViewModel(capture, targets, mapper, hide, registry, files, shellexIndex, entryScanner, packagedScanner, commandStore, shellexKeyIndex, shellexInvoker, addPage, additionApplier, cascadeProtector);
+        ViewModel = new MainViewModel(capture, targets, mapper, hide, registry, files, shellexIndex, entryScanner, packagedScanner, commandStore, shellexKeyIndex, shellexInvoker, addPage, additionApplier, cascadeProtector,
+            postToUi: action => DispatcherQueue.TryEnqueue(() => action()));
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
@@ -71,7 +73,7 @@ public sealed partial class MainWindow : Window
                     DispatcherQueue.TryEnqueue(UpdateFooterApply);
             };
         }
-        ViewModel.Rescan();
+        _ = ViewModel.RescanAsync();
         UpdateFooterApply();
 
         ContentFrame.Navigated += (_, e) => {
@@ -123,12 +125,23 @@ public sealed partial class MainWindow : Window
         FooterApplyButton.Content = n > 0 ? $"Apply ({n})" : "Apply";
     }
 
-    private void FooterApply_Click(object sender, RoutedEventArgs e)
+    private async void FooterApply_Click(object sender, RoutedEventArgs e)
     {
-        ViewModel.ApplyPending();
-        new ExplorerRestart().Restart();
-        ViewModel.Rescan();
-        UpdateFooterApply();
+        if (_busy) return;
+        _busy = true;
+        FooterApplyButton.IsEnabled = false;
+        try
+        {
+            await Task.Run(() => ViewModel.ApplyPending());
+            await Task.Run(() => new ExplorerRestart().Restart());
+            await ViewModel.RescanAsync();
+        }
+        catch (Exception ex) { Log.Error("apply", "apply/rescan failed", ex); }
+        finally
+        {
+            _busy = false;
+            UpdateFooterApply();
+        }
     }
 
 private void LoadIconsForAllEntries()
