@@ -23,6 +23,12 @@ public sealed class MainViewModel : ObservableObject
     private readonly ShellexKeyNameIndex? _shellexKey;
     private readonly ShellexInvoker? _shellexInvoker;
 
+    // Posts an action to the UI thread. Defaults to inline execution so tests
+    // and headless callers run synchronously; the app injects a DispatcherQueue
+    // marshaller. All AllEntries / PendingChangeIds / PropertyChanged mutations
+    // go through this so they never touch a bound collection off the UI thread.
+    private readonly Action<Action> _post;
+
     private readonly HashSet<string> _packagedClsids =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _packagedPublishers =
@@ -110,7 +116,8 @@ public sealed class MainViewModel : ObservableObject
         ShellexInvoker? shellexInvoker = null,
         AddPageViewModel? addPage = null,
         AdditionApplier? additionApplier = null,
-        CascadeProtectionService? cascadeProtector = null)
+        CascadeProtectionService? cascadeProtector = null,
+        Action<Action>? postToUi = null)
     {
         _capture = capture;
         _targets = targets;
@@ -127,6 +134,7 @@ public sealed class MainViewModel : ObservableObject
         _addPage = addPage;
         _additionApplier = additionApplier;
         _cascadeProtector = cascadeProtector;
+        _post = postToUi ?? (a => a());
     }
 
     public bool RequiresExplorerRestart
@@ -400,13 +408,8 @@ public sealed class MainViewModel : ObservableObject
         // entry vanishes from RCMM and the user can't un-toggle it.
         RestoreGhostEntries();
 
-        FilterIntoAllEntries();
         _pendingHide.Clear();
         _pendingUnhide.Clear();
-        PendingChangeIds.Clear();
-        Raise(nameof(RequiresExplorerRestart));
-        RescanComplete?.Invoke();
-        Log.Info("rescan", $"end rows={_allRows.Count} withHideTargets={rowsWithHide} builtIn={rowsBuiltIn} visible={AllEntries.Count}");
         // Persist the current snapshot so the next rescan can recover ghosts.
         _knownStore.Save(_allRows.ConvertAll(r => r.Entry));
         for (int i = 0; i < _allRows.Count; i++)
@@ -415,6 +418,16 @@ public sealed class MainViewModel : ObservableObject
             var src = string.IsNullOrEmpty(r.Entry.Source) ? "Unknown" : r.Entry.Source;
             Log.Debug("dump", $"#{i:D2} '{r.Entry.DisplayName}' src='{src}' sub={r.Entry.IsSubmenu} hideTargets={r.Entry.HideTargets.Count} icon='{r.Entry.IconPath ?? ""}'");
         }
+        // UI-affecting mutations must run on the UI thread. _post runs them
+        // inline by default and marshals them to the dispatcher in the app.
+        _post(() =>
+        {
+            FilterIntoAllEntries();
+            PendingChangeIds.Clear();
+            Raise(nameof(RequiresExplorerRestart));
+            RescanComplete?.Invoke();
+            Log.Info("rescan", $"end rows={_allRows.Count} withHideTargets={rowsWithHide} builtIn={rowsBuiltIn} visible={AllEntries.Count}");
+        });
     }
 
     private static readonly string[] _suppressedDisplayNames =
@@ -1058,14 +1071,17 @@ public sealed class MainViewModel : ObservableObject
                 _additionApplier.Apply(state);
                 // Persist only after registry write succeeds so a failed Apply leaves the JSON on the previous state.
                 new AdditionStore(AdditionStore.DefaultPath()).Save(state);
-                _addPage.MarkClean();
+                _post(() => _addPage.MarkClean());
             }
             catch (Exception ex) { Log.Error("apply", "additions failed", ex); }
         }
         _pendingHide.Clear();
         _pendingUnhide.Clear();
-        PendingChangeIds.Clear();
-        Raise(nameof(RequiresExplorerRestart));
+        _post(() =>
+        {
+            PendingChangeIds.Clear();
+            Raise(nameof(RequiresExplorerRestart));
+        });
         Log.Info("apply", "end");
     }
 
