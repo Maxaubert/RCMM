@@ -359,6 +359,84 @@
                 </Setter>
             </Style>
 
+            <!-- Secondary "surface" button (New entry / New folder / Browse
+                 templates). Custom template so hover brightens the base to
+                 AppSurfaceHover via a fading overlay. The stock WinUI button
+                 template swaps ContentPresenter.Background to the default
+                 ButtonBackgroundPointerOver brushes (which this app doesn't
+                 override) and that swap, combined with a local Background
+                 value, flashes on first pointer-enter — this template avoids
+                 the stock VSM brush-swap entirely. -->
+            <Style x:Key="SurfaceButton" TargetType="Button">
+                <Setter Property="Background" Value="{ThemeResource AppSurface}"/>
+                <Setter Property="BorderBrush" Value="{ThemeResource AppBorder}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="Foreground" Value="{ThemeResource AppText}"/>
+                <Setter Property="CornerRadius" Value="8"/>
+                <Setter Property="Padding" Value="14,8"/>
+                <Setter Property="UseSystemFocusVisuals" Value="False"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Grid x:Name="RootGrid">
+                                <!-- Base surface, always visible -->
+                                <Border x:Name="BaseBorder"
+                                        Background="{TemplateBinding Background}"
+                                        BorderBrush="{TemplateBinding BorderBrush}"
+                                        BorderThickness="{TemplateBinding BorderThickness}"
+                                        CornerRadius="{TemplateBinding CornerRadius}"/>
+                                <!-- Hover/pressed fill, fades in over the base so the
+                                     surface brightens without a stock brush-swap flash -->
+                                <Border x:Name="HoverOverlay"
+                                        Background="{ThemeResource AppSurfaceHover}"
+                                        BorderBrush="{ThemeResource AppBorderStrong}"
+                                        BorderThickness="{TemplateBinding BorderThickness}"
+                                        CornerRadius="{TemplateBinding CornerRadius}"
+                                        IsHitTestVisible="False"
+                                        Opacity="0"/>
+                                <ContentPresenter x:Name="ContentPresenter"
+                                                  Content="{TemplateBinding Content}"
+                                                  ContentTemplate="{TemplateBinding ContentTemplate}"
+                                                  Padding="{TemplateBinding Padding}"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"
+                                                  Foreground="{TemplateBinding Foreground}"
+                                                  FontWeight="{TemplateBinding FontWeight}"/>
+                                <VisualStateManager.VisualStateGroups>
+                                    <VisualStateGroup x:Name="CommonStates">
+                                        <VisualState x:Name="Normal"/>
+                                        <VisualState x:Name="PointerOver">
+                                            <Storyboard>
+                                                <DoubleAnimation Storyboard.TargetName="HoverOverlay"
+                                                                 Storyboard.TargetProperty="Opacity"
+                                                                 To="1" Duration="0:0:0.12"/>
+                                            </Storyboard>
+                                        </VisualState>
+                                        <VisualState x:Name="Pressed">
+                                            <Storyboard>
+                                                <DoubleAnimation Storyboard.TargetName="HoverOverlay"
+                                                                 Storyboard.TargetProperty="Opacity"
+                                                                 To="1" Duration="0"/>
+                                                <DoubleAnimation Storyboard.TargetName="ContentPresenter"
+                                                                 Storyboard.TargetProperty="Opacity"
+                                                                 To="0.7" Duration="0"/>
+                                            </Storyboard>
+                                        </VisualState>
+                                        <VisualState x:Name="Disabled">
+                                            <Storyboard>
+                                                <DoubleAnimation Storyboard.TargetName="ContentPresenter"
+                                                                 Storyboard.TargetProperty="Opacity"
+                                                                 To="0.35" Duration="0"/>
+                                            </Storyboard>
+                                        </VisualState>
+                                    </VisualStateGroup>
+                                </VisualStateManager.VisualStateGroups>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
             <!-- Title-bar icon button: small, transparent, lime-on-hover -->
             <Style x:Key="TitleBarIconButton" TargetType="Button">
                 <Setter Property="Background" Value="Transparent"/>

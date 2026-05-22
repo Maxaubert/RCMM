@@ -34,14 +34,11 @@
         <!-- Toolbar -->
         <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="10">
             <Button x:Name="NewEntryButton" Content="+ New entry" Click="NewEntry_Click"
-                    Background="{ThemeResource AppSurface}" BorderBrush="{ThemeResource AppBorder}"
-                    Foreground="{ThemeResource AppText}" CornerRadius="8" Padding="14,8"/>
+                    Style="{StaticResource SurfaceButton}"/>
             <Button x:Name="NewFolderButton" Content="+ New folder" Click="NewFolder_Click"
-                    Background="{ThemeResource AppSurface}" BorderBrush="{ThemeResource AppBorder}"
-                    Foreground="{ThemeResource AppText}" CornerRadius="8" Padding="14,8"/>
+                    Style="{StaticResource SurfaceButton}"/>
             <Button x:Name="TemplatesButton" Content="Browse templates" Click="Templates_Click"
-                    Background="{ThemeResource AppSurface}" BorderBrush="{ThemeResource AppBorder}"
-                    Foreground="{ThemeResource AppText}" CornerRadius="8" Padding="14,8"/>
+                    Style="{StaticResource SurfaceButton}"/>
         </StackPanel>
 
         <!-- Master grid: 2-col by default, 3-col when a folder is selected -->
