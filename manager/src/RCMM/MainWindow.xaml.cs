@@ -73,6 +73,14 @@ public sealed partial class MainWindow : Window
                     DispatcherQueue.TryEnqueue(UpdateFooterApply);
             };
         }
+        // Fire-and-forget: RescanAsync never faults (it wraps the guarded Rescan),
+        // so this can't leave an unobserved faulted Task. The window paints now and
+        // rows populate when the scan's UI tail marshals back via _post/RescanComplete.
+        // NOTE: rescans are intentionally NOT protected by a busy guard. That is safe
+        // only because the Apply button — the sole other rescan trigger — stays
+        // disabled until the first rescan populates PendingChangeIds, so two rescans
+        // can't run concurrently against the shared _allRows/_packaged* state. A future
+        // "Refresh" trigger would need a real busy/IsBusy guard.
         _ = ViewModel.RescanAsync();
         UpdateFooterApply();
 
@@ -127,6 +135,9 @@ public sealed partial class MainWindow : Window
 
     private async void FooterApply_Click(object sender, RoutedEventArgs e)
     {
+        // _busy guards re-entry even if a click is requeued before the disabled
+        // state propagates; the FooterApplyButton.IsEnabled = false below is the
+        // visual half of the same guard.
         if (_busy) return;
         _busy = true;
         FooterApplyButton.IsEnabled = false;
