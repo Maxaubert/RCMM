@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading.Tasks;
 using RCMM.Core.Diagnostics;
 using RCMM.Core.Models;
 using RCMM.Core.Services;
@@ -153,6 +154,16 @@ public sealed class MainViewModel : ObservableObject
     }
 
     public void Rescan()
+    {
+        try { RescanCore(); }
+        catch (Exception ex) { Log.Error("rescan", "rescan failed", ex); }
+    }
+
+    /// <summary>Runs the rescan pipeline on a background thread. UI-affecting
+    /// mutations are marshalled back via the injected postToUi dispatcher.</summary>
+    public Task RescanAsync() => Task.Run(Rescan);
+
+    private void RescanCore()
     {
         Log.Info("rescan", "begin");
         var targets = _targets.GetTargets();

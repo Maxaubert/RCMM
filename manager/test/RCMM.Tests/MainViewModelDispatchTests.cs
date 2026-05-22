@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using RCMM.Core.Models;
 using RCMM.Core.Services;
 using RCMM.Core.ViewModels;
@@ -45,6 +46,17 @@ public class MainViewModelDispatchTests : IDisposable
         };
 
         return new MainViewModel(cap, _targets, mapper, hide, reg, files, shellexIndex, postToUi: postToUi);
+    }
+
+    [Fact]
+    public async Task RescanAsync_runs_to_completion_and_populates_AllEntries()
+    {
+        var vm = BuildSut(postToUi: null); // inline default
+
+        await vm.RescanAsync();
+
+        Assert.Single(vm.AllEntries);
+        Assert.Equal("Open Git Bash here", vm.AllEntries[0].DisplayName);
     }
 
     [Fact]
