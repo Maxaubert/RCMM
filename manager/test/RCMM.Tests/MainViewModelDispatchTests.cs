@@ -52,9 +52,12 @@ public class MainViewModelDispatchTests : IDisposable
     public async Task RescanAsync_runs_to_completion_and_populates_AllEntries()
     {
         var vm = BuildSut(postToUi: null); // inline default
+        bool completeFired = false;
+        vm.RescanComplete += () => completeFired = true;
 
         await vm.RescanAsync();
 
+        Assert.True(completeFired);
         Assert.Single(vm.AllEntries);
         Assert.Equal("Open Git Bash here", vm.AllEntries[0].DisplayName);
     }

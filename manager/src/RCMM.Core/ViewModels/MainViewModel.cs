@@ -160,7 +160,11 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>Runs the rescan pipeline on a background thread. UI-affecting
-    /// mutations are marshalled back via the injected postToUi dispatcher.</summary>
+    /// mutations are marshaled back via the injected postToUi dispatcher.
+    /// Delegates to the guarded <see cref="Rescan"/>, so the returned Task never
+    /// faults — RescanCore's exceptions are logged and swallowed. This is by
+    /// design: the startup caller uses fire-and-forget (<c>_ = RescanAsync()</c>)
+    /// and must not leave an unobserved faulted Task.</summary>
     public Task RescanAsync() => Task.Run(Rescan);
 
     private void RescanCore()
