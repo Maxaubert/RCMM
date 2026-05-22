@@ -67,7 +67,7 @@ public sealed partial class TemplatesPage : Page
     /// "Open project" and "Shell" ecosystems each get their own dedicated
     /// chip and are excluded here.</summary>
     private static readonly System.Collections.Generic.HashSet<string> _devEcosystems =
-        new() { "Git", "Node", "Python", ".NET", "Rust", "Go" };
+        new() { "Git", "Node", "Python", ".NET", "Rust", "Go", "Bun", "pnpm", "uv", "GitHub CLI" };
 
     private void RefreshTemplatesList()
     {

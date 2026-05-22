@@ -57,7 +57,7 @@ public class AdditionTemplatesTests
             .Distinct()
             .ToList();
         Assert.Equal(
-            new[] { "Git", "Node", "Open project", "Shell", "Python", ".NET", "Rust", "Go" },
+            new[] { "Git", "Node", "Open project", "Shell", "Python", ".NET", "Rust", "Go", "Bun", "pnpm", "uv", "GitHub CLI" },
             sectionsInOrder);
     }
 
@@ -81,6 +81,10 @@ public class AdditionTemplatesTests
     [InlineData("cargo test")]
     [InlineData("go build")]
     [InlineData("go run .")]
+    [InlineData("bun install")]
+    [InlineData("pnpm install")]
+    [InlineData("uv sync")]
+    [InlineData("gh pr create --web")]
     public void Specific_command_template_exists(string expectedCommand)
     {
         Assert.Contains(AdditionTemplates.All, t => t.Command == expectedCommand);

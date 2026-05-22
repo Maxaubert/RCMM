@@ -137,6 +137,23 @@ public static class AdditionTemplates
         // Go
         Cmd("go run",   "go run .", "Go", "lib:zap"),
         Cmd("go build", "go build", "Go", "lib:zap"),
+
+        // Bun
+        Cmd("bun install", "bun install", "Bun", "lib:package"),
+        Cmd("bun run dev", "bun run dev", "Bun", "lib:package"),
+
+        // pnpm
+        Cmd("pnpm install", "pnpm install", "pnpm", "lib:package"),
+        Cmd("pnpm dev",     "pnpm dev",     "pnpm", "lib:package"),
+
+        // uv (Python)
+        Cmd("uv sync", "uv sync", "uv", "lib:code-square"),
+        Cmd("uv venv", "uv venv", "uv", "lib:code-square"),
+
+        // GitHub CLI
+        Cmd("gh pr create --web", "gh pr create --web", "GitHub CLI", "lib:git-branch"),
+        Cmd("gh repo view --web", "gh repo view --web", "GitHub CLI", "lib:git-branch"),
+        Cmd("gh pr list",         "gh pr list",         "GitHub CLI", "lib:git-branch"),
     };
 
     // ---- Section / kind helpers ---------------------------------------------
