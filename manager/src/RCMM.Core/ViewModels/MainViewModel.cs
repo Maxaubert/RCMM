@@ -418,8 +418,9 @@ public sealed class MainViewModel : ObservableObject
             var src = string.IsNullOrEmpty(r.Entry.Source) ? "Unknown" : r.Entry.Source;
             Log.Debug("dump", $"#{i:D2} '{r.Entry.DisplayName}' src='{src}' sub={r.Entry.IsSubmenu} hideTargets={r.Entry.HideTargets.Count} icon='{r.Entry.IconPath ?? ""}'");
         }
-        // UI-affecting mutations must run on the UI thread. _post runs them
-        // inline by default and marshals them to the dispatcher in the app.
+        // UI tail: FilterIntoAllEntries (mutates AllEntries), PendingChangeIds.Clear,
+        // and the PropertyChanged raises are all bound-collection / UI-thread ops, so
+        // they run together as the single UI-thread hand-off for a completed rescan.
         _post(() =>
         {
             FilterIntoAllEntries();

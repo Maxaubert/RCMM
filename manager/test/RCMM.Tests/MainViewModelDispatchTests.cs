@@ -62,4 +62,27 @@ public class MainViewModelDispatchTests : IDisposable
         Assert.Single(vm.AllEntries);
         Assert.Equal("Open Git Bash here", vm.AllEntries[0].DisplayName);
     }
+
+    [Fact]
+    public void ApplyPending_defers_collection_mutations_to_postToUi()
+    {
+        var deferred = new List<Action>();
+        var vm = BuildSut(postToUi: deferred.Add);
+
+        vm.Rescan();
+        foreach (var action in deferred.ToList()) action(); // flush rescan UI tail to populate AllEntries
+        deferred.Clear();
+
+        vm.AllEntries[0].IsHidden = true;        // toggle runs inline (UI-thread path), not via _post
+        Assert.Single(vm.PendingChangeIds);
+
+        vm.ApplyPending();
+
+        // ApplyPending's UI tail (PendingChangeIds.Clear) is deferred, not run inline.
+        Assert.Single(vm.PendingChangeIds);
+        Assert.NotEmpty(deferred);
+
+        foreach (var action in deferred.ToList()) action();
+        Assert.Empty(vm.PendingChangeIds);
+    }
 }
