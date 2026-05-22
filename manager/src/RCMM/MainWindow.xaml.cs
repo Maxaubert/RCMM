@@ -20,6 +20,7 @@ public sealed partial class MainWindow : Window
 
     private Windows.UI.ViewManagement.UISettings? _uiSettings;
     private WindowMinSize? _minSize;
+    private bool _busy;
 
     public MainWindow()
     {
@@ -50,7 +51,8 @@ public sealed partial class MainWindow : Window
 
         var cascadeProtector = new CascadeProtectionService(registry);
 
-        ViewModel = new MainViewModel(capture, targets, mapper, hide, registry, files, shellexIndex, entryScanner, packagedScanner, commandStore, shellexKeyIndex, shellexInvoker, addPage, additionApplier, cascadeProtector);
+        ViewModel = new MainViewModel(capture, targets, mapper, hide, registry, files, shellexIndex, entryScanner, packagedScanner, commandStore, shellexKeyIndex, shellexInvoker, addPage, additionApplier, cascadeProtector,
+            postToUi: action => DispatcherQueue.TryEnqueue(() => action()));
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
@@ -71,7 +73,15 @@ public sealed partial class MainWindow : Window
                     DispatcherQueue.TryEnqueue(UpdateFooterApply);
             };
         }
-        ViewModel.Rescan();
+        // Fire-and-forget: RescanAsync never faults (it wraps the guarded Rescan),
+        // so this can't leave an unobserved faulted Task. The window paints now and
+        // rows populate when the scan's UI tail marshals back via _post/RescanComplete.
+        // NOTE: rescans are intentionally NOT protected by a busy guard. That is safe
+        // only because the Apply button — the sole other rescan trigger — stays
+        // disabled until the first rescan populates PendingChangeIds, so two rescans
+        // can't run concurrently against the shared _allRows/_packaged* state. A future
+        // "Refresh" trigger would need a real busy/IsBusy guard.
+        _ = ViewModel.RescanAsync();
         UpdateFooterApply();
 
         ContentFrame.Navigated += (_, e) => {
@@ -123,12 +133,26 @@ public sealed partial class MainWindow : Window
         FooterApplyButton.Content = n > 0 ? $"Apply ({n})" : "Apply";
     }
 
-    private void FooterApply_Click(object sender, RoutedEventArgs e)
+    private async void FooterApply_Click(object sender, RoutedEventArgs e)
     {
-        ViewModel.ApplyPending();
-        new ExplorerRestart().Restart();
-        ViewModel.Rescan();
-        UpdateFooterApply();
+        // _busy guards re-entry even if a click is requeued before the disabled
+        // state propagates; the FooterApplyButton.IsEnabled = false below is the
+        // visual half of the same guard.
+        if (_busy) return;
+        _busy = true;
+        FooterApplyButton.IsEnabled = false;
+        try
+        {
+            await Task.Run(() => ViewModel.ApplyPending());
+            await Task.Run(() => new ExplorerRestart().Restart());
+            await ViewModel.RescanAsync();
+        }
+        catch (Exception ex) { Log.Error("apply", "apply/rescan failed", ex); }
+        finally
+        {
+            _busy = false;
+            UpdateFooterApply();
+        }
     }
 
 private void LoadIconsForAllEntries()
