@@ -10,4 +10,9 @@ TestResults/
 *.binlog
 worktrees/
 .superpowers/
-.claude/
+
+# Claude Code: track shareable config (settings.json, skills/, rules/),
+# but keep machine-local + personal instructions out of version control.
+# (.claude/worktrees/ is already covered by the worktrees/ rule above.)
+.claude/settings.local.json
+CLAUDE.local.md

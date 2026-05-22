@@ -27,6 +27,8 @@ Modern dark utility: flat, compact, dark-only, no system chrome. Donut chart on 
 - **Add to RCM** — let users add their own entries to the right-click menu: run a script (ad-hoc or from a predefined list), launch a program, etc.
 - **Manage New >** — let users manage the "New >" submenu (new folder, .txt, .py, …) and register new file-type templates (e.g. `.md`).
 
+Detailed plans, the "Browse templates" backlog, and audit follow-ups live in [`ROADMAP.md`](ROADMAP.md). Keep it current as work is planned and shipped.
+
 **Out of scope**: Windows customization unrelated to the right-click menu — themes, taskbar, file explorer behavior, system settings, etc. RCMM stays a right-click-menu tool.
 
 ## Project layout
@@ -65,87 +67,14 @@ installer/RCMM.iss               Inno Setup script
 dist/                            publish/ + installer/ outputs (gitignored)
 ```
 
-## Rescan pipeline
+## How the app works
 
-`MainViewModel.Rescan()`:
-
-1. **Live capture** — `ContextMenuCaptureService` invokes `IContextMenu` against sample targets (`.txt`, `.png`, `.mp4`, `.exe`, `.lnk`, `.zip`, a folder, `C:\`).
-2. **Packaged scan** — `PackagedShellExtScanner` reads `HKLM\Software\Classes\PackagedCom` and each package's `AppxManifest.xml` (for the Logo asset path).
-3. **Registry scan** — `EntryScanner.ScanAsCaptures()` walks classic verbs + shellex across six scopes (Files, Folders, Drives, Background, AllObjects, Folder).
-4. **Single invoker probe** — every known CLSID (live + packaged + registry + CommandStore + verb-handler fields) is registered with `ShellexInvoker` *before* its one `BuildDisplayNameToClsidMap` call. Probes COM once and caches; subsequent rescans are free.
-5. **Pre-merge rename** — rows whose DisplayName matches `LooksTechnical` get renamed via, in order: (a) `IShellExtInit + IContextMenu` emitted names, (b) `IExplorerCommand::GetTitle`, (c) CommandStore verb-name derivation (e.g. `Windows.ModernShare` → "Share"), (d) a small static override table for handlers that don't probe (Defender, NVIDIA).
-6. **Merge** — by Id: `verb:<verb>` | `clsid:<clsid>` | `name:<display>`.
-7. **Build rows** — resolve hide targets, icon path, source, IsBuiltIn (Windows-folder DLL **and** Microsoft publisher).
-8. **Dedupe by DisplayName** — collapse rows with identical names; prefer live captures over registry-derived rows.
-9. **Filter into `AllEntries`** — drop suppressed names, technical-looking names, and clsid-only rows that aren't packaged / observed / renamed / CommandStore-known.
-
-Hide targets are one of: `LegacyDisable` value, `HkcuMask` key (an HKCU shadow of an HKLM key), `BlockedShellExt` entry. Apply writes these via `HideService`; some kinds need an Explorer restart to take effect.
-
-## Windows quirks RCMM has to navigate
-
-### Classic vs modern menu (Win11)
-
-Windows 11 ships two parallel menus. The **modern flyout** is the short one with icons on a top row; it sources items from packaged COM extensions implementing `IExplorerCommand` (the "Open in Terminal" hook, "AMD Software" submenu, etc., registered via an AppX manifest's `windows.fileExplorerContextMenus`). The **classic menu** is what you get from "Show more options" and what `IShellFolder::CreateViewObject(IID_IContextMenu)` returns; it surfaces classic `HKCR\<scope>\shell\<verb>` verbs and `IContextMenu` shellex extensions. **Packaged-COM `IExplorerCommand` extensions do not appear in the classic menu.**
-
-The well-known **legacy menu hack** forces the classic menu to be the default by neutering the modern-menu CLSID for the current user:
-
-```
-HKCU\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32\(Default) = ""
-```
-
-This is a deliberate power-user choice, not damage — RCMM must coexist with it. Symptom when the hack is on: every packaged-COM extension that has no classic verb fallback (Terminal's "Open in Terminal", AMD's "AMD Software", etc.) is invisible. RCMM's `PackagedShellExtScanner` still finds them in `HKLM\Software\Classes\PackagedCom`, but the live `IContextMenu` capture won't see them — that's expected, not a bug.
-
-### The packaged-COM Directory\Background cascade
-
-Adding a packaged-COM extension's CLSID to `HKCU\Software\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked` can knock out **other** packaged extensions registered for the same `Directory\Background` ItemType in the modern flyout. Reported case: hiding AMD Radeon Software (`{6767B3BC-...}`) via RCMM also removed "Open in Terminal" (`{9F156763-...}`) from the folder-background flyout. The reverse direction has not been verified — assume any Background-scoped packaged-COM hide may cascade.
-
-Symptoms make recovery feel impossible: the user un-toggles the hide in RCMM (RCMM removes its `Blocked` entry), but Explorer keeps the other extensions invisible until something else perturbs the packaged-COM cache. Restarting Explorer alone isn't always enough; the surviving workaround is to give the at-risk extension a **classic verb fallback** under `HKCU` so it lives in the registry independent of packaged-COM activation:
-
-```
-HKCU\Software\Classes\Directory\Background\shell\<Name>\(Default) = "Open in &Terminal"
-HKCU\Software\Classes\Directory\Background\shell\<Name>\Icon      = "<exe>,0"
-HKCU\Software\Classes\Directory\Background\shell\<Name>\NoWorkingDirectory = ""
-HKCU\Software\Classes\Directory\Background\shell\<Name>\command\(Default) = "\"<exe>\" -d \"%V\""
-```
-
-…and the same under `Directory\shell\<Name>` (use `%1` instead of `%V` for the directory-as-item scope). For UWP-only apps (AMD Adrenaline), the command is `explorer.exe shell:AppsFolder\<PackageFamilyName>!<ApplicationId>`. These are user-scope and reversible with `reg delete`.
-
-RCMM defends against this automatically. `PackagedShellExtScanner` parses each package's `AppxManifest.xml` to learn which `ItemType`s each CLSID is registered for and to derive an AUMID (`PackageFamilyName!ApplicationId`). `PackagedShellExt.IsBackgroundExtension` is true when the manifest binds the CLSID to `Directory\Background`. Before `MainViewModel.ApplyPending` writes any Background-scoped CLSID to `Shell Extensions\Blocked`, `CascadeProtectionService.PlanProtections` enumerates the OTHER Background packaged extensions and emits classic-verb fallbacks at `HKCU\Software\Classes\Directory\Background\shell\RcmmProtect_<clsid-without-braces>` whose `command` is `explorer.exe shell:AppsFolder\<AUMID>`. After every unhide, if no Background packaged CLSID remains in `Blocked`, `CascadeProtectionService.UninstallAll` sweeps the `RcmmProtect_` verbs back out. User-authored classic verbs (e.g. `OpenInTerminal`, `AMDSoftware`) are untouched because the sweep is namespace-scoped to the `RcmmProtect_` prefix.
-
-Protection is scoped to `Directory\Background` only — not the folder-as-item `Directory` scope. An earlier iteration of `IsProtectableScope` accepted both, which produced a duplicate "Open in Terminal" / "AMD Software" row when the user right-clicked a *selected* folder: the cascade lives in the modern flyout (sourced from `Directory\Background`) and the folder-as-item scope was never affected, so the second protection verb was always extra noise. `MainViewModel.ApplyPending` also calls `CascadeProtectionService.PurgeStaleDirectoryScopeProtections()` on every Apply to scrub any duplicates that older builds wrote into `HKCU\Software\Classes\Directory\shell\RcmmProtect_*`.
-
-Two pitfalls baked into the implementation after first-iteration mistakes:
-
-- **Skip protection when legacy menu hack is active.** The cascade only manifests in the modern flyout's `IExplorerCommand` enumeration. With the legacy hack on (HKCU `…\CLSID\{86ca1aa0-…}\InprocServer32` exists), the user never sees the modern menu, so the protection verbs would just clutter the classic menu with raw packaged-COM placeholders. `PlanProtections` early-returns when `IsLegacyMenuModeActive()` is true.
-- **Use `PublisherDisplayName`, not `DisplayName`.** A packaged COM Server's `DisplayName` is the technical class name ("Catalyst Context Menu extension", "WindowsTerminalShellExt"); its `ApplicationDisplayName` (surfaced as `PackagedShellExt.PublisherDisplayName`) is the friendly app name ("AMD Software", "Terminal"). The protection verb's `(default)` is what Explorer renders — using the technical name produced exactly the ugly placeholders this feature was meant to avoid.
-- **Don't fall through `LogoPath` → `DllPath` for Icon.** A WindowsApps DLL usually has zero icon resources, so writing it as `Icon` produces an iconless menu item. When `LogoPath` doesn't resolve, leave `Icon` unset and let Explorer fall back to a default.
-
-Tests: `CascadeProtectionServiceTests`, `PackagedManifestParserTests`.
+- **Rescan / discovery** — `MainViewModel.Rescan()` runs a 9-step capture → probe → rename → merge → dedupe → filter pipeline that produces the visible `AllEntries` list. Hide targets are `LegacyDisable` / `HkcuMask` / `BlockedShellExt`, applied via `HideService`; some need an Explorer restart. **Full step-by-step: the `rescan-pipeline` skill.**
+- **Windows quirks** — Win11's classic vs modern menu, the legacy menu hack, and the packaged-COM `Directory\Background` cascade (plus RCMM's automatic `CascadeProtectionService` defense) all shape discovery and hide/apply. **Full detail + pitfalls: the `windows-context-menu` skill.**
 
 ## Build, test, release
 
-```powershell
-# Build (debug)
-dotnet build manager\src\RCMM\RCMM.csproj
-
-# Run tests
-dotnet test manager\test\RCMM.Tests\RCMM.Tests.csproj
-
-# Self-contained x64 publish + Inno Setup installer
-dotnet publish manager\src\RCMM\RCMM.csproj -c Release -r win-x64 --self-contained true `
-  -p:Platform=x64 -p:WindowsAppSDKSelfContained=true -p:WindowsPackageType=None `
-  -o dist\publish
-& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\RCMM.iss
-```
-
-Outputs:
-
-- `dist\publish\` — self-contained Release tree (input to ISCC).
-- `dist\installer\RCMM-Setup-x64-<version>.exe` — the shipped installer.
-
-**Version bump**: edit `installer\RCMM.iss` → `#define MyAppVersion "X.Y.Z"`. Bump this when releasing a new version so Windows' Add/Remove Programs perceives an upgrade.
-
-**Release**: `git tag -a vX.Y.Z -m "vX.Y.Z" && git push --tags`, then `gh release create vX.Y.Z dist/installer/RCMM-Setup-x64-X.Y.Z.exe --title "RCMM vX.Y.Z" --notes "..."`.
+`dotnet build` / `dotnet test` for the inner loop; self-contained x64 publish + Inno Setup installer to ship; version bump in `installer\RCMM.iss`; tag + `gh release`. **Full commands: the `build-release` skill.**
 
 ## Conventions
 
@@ -164,3 +93,12 @@ This project's intent and UX choices aren't all derivable from the code. When a 
 - Drifts toward "general Windows customization" rather than right-click menu work
 
 The scope is bounded; planned features are listed under **Scope** above. Don't infer features RCMM "should" have based on what similar tools do.
+
+<!--
+Claude Code setup (notes for human maintainers; stripped from Claude's context):
+  .claude/skills/build-release/         build/test/publish/installer/version/release + screenshots
+  .claude/skills/windows-context-menu/  classic vs modern menu, legacy hack, Background cascade, CascadeProtectionService
+  .claude/skills/rescan-pipeline/       the 9-step MainViewModel.Rescan pipeline + hide-target kinds
+  .claude/rules/discovery-and-rename.md path-scoped guardrails; auto-loads when editing discovery/rename/icon files
+Reference detail lives in the skills (load on demand) to keep this file lean. See https://code.claude.com/docs/en/skills.
+-->
