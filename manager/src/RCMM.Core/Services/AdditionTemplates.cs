@@ -187,6 +187,7 @@ public static class AdditionTemplates
             Ecosystem = "Files",
             Scope = AdditionScope.File,
             RunMode = RunMode.Background,
+            Icon = "lib:repeat",
         },
 
         // File power actions, routed through rcmm-action.ps1 (silent / self-
