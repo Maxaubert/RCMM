@@ -105,6 +105,10 @@ public class AdditionTemplatesTests
     [InlineData("Windows Terminal here",    "Shell",        "wt.exe")]
     [InlineData("Open Claude here",         "Shell",        "wt.exe")]
     [InlineData("Open Codex here",          "Shell",        "wt.exe")]
+    [InlineData("Open Gemini here",         "Shell",        "wt.exe")]
+    [InlineData("Open Aider here",          "Shell",        "wt.exe")]
+    [InlineData("Open Claude (resume)",     "Shell",        "wt.exe")]
+    [InlineData("Open admin Terminal here", "Shell",        "wt.exe")]
     public void Binary_template_metadata(string name, string ecosystem, string expectedBinary)
     {
         var t = AdditionTemplates.All.SingleOrDefault(x => x.Name == name);
@@ -116,14 +120,42 @@ public class AdditionTemplatesTests
     [Fact]
     public void Convert_smart_action_template_exists()
     {
-        var t = AdditionTemplates.All.SingleOrDefault(x => x.Ecosystem == "Files");
+        var t = AdditionTemplates.All.SingleOrDefault(x => x.Name == "Convert / Change format");
         Assert.NotNull(t);
-        Assert.Equal("Convert / Change format", t!.Name);
+        Assert.Equal("Files", t!.Ecosystem);
         Assert.Equal(AdditionScope.File, t.Scope);
         Assert.Equal(RunMode.Background, t.RunMode);
         Assert.Contains("%selfdir%", t.Command);
         Assert.Contains("rcmm-convert.ps1", t.Command);
         Assert.Contains("%1", t.Command);
+    }
+
+    [Theory]
+    [InlineData("Copy SHA-256",   "sha256")]
+    [InlineData("Unblock file",   "unblock")]
+    [InlineData("Take ownership", "takeown")]
+    public void Action_file_templates_call_rcmm_action(string name, string action)
+    {
+        var t = AdditionTemplates.All.SingleOrDefault(x => x.Name == name);
+        Assert.NotNull(t);
+        Assert.Equal("Files", t!.Ecosystem);
+        Assert.Equal(AdditionScope.File, t.Scope);
+        Assert.Equal(RunMode.Background, t.RunMode);
+        Assert.Contains("rcmm-action.ps1", t.Command);
+        Assert.Contains("-Action " + action, t.Command);
+        Assert.Contains("%1", t.Command);
+    }
+
+    [Fact]
+    public void Admin_terminal_template_exists()
+    {
+        var t = AdditionTemplates.All.SingleOrDefault(x => x.Name == "Open admin Terminal here");
+        Assert.NotNull(t);
+        Assert.Equal("Shell", t!.Ecosystem);
+        Assert.Equal(AdditionScope.FolderBackground, t.Scope);
+        Assert.Contains("rcmm-action.ps1", t.Command);
+        Assert.Contains("-Action adminterm", t.Command);
+        Assert.Contains("%V", t.Command);
     }
 
     [Fact]

@@ -118,6 +118,23 @@ public static class AdditionTemplates
         // for Claude; OpenAI Codex CLI for codex).
         Shell("Open Claude here", "\"%bin%\" -d \"%V\" claude", "wt.exe", null, icon: "lib:claude"),
         Shell("Open Codex here",  "\"%bin%\" -d \"%V\" codex",  "wt.exe", null, icon: "lib:openai"),
+        Shell("Open Gemini here", "\"%bin%\" -d \"%V\" gemini", "wt.exe", null),
+        Shell("Open Aider here",  "\"%bin%\" -d \"%V\" aider",  "wt.exe", null),
+        Shell("Open Claude (resume)", "\"%bin%\" -d \"%V\" claude --resume", "wt.exe", null, icon: "lib:claude"),
+
+        // Open an ELEVATED terminal in the folder (Windows' "Open in Terminal"
+        // is non-admin only). Routed through rcmm-action.ps1, which self-elevates
+        // via UAC. IconBinary=wt.exe supplies the icon only; the command is the
+        // hidden launcher, not a direct wt call.
+        new Template
+        {
+            Name = "Open admin Terminal here",
+            Command = "powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"%selfdir%\\rcmm-action.ps1\" -Action adminterm -Path \"%V\"",
+            Ecosystem = "Shell",
+            Scope = AdditionScope.FolderBackground,
+            RunMode = RunMode.Background,
+            IconBinary = "wt.exe",
+        },
 
         // Python
         Cmd("python -m venv .venv",            "python -m venv .venv",            "Python", "lib:code-square"),
@@ -167,6 +184,33 @@ public static class AdditionTemplates
         {
             Name = "Convert / Change format",
             Command = "powershell -NoProfile -ExecutionPolicy Bypass -File \"%selfdir%\\rcmm-convert.ps1\" \"%1\"",
+            Ecosystem = "Files",
+            Scope = AdditionScope.File,
+            RunMode = RunMode.Background,
+        },
+
+        // File power actions, routed through rcmm-action.ps1 (silent / self-
+        // elevating). Scope=File so they sit on file right-clicks.
+        new Template
+        {
+            Name = "Copy SHA-256",
+            Command = "powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"%selfdir%\\rcmm-action.ps1\" -Action sha256 -Path \"%1\"",
+            Ecosystem = "Files",
+            Scope = AdditionScope.File,
+            RunMode = RunMode.Background,
+        },
+        new Template
+        {
+            Name = "Unblock file",
+            Command = "powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"%selfdir%\\rcmm-action.ps1\" -Action unblock -Path \"%1\"",
+            Ecosystem = "Files",
+            Scope = AdditionScope.File,
+            RunMode = RunMode.Background,
+        },
+        new Template
+        {
+            Name = "Take ownership",
+            Command = "powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"%selfdir%\\rcmm-action.ps1\" -Action takeown -Path \"%1\"",
             Ecosystem = "Files",
             Scope = AdditionScope.File,
             RunMode = RunMode.Background,
