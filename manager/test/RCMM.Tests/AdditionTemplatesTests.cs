@@ -15,6 +15,8 @@ public class AdditionTemplatesTests
         // reason (the folder you right-clicked).
         foreach (var t in AdditionTemplates.All)
         {
+            // Smart-action entries (Convert) target a clicked File, not the folder.
+            if (t.Scope == AdditionScope.File) continue;
             Assert.Equal(AdditionScope.FolderBackground, t.Scope);
             Assert.Equal("%V", t.WorkingDir);
         }
@@ -32,6 +34,8 @@ public class AdditionTemplatesTests
     {
         foreach (var t in AdditionTemplates.All)
         {
+            // Smart actions (Files) launch RCMM directly — Background, no binary.
+            if (t.Ecosystem == "Files") continue;
             if (t.Ecosystem == "Open project" || t.Ecosystem == "Shell")
             {
                 // Editors and shells launch their own window; wrapping in
@@ -57,7 +61,7 @@ public class AdditionTemplatesTests
             .Distinct()
             .ToList();
         Assert.Equal(
-            new[] { "Git", "Node", "Open project", "Shell", "Python", ".NET", "Rust", "Go", "Bun", "pnpm", "uv", "GitHub CLI" },
+            new[] { "Git", "Node", "Open project", "Shell", "Python", ".NET", "Rust", "Go", "Bun", "pnpm", "uv", "GitHub CLI", "Files" },
             sectionsInOrder);
     }
 
@@ -107,6 +111,19 @@ public class AdditionTemplatesTests
         Assert.NotNull(t);
         Assert.Equal(ecosystem, t!.Ecosystem);
         Assert.Equal(expectedBinary, t.IconBinary);
+    }
+
+    [Fact]
+    public void Convert_smart_action_template_exists()
+    {
+        var t = AdditionTemplates.All.SingleOrDefault(x => x.Ecosystem == "Files");
+        Assert.NotNull(t);
+        Assert.Equal("Convert / Change format", t!.Name);
+        Assert.Equal(AdditionScope.File, t.Scope);
+        Assert.Equal(RunMode.Background, t.RunMode);
+        Assert.Contains("%selfdir%", t.Command);
+        Assert.Contains("rcmm-convert.ps1", t.Command);
+        Assert.Contains("%1", t.Command);
     }
 
     [Fact]

@@ -52,6 +52,7 @@ public sealed partial class TemplatesPage : Page
             (ChipDev,     "dev"),
             (ChipProject, "project"),
             (ChipShell,   "shell"),
+            (ChipFiles,   "files"),
         })
         {
             bool active = id == _activeChip;
@@ -76,6 +77,7 @@ public sealed partial class TemplatesPage : Page
             "dev"     => AdditionTemplates.All.Where(t => _devEcosystems.Contains(t.Ecosystem)),
             "project" => AdditionTemplates.All.Where(t => t.Ecosystem == "Open project"),
             "shell"   => AdditionTemplates.All.Where(t => t.Ecosystem == "Shell"),
+            "files"   => AdditionTemplates.All.Where(t => t.Ecosystem == "Files"),
             _         => Array.Empty<AdditionTemplates.Template>(),
         };
         var grouped = source
@@ -135,6 +137,12 @@ public sealed partial class TemplatesPage : Page
                 command = command.Replace("%bin%", t.IconBinary!);
             }
         }
+
+        // Smart-action templates (Convert) point at the shipped script next to
+        // the installed RCMM.exe; %selfdir% = that directory.
+        var selfDir = System.IO.Path.GetDirectoryName(Environment.ProcessPath)
+                      ?? AppContext.BaseDirectory.TrimEnd('\\');
+        command = command.Replace("%selfdir%", selfDir);
 
         var entry = new AdditionEntry
         {

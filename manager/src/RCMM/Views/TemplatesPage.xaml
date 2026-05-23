@@ -25,6 +25,7 @@
             <Button x:Name="ChipDev"     Tag="dev"     Content="Dev tools"    Click="Chip_Click" Style="{StaticResource ChipButton}"/>
             <Button x:Name="ChipProject" Tag="project" Content="Open project" Click="Chip_Click" Style="{StaticResource ChipButton}"/>
             <Button x:Name="ChipShell"   Tag="shell"   Content="Shell"        Click="Chip_Click" Style="{StaticResource ChipButton}"/>
+            <Button x:Name="ChipFiles"   Tag="files"   Content="Files"        Click="Chip_Click" Style="{StaticResource ChipButton}"/>
         </StackPanel>
 
         <Border Grid.Row="2"

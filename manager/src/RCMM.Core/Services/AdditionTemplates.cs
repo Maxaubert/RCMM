@@ -154,6 +154,23 @@ public static class AdditionTemplates
         Cmd("gh pr create --web", "gh pr create --web", "GitHub CLI", "lib:git-branch"),
         Cmd("gh repo view --web", "gh repo view --web", "GitHub CLI", "lib:git-branch"),
         Cmd("gh pr list",         "gh pr list",         "GitHub CLI", "lib:git-branch"),
+
+        // Files — smart actions. "Convert / Change format" opens a terminal
+        // running the shipped rcmm-convert.ps1 on the right-clicked file: it
+        // checks for the converter tool (offers a winget install if missing),
+        // shows a numbered format menu, and converts. %selfdir% is replaced
+        // with RCMM.exe's directory (where the script ships) at +Add; %1 is the
+        // clicked file. Scope=File (HKCU\…\*\shell, appears on any file); the
+        // script itself rejects types it can't handle. RunMode.Background =
+        // launch powershell directly, no extra cmd wrapper.
+        new Template
+        {
+            Name = "Convert / Change format",
+            Command = "powershell -NoProfile -ExecutionPolicy Bypass -File \"%selfdir%\\rcmm-convert.ps1\" \"%1\"",
+            Ecosystem = "Files",
+            Scope = AdditionScope.File,
+            RunMode = RunMode.Background,
+        },
     };
 
     // ---- Section / kind helpers ---------------------------------------------

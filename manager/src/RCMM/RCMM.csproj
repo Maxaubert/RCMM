@@ -18,6 +18,9 @@
     <Content Include="Assets\app.ico" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\icon.png" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\icon-bg.png" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Smart-action terminal script, launched by the "Convert / Change format"
+         right-click verb. Ships next to RCMM.exe in build + publish output. -->
+    <Content Include="rcmm-convert.ps1" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.0.1" />
