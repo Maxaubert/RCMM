@@ -8,11 +8,13 @@ namespace RCMM.Core.Services;
 
 /// <summary>
 /// Minimal SVG path-mini-language parser → <see cref="GraphicsPath"/>. Supports
-/// the commands actually used by the bundled Lucide icons:
-///     M m L l H h V v C c A a Z z
+/// the commands used by the full Lucide icon set:
+///     M m L l H h V v C c S s Q q T t A a Z z
 /// (plus implicit continuation: numbers after an M command default to L, etc.)
 ///
-/// Rotated arcs (phi != 0) are ignored — none of the Lucide source uses them.
+/// Smooth curves (S/s, T/t) reflect the previous curve's control point.
+/// Quadratics (Q/q/T/t) are elevated to cubics, since GDI+ has no native
+/// quadratic. Rotated arcs (phi != 0) are ignored — Lucide doesn't use them.
 /// </summary>
 [SupportedOSPlatform("windows")]
 internal static class SvgPathParser
@@ -26,6 +28,9 @@ internal static class SvgPathParser
         int idx = 0;
         float cx = 0, cy = 0;     // current point
         float sx = 0, sy = 0;     // subpath start
+        float lc2x = 0, lc2y = 0; // previous cubic's 2nd control point (S/s reflection)
+        float lqx = 0, lqy = 0;   // previous quadratic's control point (T/t reflection)
+        int lastKind = 0;         // command just executed: 0 none, 1 cubic-family, 2 quad-family
         char cmd = '\0';
 
         while (idx < tokens.Count)
@@ -39,6 +44,7 @@ internal static class SvgPathParser
                 {
                     path.CloseFigure();
                     cx = sx; cy = sy;
+                    lastKind = 0;
                     continue;
                 }
             }
@@ -109,7 +115,7 @@ internal static class SvgPathParser
                     var x2 = F(tokens[idx++]); var y2 = F(tokens[idx++]);
                     var x  = F(tokens[idx++]); var y  = F(tokens[idx++]);
                     path.AddBezier(cx, cy, x1, y1, x2, y2, x, y);
-                    cx = x; cy = y;
+                    lc2x = x2; lc2y = y2; cx = x; cy = y;
                     break;
                 }
                 case 'c':
@@ -118,7 +124,61 @@ internal static class SvgPathParser
                     var x2 = cx + F(tokens[idx++]); var y2 = cy + F(tokens[idx++]);
                     var x  = cx + F(tokens[idx++]); var y  = cy + F(tokens[idx++]);
                     path.AddBezier(cx, cy, x1, y1, x2, y2, x, y);
-                    cx = x; cy = y;
+                    lc2x = x2; lc2y = y2; cx = x; cy = y;
+                    break;
+                }
+                case 'S':
+                case 's':
+                {
+                    float x2, y2, x, y;
+                    if (cmd == 'S')
+                    {
+                        x2 = F(tokens[idx++]); y2 = F(tokens[idx++]);
+                        x  = F(tokens[idx++]); y  = F(tokens[idx++]);
+                    }
+                    else
+                    {
+                        x2 = cx + F(tokens[idx++]); y2 = cy + F(tokens[idx++]);
+                        x  = cx + F(tokens[idx++]); y  = cy + F(tokens[idx++]);
+                    }
+                    // First control point = reflection of the previous cubic's
+                    // 2nd control point about the current point (else = current).
+                    float x1 = (lastKind == 1) ? 2 * cx - lc2x : cx;
+                    float y1 = (lastKind == 1) ? 2 * cy - lc2y : cy;
+                    path.AddBezier(cx, cy, x1, y1, x2, y2, x, y);
+                    lc2x = x2; lc2y = y2; cx = x; cy = y;
+                    break;
+                }
+                case 'Q':
+                case 'q':
+                {
+                    float qx, qy, x, y;
+                    if (cmd == 'Q')
+                    {
+                        qx = F(tokens[idx++]); qy = F(tokens[idx++]);
+                        x  = F(tokens[idx++]); y  = F(tokens[idx++]);
+                    }
+                    else
+                    {
+                        qx = cx + F(tokens[idx++]); qy = cy + F(tokens[idx++]);
+                        x  = cx + F(tokens[idx++]); y  = cy + F(tokens[idx++]);
+                    }
+                    AddQuadratic(path, cx, cy, qx, qy, x, y);
+                    lqx = qx; lqy = qy; cx = x; cy = y;
+                    break;
+                }
+                case 'T':
+                case 't':
+                {
+                    float x, y;
+                    if (cmd == 'T') { x = F(tokens[idx++]); y = F(tokens[idx++]); }
+                    else { x = cx + F(tokens[idx++]); y = cy + F(tokens[idx++]); }
+                    // Control point = reflection of the previous quadratic's
+                    // control point about the current point (else = current).
+                    float qx = (lastKind == 2) ? 2 * cx - lqx : cx;
+                    float qy = (lastKind == 2) ? 2 * cy - lqy : cy;
+                    AddQuadratic(path, cx, cy, qx, qy, x, y);
+                    lqx = qx; lqy = qy; cx = x; cy = y;
                     break;
                 }
                 case 'A':
@@ -148,11 +208,30 @@ internal static class SvgPathParser
                     idx++;
                     break;
             }
+
+            // Track whether the command just executed was a cubic- or quadratic-
+            // family curve, so a following S/T can reflect its control point.
+            // (Z resets lastKind via the continue above.)
+            lastKind = (cmd == 'C' || cmd == 'c' || cmd == 'S' || cmd == 's') ? 1
+                     : (cmd == 'Q' || cmd == 'q' || cmd == 'T' || cmd == 't') ? 2
+                     : 0;
         }
         return path;
     }
 
     private static float F(string s) => float.Parse(s, CultureInfo.InvariantCulture);
+
+    /// <summary>Append a quadratic Bézier by elevating it to a cubic (GDI+ has
+    /// no native quadratic). Standard degree-elevation of the control point.</summary>
+    private static void AddQuadratic(GraphicsPath path,
+        float x0, float y0, float qx, float qy, float x, float y)
+    {
+        float c1x = x0 + 2f / 3f * (qx - x0);
+        float c1y = y0 + 2f / 3f * (qy - y0);
+        float c2x = x  + 2f / 3f * (qx - x);
+        float c2y = y  + 2f / 3f * (qy - y);
+        path.AddBezier(x0, y0, c1x, c1y, c2x, c2y, x, y);
+    }
 
     /// <summary>SVG endpoint→center arc conversion, then write as a GDI+ arc.
     /// Rotation (phi) is ignored — the Lucide icon set doesn't use it.</summary>

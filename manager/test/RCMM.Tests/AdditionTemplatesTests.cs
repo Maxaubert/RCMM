@@ -120,7 +120,7 @@ public class AdditionTemplatesTests
     [Fact]
     public void Convert_smart_action_template_exists()
     {
-        var t = AdditionTemplates.All.SingleOrDefault(x => x.Name == "Convert / Change format");
+        var t = AdditionTemplates.All.SingleOrDefault(x => x.Name == "Change format");
         Assert.NotNull(t);
         Assert.Equal("Files", t!.Ecosystem);
         Assert.Equal(AdditionScope.File, t.Scope);
@@ -130,11 +130,39 @@ public class AdditionTemplatesTests
         Assert.Contains("%1", t.Command);
     }
 
+    [Fact]
+    public void Compress_smart_action_template_exists()
+    {
+        var t = AdditionTemplates.All.SingleOrDefault(x => x.Name == "Compress");
+        Assert.NotNull(t);
+        Assert.Equal("Files", t!.Ecosystem);
+        Assert.Equal(AdditionScope.File, t.Scope);
+        Assert.Equal(RunMode.Background, t.RunMode);
+        Assert.Contains("%selfdir%", t.Command);
+        Assert.Contains("rcmm-compress.ps1", t.Command);
+        Assert.Contains("%1", t.Command);
+        Assert.Equal("lib:shrink", t.Icon);
+    }
+
+    [Fact]
+    public void Upscale_smart_action_template_exists()
+    {
+        var t = AdditionTemplates.All.SingleOrDefault(x => x.Name == "Upscale");
+        Assert.NotNull(t);
+        Assert.Equal("Files", t!.Ecosystem);
+        Assert.Equal(AdditionScope.File, t.Scope);
+        Assert.Equal(RunMode.Background, t.RunMode);
+        Assert.Contains("%selfdir%", t.Command);
+        Assert.Contains("rcmm-upscale.ps1", t.Command);
+        Assert.Contains("%1", t.Command);
+        Assert.Equal("lib:arrow-big-up-dash", t.Icon);
+    }
+
     [Theory]
-    [InlineData("Copy SHA-256",   "sha256")]
-    [InlineData("Unblock file",   "unblock")]
-    [InlineData("Take ownership", "takeown")]
-    public void Action_file_templates_call_rcmm_action(string name, string action)
+    [InlineData("Copy SHA-256",   "sha256",  "lib:hash")]
+    [InlineData("Unblock file",   "unblock", "lib:shield-check")]
+    [InlineData("Take ownership", "takeown", "lib:key")]
+    public void Action_file_templates_call_rcmm_action(string name, string action, string expectedIcon)
     {
         var t = AdditionTemplates.All.SingleOrDefault(x => x.Name == name);
         Assert.NotNull(t);
@@ -144,6 +172,7 @@ public class AdditionTemplatesTests
         Assert.Contains("rcmm-action.ps1", t.Command);
         Assert.Contains("-Action " + action, t.Command);
         Assert.Contains("%1", t.Command);
+        Assert.Equal(expectedIcon, t.Icon);   // guard: these had no icon before
     }
 
     [Fact]
@@ -156,6 +185,19 @@ public class AdditionTemplatesTests
         Assert.Contains("rcmm-action.ps1", t.Command);
         Assert.Contains("-Action adminterm", t.Command);
         Assert.Contains("%V", t.Command);
+    }
+
+    [Fact]
+    public void Featured_lineup_all_resolve_in_order()
+    {
+        // The ★ Featured chip is curated by name; every name must match a real
+        // template (so a rename like Convert→Change format can't silently drop
+        // one), and the lineup is owner-fixed in this order.
+        Assert.Equal(
+            new[] { "Upscale", "Compress", "Change format", "Open Claude here", "Open Codex here" },
+            AdditionTemplates.Featured.ToArray());
+        foreach (var name in AdditionTemplates.Featured)
+            Assert.Contains(AdditionTemplates.All, t => t.Name == name);
     }
 
     [Fact]

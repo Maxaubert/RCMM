@@ -17,12 +17,28 @@ public sealed partial class LandingPage : Page
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         _args = (NavArgs)e.Parameter;
-        var vm = _args.ViewModel;
-        ShowHideCount.Text = vm.AllEntries.Count.ToString();
+        // Read now (covers the case where the rescan already finished) AND
+        // subscribe, because the startup rescan runs async and usually finishes
+        // *after* this page first renders — without the event the donut would
+        // sit at 0 until the user navigated away and back. RescanComplete is
+        // raised on the UI thread (see MainViewModel), so this is safe.
+        RefreshCounts();
+        _args.ViewModel.RescanComplete += RefreshCounts;
+    }
 
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        if (_args?.ViewModel != null) _args.ViewModel.RescanComplete -= RefreshCounts;
+    }
+
+    private void RefreshCounts()
+    {
+        var vm = _args.ViewModel;
         int total = vm.AllEntries.Count;
         int builtin = vm.AllEntries.Count(r => r.IsBuiltIn);
         int app = total - builtin;
+
+        ShowHideCount.Text = total.ToString();
         TotalNumber.Text = total.ToString();
         AppCountLabel.Text = app.ToString();
         WinCountLabel.Text = builtin.ToString();

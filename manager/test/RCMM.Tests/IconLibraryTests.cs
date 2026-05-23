@@ -63,6 +63,16 @@ public class IconLibraryTests
     }
 
     [Fact]
+    public void SvgFragmentToPathData_rect_with_only_ry_inherits_rx()
+    {
+        // SVG spec: a missing rx defaults to ry. Must emit a 2-radius arc, never
+        // a zero-radius one (which crashes the GDI+ materializer).
+        var data = IconLibrary.SvgFragmentToPathData("<rect x='15' y='4' width='4' height='6' ry='2'/>");
+        Assert.Contains("A 2 2", data);
+        Assert.DoesNotContain("A 0 2", data);
+    }
+
+    [Fact]
     public void SvgFragmentToPathData_converts_polyline_to_M_L_chain()
     {
         var data = IconLibrary.SvgFragmentToPathData("<polyline points='4 17 10 11 4 5'/>");

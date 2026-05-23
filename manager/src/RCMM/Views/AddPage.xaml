@@ -301,7 +301,11 @@
                     BorderBrush="{ThemeResource AppBorder}"
                     BorderThickness="1" CornerRadius="10"
                     Padding="22">
-                <ScrollViewer>
+                <!-- IsTabStop=True so a click on the editor's empty area lands
+                     focus on the ScrollViewer itself (a no-op, no highlight)
+                     instead of WinUI forwarding focus to the first field, which
+                     would BringIntoView and snap the scroll back to the top. -->
+                <ScrollViewer IsTabStop="True">
                     <Grid>
                         <!-- Empty state -->
                         <StackPanel x:Name="EmptyState" HorizontalAlignment="Center"

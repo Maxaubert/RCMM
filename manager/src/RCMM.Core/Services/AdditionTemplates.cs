@@ -172,7 +172,7 @@ public static class AdditionTemplates
         Cmd("gh repo view --web", "gh repo view --web", "GitHub CLI", "lib:git-branch"),
         Cmd("gh pr list",         "gh pr list",         "GitHub CLI", "lib:git-branch"),
 
-        // Files — smart actions. "Convert / Change format" opens a terminal
+        // Files — smart actions. "Change format" opens a terminal
         // running the shipped rcmm-convert.ps1 on the right-clicked file: it
         // checks for the converter tool (offers a winget install if missing),
         // shows a numbered format menu, and converts. %selfdir% is replaced
@@ -182,7 +182,7 @@ public static class AdditionTemplates
         // launch powershell directly, no extra cmd wrapper.
         new Template
         {
-            Name = "Convert / Change format",
+            Name = "Change format",
             Command = "powershell -NoProfile -ExecutionPolicy Bypass -File \"%selfdir%\\rcmm-convert.ps1\" \"%1\"",
             Ecosystem = "Files",
             Scope = AdditionScope.File,
@@ -190,11 +190,42 @@ public static class AdditionTemplates
             Icon = "lib:redo-2",
         },
 
+        // "Compress" opens a terminal running rcmm-compress.ps1 on the clicked
+        // video: it probes the source with ffprobe, then offers boxed pickers
+        // for codec / quality (CRF) / resolution (% of source) / audio and
+        // re-encodes smaller with ffmpeg. Video-only for now; same %selfdir%/%1
+        // wiring as Convert. (A size-target sibling is planned — see ROADMAP.md.)
+        new Template
+        {
+            Name = "Compress",
+            Command = "powershell -NoProfile -ExecutionPolicy Bypass -File \"%selfdir%\\rcmm-compress.ps1\" \"%1\"",
+            Ecosystem = "Files",
+            Scope = AdditionScope.File,
+            RunMode = RunMode.Background,
+            Icon = "lib:shrink",
+        },
+
+        // "Upscale" runs rcmm-upscale.ps1 on the clicked image: AI super-
+        // resolution via Real-ESRGAN (ncnn/Vulkan), picking a model (photo /
+        // anime) and a 2x/3x/4x scale. Unlike Convert/Compress the tool isn't
+        // on winget, so the script fetches it from GitHub on first use (needs a
+        // Vulkan GPU). Image files only.
+        new Template
+        {
+            Name = "Upscale",
+            Command = "powershell -NoProfile -ExecutionPolicy Bypass -File \"%selfdir%\\rcmm-upscale.ps1\" \"%1\"",
+            Ecosystem = "Files",
+            Scope = AdditionScope.File,
+            RunMode = RunMode.Background,
+            Icon = "lib:arrow-big-up-dash",
+        },
+
         // File power actions, routed through rcmm-action.ps1 (silent / self-
         // elevating). Scope=File so they sit on file right-clicks.
         new Template
         {
             Name = "Copy SHA-256",
+            Icon = "lib:hash",
             Command = "powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"%selfdir%\\rcmm-action.ps1\" -Action sha256 -Path \"%1\"",
             Ecosystem = "Files",
             Scope = AdditionScope.File,
@@ -203,6 +234,7 @@ public static class AdditionTemplates
         new Template
         {
             Name = "Unblock file",
+            Icon = "lib:shield-check",
             Command = "powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"%selfdir%\\rcmm-action.ps1\" -Action unblock -Path \"%1\"",
             Ecosystem = "Files",
             Scope = AdditionScope.File,
@@ -211,11 +243,21 @@ public static class AdditionTemplates
         new Template
         {
             Name = "Take ownership",
+            Icon = "lib:key",
             Command = "powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"%selfdir%\\rcmm-action.ps1\" -Action takeown -Path \"%1\"",
             Ecosystem = "Files",
             Scope = AdditionScope.File,
             RunMode = RunMode.Background,
         },
+    };
+
+    /// <summary>Owner-curated "proudest work" lineup for the ★ Featured chip on
+    /// the Browse-templates page, in display order. Each name must match an
+    /// entry in <see cref="All"/> — a test guards this so a rename can't silently
+    /// drop one. Featured entries still also appear under their normal chip.</summary>
+    public static readonly IReadOnlyList<string> Featured = new[]
+    {
+        "Upscale", "Compress", "Change format", "Open Claude here", "Open Codex here",
     };
 
     // ---- Section / kind helpers ---------------------------------------------

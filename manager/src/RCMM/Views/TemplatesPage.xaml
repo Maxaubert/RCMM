@@ -22,6 +22,7 @@
              BorderBrush are still flipped from code-behind so the single-select
              behaviour can be reflected without per-chip toggle plumbing. -->
         <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
+            <Button x:Name="ChipFeatured" Tag="featured" Content="&#x2605; Featured" Click="Chip_Click" Style="{StaticResource ChipButton}"/>
             <Button x:Name="ChipDev"     Tag="dev"     Content="Dev tools"    Click="Chip_Click" Style="{StaticResource ChipButton}"/>
             <Button x:Name="ChipProject" Tag="project" Content="Open project" Click="Chip_Click" Style="{StaticResource ChipButton}"/>
             <Button x:Name="ChipShell"   Tag="shell"   Content="Shell"        Click="Chip_Click" Style="{StaticResource ChipButton}"/>
@@ -46,7 +47,20 @@
                           Background="Transparent"
                           BorderThickness="0"
                           SelectionMode="None"
-                          IsItemClickEnabled="False">
+                          IsItemClickEnabled="True"
+                          ItemClick="TemplateItem_Click">
+                <!-- Whole row is the click target (no +Add button); the global
+                     ListViewItemBackgroundPointerOver (App.xaml) gives the hover
+                     highlight. Rounded + stretched so the highlight reads as a row. -->
+                <ListView.ItemContainerStyle>
+                    <Style TargetType="ListViewItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                        <Setter Property="Padding" Value="6,0"/>
+                        <Setter Property="Margin" Value="0,1"/>
+                        <Setter Property="CornerRadius" Value="8"/>
+                        <Setter Property="MinHeight" Value="0"/>
+                    </Style>
+                </ListView.ItemContainerStyle>
                 <ListView.GroupStyle>
                     <GroupStyle HidesIfEmpty="True">
                         <GroupStyle.HeaderTemplate>
@@ -62,22 +76,24 @@
                 </ListView.GroupStyle>
                 <ListView.ItemTemplate>
                     <DataTemplate>
-                        <Grid ColumnSpacing="12" Padding="8,8">
+                        <!-- Icon populated from code (TplRow_Loaded /
+                             DataContextChanged) — same approach as the Add page
+                             rows, since icons are code-built (lib vector or
+                             extracted exe icon). -->
+                        <Grid x:Name="TplRow" ColumnSpacing="12" Padding="8,10"
+                              Loaded="TplRow_Loaded" DataContextChanged="TplRow_DataContextChanged">
                             <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="26"/>
                                 <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="{Binding Name}"
+                            <Border x:Name="TplIcon" Grid.Column="0"
+                                    Width="18" Height="18"
+                                    HorizontalAlignment="Left" VerticalAlignment="Center"
+                                    Visibility="Collapsed"/>
+                            <TextBlock Grid.Column="1" Text="{Binding Name}"
                                        Foreground="{ThemeResource AppText}"
                                        FontWeight="SemiBold"
                                        VerticalAlignment="Center"/>
-                            <Button Grid.Column="1"
-                                    Content="+ Add"
-                                    Click="Add_Click"
-                                    Background="{ThemeResource AppSurfaceHover}"
-                                    BorderBrush="{ThemeResource AppBorder}"
-                                    Foreground="{ThemeResource AppText}"
-                                    CornerRadius="6" Padding="10,4"/>
                         </Grid>
                     </DataTemplate>
                 </ListView.ItemTemplate>

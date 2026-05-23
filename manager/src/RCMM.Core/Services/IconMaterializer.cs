@@ -134,7 +134,12 @@ public sealed class IconMaterializer
             case "rect":
             {
                 float x = D(el, "x"), y = D(el, "y"), w = D(el, "width"), h = D(el, "height");
-                float rx = D(el, "rx", 0), ry = D(el, "ry", rx);
+                // SVG: a missing rx/ry inherits the other; both missing = sharp
+                // corners. (A rect with only ry must not produce a 0-width arc,
+                // which GDI+ rejects with "Parameter is not valid".)
+                float rxA = D(el, "rx", float.NaN), ryA = D(el, "ry", float.NaN);
+                float rx = !float.IsNaN(rxA) ? rxA : (!float.IsNaN(ryA) ? ryA : 0);
+                float ry = !float.IsNaN(ryA) ? ryA : rx;
                 var p = new GraphicsPath();
                 if (rx <= 0 && ry <= 0)
                 {

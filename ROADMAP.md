@@ -51,10 +51,13 @@ The "Browse templates" page ships a static catalogue (`AdditionTemplates.All`) o
 
 These can't be plain verbs — they invoke the **`rcmm-run` helper (§2)** for type-detection, a picker, and auto-install of any missing tool.
 
-- ⭐ **Convert / Change format** — right-click any media/doc file; the helper detects the type and offers valid targets:
+- ⭐ **Change format** — right-click any media/doc file; the helper detects the type and offers valid targets:
   - **video** → MP4 / MKV / MOV / WebM / GIF / extract-audio (ffmpeg)
   - **image** → PNG / WebP / JPG / ICO / resize / strip-EXIF (ImageMagick)
   - **doc** → PDF / merge / split / compress (qpdf / Ghostscript)
+- 🚧 **Compress** — right-click any media file; the helper picks the codec + quality and re-encodes smaller. Box-picker columns *Codec · Quality · Size · Compatibility* (Size/Compatibility are descriptive, to help the choice). Quality is CRF (best quality-per-size); **no size target** — see below. Every category has a *keep as is* option, and video offers an audio choice (keep / re-encode smaller).
+- 🔭 **Compress to size** — a future sibling of Compress that hits a *target file size* (e.g. "under 25 MB for Discord") via 2-pass bitrate / iterative CRF search. Deliberately split out because fixing the output size and fixing the quality are different goals; Compress fixes quality, this one fixes size.
+- 🚧 **Upscale** — right-click an image; AI super-resolution via **Real-ESRGAN** (ncnn/Vulkan), picking a model (photo / anime) and a 2×/3×/4× scale. Real-ESRGAN isn't on winget, so this introduced a **GitHub-release downloader** install path (fetch the self-contained zip → `%LOCALAPPDATA%\RCMM\tools`) — reusable for other non-winget tools. Needs a Vulkan GPU; image files only for now. Video upscaling (frames → upscale → re-mux) is a bigger, later job.
 - Future type-aware actions reuse the same helper + picker.
 
 ### 1d. Out of scope (guard)
@@ -86,6 +89,8 @@ The enabler for §1c. A small helper that ships with RCMM and is invoked by a "s
 ## 3. Add to RCM — broader feature
 
 The full custom-entry editor (partly built on the Add page). 📋 planned per `CLAUDE.md`. Backlog: input validation for empty/duplicate names (AUDIT.md **H6**), command-quoting safety for `%V`/`%1` (AUDIT.md **H5**), honor-or-remove the unused **Working dir** field (AUDIT.md **M-A4**), submenu / nested-group polish.
+
+- 🔭 **Full Lucide icon set** — bundle all ~1,600 Lucide icons (ISC-licensed) and rebuild the icon picker with a **search box + virtualized grid** (render-on-scroll), replacing today's hand-curated `IconLibrary` handful. Auto-generate the fragment data from the upstream SVGs (`github.com/lucide-icons/lucide` `icons/*.svg`) rather than hand-copying. A raw 1,600-icon grid is unusable without search/virtualization — that's the actual work, not the download.
 
 ## 4. Manage New > submenu
 

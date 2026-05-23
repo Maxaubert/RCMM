@@ -1,4 +1,4 @@
-# rcmm-convert.ps1 — RCMM "Convert / Change format" smart action.
+# rcmm-convert.ps1 — RCMM "Change format" smart action.
 #
 # Launched by the right-click verb:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File rcmm-convert.ps1 "<file>"

@@ -1,171 +1,163 @@
-using System;
-using System.Linq;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Data;
+using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
-using RCMM.Core.Diagnostics;
 using RCMM.Core.Services;
 using RCMM.Util;
 
 namespace RCMM.Views;
 
 /// <summary>
-/// Modal icon-picker dialog. Built entirely in code so the row + grid layout
-/// can be assembled in one pass without a XAML/code-behind split for what is
-/// essentially a one-off control. Returns the user's pick via
-/// <see cref="PickedValue"/> after <see cref="ShowAsync"/> resolves.
+/// Modal icon-picker dialog over the full bundled Lucide set (~1,700 icons).
+///
+/// The grid is a <see cref="GridView"/> — its built-in virtualization is what
+/// makes a set this large usable: only the tiles actually on screen are
+/// realized, and each tile's vector <see cref="Microsoft.UI.Xaml.Shapes.Path"/>
+/// is built lazily in <see cref="OnContainerContentChanging"/> (and torn down on
+/// recycle). A non-virtualized layout would inflate ~1,700 geometries up front
+/// and freeze the dialog. Search filters across each icon's name + Lucide
+/// tags/aliases (see <see cref="IconLibrary.SearchKeywords"/>).
 /// </summary>
 public sealed class IconPickerDialog : ContentDialog
 {
-    private const int Columns = 7;
-
     public string? PickedValue { get; private set; }
 
-    private readonly StackPanel _body = new() { Spacing = 14 };
-    private readonly TextBox _searchBox = new() { PlaceholderText = "Search icons (terminal, folder, copy …)" };
+    private readonly TextBox _searchBox = new() { PlaceholderText = "Search icons (terminal, folder, bin, arrow …)" };
+    private readonly GridView _grid;
+    private readonly TextBlock _emptyText;
+    private readonly Brush _stroke;
+
+    /// <summary>One picker section: a category name + its icon names. Inheriting
+    /// ObservableCollection gives CollectionViewSource an iterable group.</summary>
+    private sealed class IconGroup : ObservableCollection<string>
+    {
+        public string Key { get; }
+        public IconGroup(string key) { Key = key; }
+    }
 
     public IconPickerDialog(string? currentValue)
     {
         PickedValue = currentValue;
-        Log.Info("iconpicker", "ctor: setting basic props");
         Title = "Choose icon";
         CloseButtonText = "Cancel";
         DefaultButton = ContentDialogButton.Close;
+        _stroke = (Brush)Application.Current.Resources["AppText"];
 
-        Log.Info("iconpicker", "ctor: building outer");
-        var outer = new StackPanel { Spacing = 10, MinWidth = 600, MaxWidth = 660 };
-        _searchBox.TextChanged += (_, __) => RenderGrid(_searchBox.Text ?? "");
-        outer.Children.Add(_searchBox);
-        var scroller = new ScrollViewer
+        _grid = new GridView
         {
-            Content = _body,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            IsItemClickEnabled = true,
+            SelectionMode = ListViewSelectionMode.None,
             MaxHeight = 460,
+            ItemTemplate = (DataTemplate)XamlReader.Load(TileTemplateXaml),
+            ItemContainerStyle = BuildContainerStyle(),
         };
-        outer.Children.Add(scroller);
+        _grid.ItemClick += OnItemClick;
+        _grid.ContainerContentChanging += OnContainerContentChanging;
+        _grid.GroupStyle.Add(new GroupStyle
+        {
+            HeaderTemplate = (DataTemplate)XamlReader.Load(HeaderTemplateXaml),
+        });
+
+        _emptyText = new TextBlock
+        {
+            Foreground = (Brush)Application.Current.Resources["AppTextMuted"],
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 30, 0, 30),
+            Visibility = Visibility.Collapsed,
+        };
+
+        var outer = new StackPanel { Spacing = 10, MinWidth = 600, MaxWidth = 660 };
+        outer.Children.Add(_searchBox);
+        outer.Children.Add(_grid);
+        outer.Children.Add(_emptyText);
         Content = outer;
 
-        Log.Info("iconpicker", "ctor: rendering grid");
-        try { RenderGrid(""); Log.Info("iconpicker", "ctor: grid rendered"); }
-        catch (Exception ex) { Log.Error("iconpicker", "ctor: RenderGrid threw", ex); throw; }
+        _searchBox.TextChanged += (_, __) => Populate(_searchBox.Text ?? "");
+        Populate("");
     }
 
-    private void RenderGrid(string query)
+    private void Populate(string query)
     {
-        _body.Children.Clear();
         var q = query.Trim().ToLowerInvariant();
-        bool any = false;
-        int catIdx = -1;
+        var groups = new List<IconGroup>();
         foreach (var cat in IconLibrary.Categories)
         {
-            catIdx++;
-            Log.Debug("iconpicker", $"cat[{catIdx}] {cat.Name}: filtering");
-            var matches = cat.Icons
-                .Where(n => q.Length == 0 || n.ToLowerInvariant().Contains(q) || cat.Name.ToLowerInvariant().Contains(q))
-                .ToList();
-            if (matches.Count == 0) continue;
-            any = true;
-
-            try
+            IconGroup? group = null;
+            foreach (var name in cat.Icons)
             {
-                var head = new TextBlock();
-                head.Text = cat.Name;
-                head.Foreground = (Brush)Application.Current.Resources["AppTextMuted"];
-                head.FontSize = 11;
-                head.Margin = new Thickness(2, 8, 0, 2);
-                _body.Children.Add(head);
+                if (q.Length != 0 && !IconLibrary.SearchKeywords(name).Contains(q)) continue;
+                group ??= new IconGroup(cat.Name);
+                group.Add(name);
             }
-            catch (Exception ex) { Log.Error("iconpicker", $"cat[{catIdx}] head failed", ex); throw; }
-
-            Grid grid;
-            try
-            {
-                grid = new Grid();
-                for (int c = 0; c < Columns; c++)
-                    grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            }
-            catch (Exception ex) { Log.Error("iconpicker", $"cat[{catIdx}] grid setup failed", ex); throw; }
-
-            int row = 0, col = 0;
-            int tileIdx = -1;
-            foreach (var name in matches)
-            {
-                tileIdx++;
-                try
-                {
-                    if (col == 0) grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                    var tile = BuildTile(name);
-                    tile.Margin = new Thickness(3);
-                    Grid.SetRow(tile, row);
-                    Grid.SetColumn(tile, col);
-                    grid.Children.Add(tile);
-                }
-                catch (Exception ex)
-                {
-                    Log.Error("iconpicker", $"cat[{catIdx}].tile[{tileIdx}] name={name} failed", ex);
-                    throw;
-                }
-                col++;
-                if (col >= Columns) { col = 0; row++; }
-            }
-            _body.Children.Add(grid);
+            if (group != null) groups.Add(group);
         }
-        if (!any)
-        {
-            _body.Children.Add(new TextBlock
-            {
-                Text = $"No icons match \"{query}\"",
-                Foreground = (Brush)Application.Current.Resources["AppTextMuted"],
-                HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = new Thickness(0, 30, 0, 30),
-            });
-        }
+
+        // Fresh CollectionViewSource each time: re-pointing ItemsSource is the
+        // simplest way to force the grouped GridView to re-virtualize the filter.
+        var cvs = new CollectionViewSource { IsSourceGrouped = true, Source = groups };
+        _grid.ItemsSource = cvs.View;
+
+        bool any = groups.Count > 0;
+        _grid.Visibility = any ? Visibility.Visible : Visibility.Collapsed;
+        _emptyText.Visibility = any ? Visibility.Collapsed : Visibility.Visible;
+        if (!any) _emptyText.Text = $"No icons match \"{query}\"";
     }
 
-    private Button BuildTile(string name)
+    // Build each visible tile's icon lazily; clear it on recycle. This is the
+    // hook that keeps a ~1,700-icon grid responsive.
+    private void OnContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
     {
-        Button btn;
-        try
+        if (args.ItemContainer?.ContentTemplateRoot is not Border border) return;
+        if (args.InRecycleQueue)
         {
-            btn = new Button();
-            btn.Background = (Brush)Application.Current.Resources["AppSurfaceHover"];
-            btn.BorderBrush = (Brush)Application.Current.Resources["AppBorder"];
-            btn.BorderThickness = new Thickness(1);
-            btn.CornerRadius = new CornerRadius(7);
-            btn.Padding = new Thickness(0);
-            btn.Height = 56;
-            btn.HorizontalAlignment = HorizontalAlignment.Stretch;
-            btn.VerticalAlignment = VerticalAlignment.Stretch;
+            border.Child = null;
+            return;
         }
-        catch (Exception ex) { Log.Error("iconpicker", $"BuildTile {name}: btn props failed", ex); throw; }
+        if (args.Item is not string name) return;
 
-        try
-        {
-            var path = IconRender.BuildIconElement(IconLibrary.MakeLibValue(name), 24,
-                (Brush)Application.Current.Resources["AppText"], thickness: 2);
-            if (path != null) btn.Content = path;
-        }
-        catch (Exception ex) { Log.Error("iconpicker", $"BuildTile {name}: path failed", ex); throw; }
+        var libValue = IconLibrary.MakeLibValue(name);
+        border.Child = IconRender.BuildIconElement(libValue, 24, _stroke, thickness: 2);
 
-        try
-        {
-            if (PickedValue == IconLibrary.MakeLibValue(name))
-            {
-                btn.BorderBrush = (Brush)Application.Current.Resources["AppAccent"];
-                btn.BorderThickness = new Thickness(2);
-            }
-        }
-        catch (Exception ex) { Log.Error("iconpicker", $"BuildTile {name}: highlight failed", ex); throw; }
+        bool selected = PickedValue == libValue;
+        border.BorderBrush = (Brush)Application.Current.Resources[selected ? "AppAccent" : "AppBorder"];
+        border.BorderThickness = new Thickness(selected ? 2 : 1);
+        ToolTipService.SetToolTip(border, name);
+        args.Handled = true;
+    }
 
-        try { ToolTipService.SetToolTip(btn, name); }
-        catch (Exception ex) { Log.Error("iconpicker", $"BuildTile {name}: tooltip failed", ex); throw; }
-
-        btn.Click += (_, __) =>
+    private void OnItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is string name)
         {
             PickedValue = IconLibrary.MakeLibValue(name);
             Hide();
-        };
-        return btn;
+        }
     }
+
+    private static Style BuildContainerStyle()
+    {
+        // Strip the default GridViewItem chrome so our 56×56 tile is the visual.
+        var style = new Style(typeof(GridViewItem));
+        style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(0)));
+        style.Setters.Add(new Setter(FrameworkElement.MarginProperty, new Thickness(3)));
+        style.Setters.Add(new Setter(FrameworkElement.MinWidthProperty, 0.0));
+        style.Setters.Add(new Setter(FrameworkElement.MinHeightProperty, 0.0));
+        return style;
+    }
+
+    private const string TileTemplateXaml =
+        "<DataTemplate xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\">" +
+        "<Border Width=\"56\" Height=\"56\" CornerRadius=\"7\" " +
+        "Background=\"{ThemeResource AppSurfaceHover}\" " +
+        "BorderBrush=\"{ThemeResource AppBorder}\" BorderThickness=\"1\"/>" +
+        "</DataTemplate>";
+
+    private const string HeaderTemplateXaml =
+        "<DataTemplate xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\">" +
+        "<TextBlock Text=\"{Binding Key}\" Foreground=\"{ThemeResource AppTextMuted}\" " +
+        "FontSize=\"11\" Margin=\"2,8,0,2\"/>" +
+        "</DataTemplate>";
 }

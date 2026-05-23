@@ -2,14 +2,18 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Data;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
+using Windows.Storage.Streams;
 using RCMM.Core.Models;
 using RCMM.Core.Services;
 using RCMM.Core.ViewModels;
+using RCMM.Util;
 
 namespace RCMM.Views;
 
@@ -17,7 +21,7 @@ public sealed partial class TemplatesPage : Page
 {
     private NavArgs _args = null!;
     private AddPageViewModel _vm = null!;
-    private string _activeChip = "dev";
+    private string _activeChip = "featured";
 
     public TemplatesPage() { InitializeComponent(); }
 
@@ -49,6 +53,7 @@ public sealed partial class TemplatesPage : Page
     {
         foreach (var (chip, id) in new[]
         {
+            (ChipFeatured, "featured"),
             (ChipDev,     "dev"),
             (ChipProject, "project"),
             (ChipShell,   "shell"),
@@ -72,18 +77,35 @@ public sealed partial class TemplatesPage : Page
 
     private void RefreshTemplatesList()
     {
-        IEnumerable<AdditionTemplates.Template> source = _activeChip switch
+        List<TemplateGroup> grouped;
+        if (_activeChip == "featured")
         {
-            "dev"     => AdditionTemplates.All.Where(t => _devEcosystems.Contains(t.Ecosystem)),
-            "project" => AdditionTemplates.All.Where(t => t.Ecosystem == "Open project"),
-            "shell"   => AdditionTemplates.All.Where(t => t.Ecosystem == "Shell"),
-            "files"   => AdditionTemplates.All.Where(t => t.Ecosystem == "Files"),
-            _         => Array.Empty<AdditionTemplates.Template>(),
-        };
-        var grouped = source
-            .GroupBy(t => t.Ecosystem)
-            .Select(g => new TemplateGroup(g.Key, g))
-            .ToList();
+            // One curated section, in the owner's chosen order — resolve each
+            // featured name to its template (skipping any that no longer exist).
+            var items = AdditionTemplates.Featured
+                .Select(name => AdditionTemplates.All.FirstOrDefault(t => t.Name == name))
+                .Where(t => t != null)
+                .Select(t => t!)
+                .ToList();
+            grouped = items.Count > 0
+                ? new List<TemplateGroup> { new TemplateGroup("★ Featured", items) }
+                : new List<TemplateGroup>();
+        }
+        else
+        {
+            IEnumerable<AdditionTemplates.Template> source = _activeChip switch
+            {
+                "dev"     => AdditionTemplates.All.Where(t => _devEcosystems.Contains(t.Ecosystem)),
+                "project" => AdditionTemplates.All.Where(t => t.Ecosystem == "Open project"),
+                "shell"   => AdditionTemplates.All.Where(t => t.Ecosystem == "Shell"),
+                "files"   => AdditionTemplates.All.Where(t => t.Ecosystem == "Files"),
+                _         => Array.Empty<AdditionTemplates.Template>(),
+            };
+            grouped = source
+                .GroupBy(t => t.Ecosystem)
+                .Select(g => new TemplateGroup(g.Key, g))
+                .ToList();
+        }
         var view = new CollectionViewSource { IsSourceGrouped = true, Source = grouped };
         TemplatesList.ItemsSource = view.View;
         bool hasItems = grouped.Count > 0;
@@ -106,10 +128,13 @@ public sealed partial class TemplatesPage : Page
         }
     }
 
-    private void Add_Click(object sender, RoutedEventArgs e)
+    private void TemplateItem_Click(object sender, ItemClickEventArgs e)
     {
-        if (sender is not Button btn || btn.DataContext is not AdditionTemplates.Template t) return;
+        if (e.ClickedItem is AdditionTemplates.Template t) AddTemplate(t);
+    }
 
+    private void AddTemplate(AdditionTemplates.Template t)
+    {
         // For "Open in…" templates we resolve the target binary at +Add time:
         //   • Command: %bin% substitutes for the resolved absolute path.
         //   • Icon priority:
@@ -156,5 +181,70 @@ public sealed partial class TemplatesPage : Page
         };
         _vm.AddEntry(entry);
         if (Frame.CanGoBack) Frame.GoBack();
+    }
+
+    // ---- Template row icons (lib vector, or extracted exe icon) -------------
+
+    private void TplRow_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is Grid g && g.DataContext is AdditionTemplates.Template t) ApplyTemplateRowIcon(g, t);
+    }
+
+    private void TplRow_DataContextChanged(FrameworkElement sender, DataContextChangedEventArgs args)
+    {
+        if (sender is Grid g && args.NewValue is AdditionTemplates.Template t) ApplyTemplateRowIcon(g, t);
+    }
+
+    private void ApplyTemplateRowIcon(Grid g, AdditionTemplates.Template t)
+    {
+        if (g.FindName("TplIcon") is not Border host) return;
+        host.Child = null;
+        host.Visibility = Visibility.Collapsed;
+
+        // 1. Library icon (lib:…) — synchronous vector render. Covers Featured,
+        //    dev tools, and the AI-CLI launchers.
+        if (IconLibrary.IsLibraryName(t.Icon))
+        {
+            var p = IconRender.BuildIconElement(t.Icon!, 18,
+                (Brush)Application.Current.Resources["AppText"], thickness: 1.75);
+            if (p != null) { host.Child = p; host.Visibility = Visibility.Visible; }
+            return;
+        }
+
+        // 2. Binary icon (editors / shells) — resolve the exe and extract its
+        //    icon off the UI thread, then paint it back if the row still matches.
+        if (!string.IsNullOrEmpty(t.IconBinary))
+        {
+            var resolved = BinaryResolver.Find(t.IconBinary!, t.IconBinaryFallbacks);
+            if (resolved != null) _ = LoadBinaryIconAsync(g, t, resolved);
+        }
+    }
+
+    private static async Task LoadBinaryIconAsync(Grid g, AdditionTemplates.Template t, string path)
+    {
+        var bytes = await IconHelper.LoadIconBytesAsync(path);
+        if (bytes == null || bytes.Length == 0) return;
+        // The container may have been recycled to a different template while we
+        // awaited — only paint if this row still shows the same one.
+        if (!ReferenceEquals(g.DataContext, t)) return;
+        if (g.FindName("TplIcon") is not Border host) return;
+        try
+        {
+            using var stream = new InMemoryRandomAccessStream();
+            using (var dw = new DataWriter(stream))
+            {
+                dw.WriteBytes(bytes);
+                await dw.StoreAsync();
+                await dw.FlushAsync();
+                dw.DetachStream();
+            }
+            stream.Seek(0);
+            var bmp = new BitmapImage();
+            await bmp.SetSourceAsync(stream);
+            if (!ReferenceEquals(g.DataContext, t)) return;
+            host.Child = new Image { Source = bmp, Width = 18, Height = 18 };
+            host.Visibility = Visibility.Visible;
+        }
+        catch { }
     }
 }
