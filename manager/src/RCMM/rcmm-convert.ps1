@@ -4,7 +4,9 @@
 #   powershell -NoProfile -ExecutionPolicy Bypass -File rcmm-convert.ps1 "<file>"
 #
 # Detects the file type, checks for the converter tool (offers a winget install
-# if it's missing), shows a numbered format menu, and runs the conversion.
+# if it's missing), shows a boxed arrow-key format menu, and runs the conversion.
+# Needs a VT-capable terminal for the lime highlight (Windows Terminal / modern
+# conhost on Win10 1809+ / Win11).
 param([Parameter(Mandatory = $true)][string]$Path)
 
 $ErrorActionPreference = 'Stop'
@@ -13,6 +15,68 @@ function PauseExit {
     Write-Host ''
     Read-Host 'Press Enter to close' | Out-Null
     exit
+}
+
+# Boxed, arrow-key navigable menu. Returns the chosen index, or -1 on Esc.
+function Show-BoxMenu {
+    param([string]$Title, [string]$Status, [string[]]$Items)
+
+    $E     = [char]27
+    $lime  = $E + '[38;2;212;255;58m'
+    $dim   = $E + '[38;2;138;138;147m'
+    $text  = $E + '[38;2;241;241;243m'
+    $reset = $E + '[0m'
+
+    $TL = [char]0x250C; $TR = [char]0x2510; $BL = [char]0x2514; $BR = [char]0x2518
+    $VL = [char]0x251C; $VR = [char]0x2524; $V = [char]0x2502
+    $arrow = [char]0x25B8; $up = [char]0x2191; $down = [char]0x2193
+
+    $footerText = "$up/$down move   enter   esc"
+    # Width = widest inner line + margin (min 30).
+    $width = 30
+    foreach ($s in (@($Title, $Status, $footerText) + $Items)) {
+        if ($s -and ($s.Length + 5) -gt $width) { $width = $s.Length + 5 }
+    }
+    $H = ([string][char]0x2500) * $width
+
+    $sel = 0
+    $start = [Console]::CursorTop
+    try {
+        [Console]::CursorVisible = $false
+        while ($true) {
+            try { [Console]::SetCursorPosition(0, $start) } catch {}
+            $lines = New-Object System.Collections.Generic.List[string]
+            $lines.Add("  " + $TL + $H + $TR)
+            $lines.Add("  " + $V + $text + (" " + $Title).PadRight($width) + $reset + $V)
+            if ($Status) {
+                $lines.Add("  " + $V + $dim + (" " + $Status).PadRight($width) + $reset + $V)
+            }
+            $lines.Add("  " + $VL + $H + $VR)
+            for ($i = 0; $i -lt $Items.Count; $i++) {
+                if ($i -eq $sel) {
+                    $inner = (" " + $arrow + " " + $Items[$i]).PadRight($width)
+                    $lines.Add("  " + $V + $lime + $inner + $reset + $V)
+                }
+                else {
+                    $inner = ("   " + $Items[$i]).PadRight($width)
+                    $lines.Add("  " + $V + $dim + $inner + $reset + $V)
+                }
+            }
+            $lines.Add("  " + $VL + $H + $VR)
+            $lines.Add("  " + $V + $dim + ("  " + $footerText).PadRight($width) + $reset + $V)
+            $lines.Add("  " + $BL + $H + $BR)
+            [Console]::Out.Write(($lines -join [Environment]::NewLine) + [Environment]::NewLine)
+
+            $k = [Console]::ReadKey($true)
+            switch ($k.Key) {
+                'UpArrow'   { $sel = ($sel - 1 + $Items.Count) % $Items.Count }
+                'DownArrow' { $sel = ($sel + 1) % $Items.Count }
+                'Enter'     { return $sel }
+                'Escape'    { return -1 }
+            }
+        }
+    }
+    finally { try { [Console]::CursorVisible = $true } catch {} }
 }
 
 if (-not (Test-Path -LiteralPath $Path)) {
@@ -55,9 +119,6 @@ else {
 # Don't offer to convert a file into its own format.
 $targets = @($targets | Where-Object { $_.Ext -ne $ext })
 
-Write-Host ("Convert:  " + [System.IO.Path]::GetFileName($Path))
-Write-Host ''
-
 # 1. Dependency check (+ optional winget install).
 Write-Host "Checking for $tool... " -NoNewline
 $found = Get-Command $tool -ErrorAction SilentlyContinue
@@ -83,19 +144,17 @@ else {
     Write-Host 'ok.'
 }
 
-# 2. Format menu.
-Write-Host ''
-Write-Host 'Choose format:'
-for ($i = 0; $i -lt $targets.Count; $i++) {
-    Write-Host ("  {0}. {1}" -f ($i + 1), $targets[$i].Label)
-}
-$choice = Read-Host 'Number'
-$index = 0
-if (-not [int]::TryParse($choice, [ref]$index) -or $index -lt 1 -or $index -gt $targets.Count) {
-    Write-Host 'Invalid choice.'
+# 2. Boxed arrow-key format menu.
+Clear-Host
+$labels = @($targets | ForEach-Object { $_.Label })
+$sel = Show-BoxMenu -Title ("Convert  " + [System.IO.Path]::GetFileName($Path)) `
+                    -Status (([char]0x2713) + " $tool ready") -Items $labels
+if ($sel -lt 0) {
+    Write-Host ''
+    Write-Host 'Cancelled.'
     PauseExit
 }
-$target = $targets[$index - 1]
+$target = $targets[$sel]
 
 # Output path (don't clobber the source).
 $dir = [System.IO.Path]::GetDirectoryName($Path)
