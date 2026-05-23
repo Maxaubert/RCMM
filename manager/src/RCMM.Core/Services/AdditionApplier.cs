@@ -67,12 +67,11 @@ public sealed class AdditionApplier
         _ => throw new ArgumentOutOfRangeException(nameof(scope), scope, null),
     };
 
-    public static string WrapForRunMode(RunMode mode, string command) => mode switch
-    {
-        RunMode.VisibleTerminal => "cmd /k " + command,
-        RunMode.Background      => command,
-        _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, null),
-    };
+    /// <summary>Wrap the bare command for execution, honoring the entry's chosen
+    /// terminal. Default (null terminal) reproduces the historical behavior:
+    /// VisibleTerminal → "cmd /k …", Background → command as-is.</summary>
+    public static string WrapForRunMode(RunMode mode, string command, string? terminal = null)
+        => TerminalCatalog.Wrap(command, mode, terminal);
 
     public static IReadOnlyList<string> EntryScopePaths(AdditionEntry entry)
     {
@@ -229,7 +228,7 @@ public sealed class AdditionApplier
     public void WriteEntry(AdditionEntry entry, int ordinal, string scope, string? parentContainer)
     {
         var verbName = VerbName(ordinal, entry.Id);
-        var commandText = WrapForRunMode(entry.RunMode, entry.Command);
+        var commandText = WrapForRunMode(entry.RunMode, entry.Command, entry.Terminal);
 
         var resolvedIcon = ResolveIcon(entry.Icon);
 

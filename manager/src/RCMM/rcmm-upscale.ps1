@@ -155,23 +155,52 @@ function Get-OutPath([string]$in, [int]$scale) {
     return $cand
 }
 
+# Batch output directory beside the source folder; never overwrites.
+function Get-OutDir([string]$in, [int]$scale) {
+    $trimmed = $in.TrimEnd('\')
+    $parent  = [System.IO.Path]::GetDirectoryName($trimmed)
+    $name    = [System.IO.Path]::GetFileName($trimmed)
+    $cand = Join-Path $parent ("{0} (upscaled {1}x)" -f $name, $scale)
+    $n = 2
+    while (Test-Path -LiteralPath $cand) {
+        $cand = Join-Path $parent ("{0} (upscaled {1}x) ({2})" -f $name, $scale, $n)
+        $n++
+    }
+    return $cand
+}
+
 if (-not (Test-Path -LiteralPath $Path)) {
-    Write-Host "File not found: $Path"
+    Write-Host "Not found: $Path"
     PauseExit
 }
 
-$ext = [System.IO.Path]::GetExtension($Path).ToLowerInvariant()
 $imageExt = @('.png', '.jpg', '.jpeg', '.webp', '.bmp')
-if ($imageExt -notcontains $ext) {
-    Write-Host "RCMM can only upscale images for now (got '$ext')."
-    PauseExit
+# A folder right-click batch-upscales every image inside (Real-ESRGAN's native
+# directory mode); a file upscales just that image. Same script, both scopes.
+$isFolder = Test-Path -LiteralPath $Path -PathType Container
+
+if ($isFolder) {
+    $imgs = @(Get-ChildItem -LiteralPath $Path -File -ErrorAction SilentlyContinue |
+              Where-Object { $imageExt -contains $_.Extension.ToLowerInvariant() })
+    if ($imgs.Count -eq 0) {
+        Write-Host "No images to upscale in this folder (png / jpg / jpeg / webp / bmp)."
+        PauseExit
+    }
+}
+else {
+    $ext = [System.IO.Path]::GetExtension($Path).ToLowerInvariant()
+    if ($imageExt -notcontains $ext) {
+        Write-Host "RCMM can only upscale images, or a folder of images (got '$ext')."
+        PauseExit
+    }
 }
 
 # DryRun: report state + a sample command, never prompt or download.
 if ($DryRun) {
     $exe = Resolve-Upscaler
     Write-Host ("Tool: {0}" -f $(if ($exe) { $exe } else { 'not installed (would download from GitHub on first run)' }))
-    $sampleOut = Get-OutPath $Path 4
+    $sampleOut = if ($isFolder) { Get-OutDir $Path 4 } else { Get-OutPath $Path 4 }
+    if ($isFolder) { Write-Host ("Folder batch: {0} image(s)" -f $imgs.Count) }
     Write-Host 'Sample (Photo / 4x):'
     Write-Host ("  realesrgan-ncnn-vulkan -i `"{0}`" -o `"{1}`" -n realesrgan-x4plus -s 4 -f png" -f $Path, $sampleOut)
     exit
@@ -195,7 +224,12 @@ else { Write-Host 'ok.' }
 
 # 2. Model picker.
 Clear-Host
-$mSel = Show-BoxMenu -Title ("Upscale  " + [System.IO.Path]::GetFileName($Path)) `
+$targetLabel = if ($isFolder) {
+    ("{0}  ({1} images)" -f [System.IO.Path]::GetFileName($Path.TrimEnd('\')), $imgs.Count)
+} else {
+    [System.IO.Path]::GetFileName($Path)
+}
+$mSel = Show-BoxMenu -Title ("Upscale  " + $targetLabel) `
                      -Status (([char]0x2713) + ' Real-ESRGAN ready') `
                      -Items @('Photo / realistic', 'Anime, art & line art')
 if ($mSel -lt 0) { Write-Host ''; Write-Host 'Cancelled.'; PauseExit }
@@ -209,10 +243,23 @@ $sSel = Show-BoxMenu -Title 'Upscale  ·  scale' -Status ("Model: " + $modelLabe
 if ($sSel -lt 0) { Write-Host ''; Write-Host 'Cancelled.'; PauseExit }
 $scale = @(2, 3, 4)[$sSel]
 
-$out = Get-OutPath $Path $scale
+# Folder -> a new output directory (Real-ESRGAN needs it to exist); file -> a path.
+if ($isFolder) {
+    $out = Get-OutDir $Path $scale
+    New-Item -ItemType Directory -Force -Path $out | Out-Null
+}
+else {
+    $out = Get-OutPath $Path $scale
+}
+
 Write-Host ''
-Write-Host ("Upscaling {0}{1} -> {2} ..." -f $scale, $X, [System.IO.Path]::GetFileName($out))
-Write-Host '(first run can take a while; large images longer)'
+if ($isFolder) {
+    Write-Host ("Upscaling {0} image(s) {1}{2} -> {3} ..." -f $imgs.Count, $scale, $X, [System.IO.Path]::GetFileName($out))
+}
+else {
+    Write-Host ("Upscaling {0}{1} -> {2} ..." -f $scale, $X, [System.IO.Path]::GetFileName($out))
+}
+Write-Host '(first run can take a while; many / large images longer)'
 Write-Host ''
 
 # Run from the tool's own directory so it finds its bundled models/ folder
@@ -224,14 +271,24 @@ try {
 }
 finally { Pop-Location }
 
-if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $out)) {
-    Write-Host ''
+Write-Host ''
+if ($isFolder) {
+    # Judge by produced files, not exit code — a stray non-image in the folder
+    # can make the tool exit non-zero even though every image was upscaled.
+    $made = if (Test-Path -LiteralPath $out) {
+        @(Get-ChildItem -LiteralPath $out -File -ErrorAction SilentlyContinue).Count
+    } else { 0 }
+    if ($made -gt 0) {
+        Write-Host ("Done -> {0}  ({1} of {2} image(s))" -f $out, $made, $imgs.Count)
+    }
+    else {
+        Write-Host "Upscale failed (exit $LASTEXITCODE). No Vulkan GPU? Real-ESRGAN can't run."
+    }
+}
+elseif ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $out)) {
     Write-Host ("Done -> " + $out)
-    # No Explorer /select — the user is already in this folder (that's how they
-    # right-clicked the source), so popping a window is just noise.
 }
 else {
-    Write-Host ''
-    Write-Host "Upscale failed (exit $LASTEXITCODE). If this machine has no Vulkan GPU, Real-ESRGAN can't run."
+    Write-Host "Upscale failed (exit $LASTEXITCODE). No Vulkan GPU? Real-ESRGAN can't run."
 }
 PauseExit

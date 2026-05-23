@@ -220,6 +220,19 @@ public static class AdditionTemplates
             Icon = "lib:arrow-big-up-dash",
         },
 
+        // Same script on a folder right-click (%1 = the clicked folder): it
+        // detects the folder and batch-upscales every image inside via
+        // Real-ESRGAN's native directory mode, into "<folder> (upscaled Nx)".
+        new Template
+        {
+            Name = "Upscale images",
+            Command = "powershell -NoProfile -ExecutionPolicy Bypass -File \"%selfdir%\\rcmm-upscale.ps1\" \"%1\"",
+            Ecosystem = "Files",
+            Scope = AdditionScope.Folder,
+            RunMode = RunMode.Background,
+            Icon = "lib:arrow-big-up-dash",
+        },
+
         // File power actions, routed through rcmm-action.ps1 (silent / self-
         // elevating). Scope=File so they sit on file right-clicks.
         new Template

@@ -345,9 +345,24 @@
                                 </StackPanel>
                                 <StackPanel Grid.Column="1" Spacing="4">
                                     <TextBlock Text="Run mode" Foreground="{ThemeResource AppTextMuted}" FontSize="12"/>
-                                    <ComboBox x:Name="RunModeBox" HorizontalAlignment="Stretch" SelectionChanged="Field_SelectionChanged"/>
+                                    <ComboBox x:Name="RunModeBox" HorizontalAlignment="Stretch" SelectionChanged="RunMode_SelectionChanged"/>
                                 </StackPanel>
                             </Grid>
+
+                            <!-- Terminal — which terminal a visible-terminal entry opens in.
+                                 Shown only when the entry actually pops a console. -->
+                            <StackPanel x:Name="TerminalRow" Spacing="4">
+                                <TextBlock>
+                                    <Run Text="Terminal"/><Run Text="  (which terminal this opens in)" Foreground="{ThemeResource AppTextDim}" FontSize="11"/>
+                                </TextBlock>
+                                <ComboBox x:Name="TerminalBox" HorizontalAlignment="Stretch"
+                                          DisplayMemberPath="Display"
+                                          SelectionChanged="Terminal_SelectionChanged"/>
+                                <TextBox x:Name="TerminalCustomBox" Visibility="Collapsed"
+                                         PlaceholderText="Path to a terminal .exe…"
+                                         FontFamily="Cascadia Code, Consolas, Courier New"
+                                         LostFocus="Field_Changed"/>
+                            </StackPanel>
 
                             <StackPanel x:Name="ScopeRow" Spacing="4">
                                 <TextBlock>

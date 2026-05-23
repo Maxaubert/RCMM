@@ -24,4 +24,10 @@ public sealed record AdditionEntry
     /// <summary>Null = top-level entry; else points to AdditionFolder.Id.</summary>
     public string? FolderId { get; init; }
     public required RunMode RunMode { get; init; }
+    /// <summary>Which terminal a visible-terminal entry opens in. Null/empty =
+    /// default (cmd for plain commands; the command's own host otherwise).
+    /// Known keys: <c>wt</c> / <c>powershell</c> / <c>pwsh</c> / <c>wsl</c>, or a
+    /// custom terminal exe path. Applied at write-time by
+    /// <see cref="Services.TerminalCatalog.Wrap"/>.</summary>
+    public string? Terminal { get; init; }
 }

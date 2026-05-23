@@ -15,8 +15,10 @@ public class AdditionTemplatesTests
         // reason (the folder you right-clicked).
         foreach (var t in AdditionTemplates.All)
         {
-            // Smart-action entries (Convert) target a clicked File, not the folder.
+            // Smart-action entries target a clicked File or Folder, not the
+            // folder background (e.g. Change format / Upscale / "Upscale images").
             if (t.Scope == AdditionScope.File) continue;
+            if (t.Scope == AdditionScope.Folder) continue;
             Assert.Equal(AdditionScope.FolderBackground, t.Scope);
             Assert.Equal("%V", t.WorkingDir);
         }
@@ -156,6 +158,20 @@ public class AdditionTemplatesTests
         Assert.Contains("rcmm-upscale.ps1", t.Command);
         Assert.Contains("%1", t.Command);
         Assert.Equal("lib:arrow-big-up-dash", t.Icon);
+    }
+
+    [Fact]
+    public void Upscale_folder_template_exists()
+    {
+        // Folder right-click variant — same script, Folder scope, batch-upscales
+        // every image inside.
+        var t = AdditionTemplates.All.SingleOrDefault(x => x.Name == "Upscale images");
+        Assert.NotNull(t);
+        Assert.Equal("Files", t!.Ecosystem);
+        Assert.Equal(AdditionScope.Folder, t.Scope);
+        Assert.Equal(RunMode.Background, t.RunMode);
+        Assert.Contains("rcmm-upscale.ps1", t.Command);
+        Assert.Contains("%1", t.Command);
     }
 
     [Theory]

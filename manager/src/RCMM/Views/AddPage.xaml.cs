@@ -565,6 +565,7 @@ public sealed partial class AddPage : Page
             FileTypesBox.Text = entry.FileTypes is { Count: > 0 } ? string.Join(", ", entry.FileTypes) : "";
             ScopeBox.SelectedItem = entry.Scope;
             RunModeBox.SelectedItem = entry.RunMode;
+            SetupTerminalRow(entry.RunMode, entry.Command, entry.Terminal);
 
             var folderOptions = new List<object> { TopLevelLabel };
             foreach (var f in _vm.Folders) folderOptions.Add(f);
@@ -634,6 +635,10 @@ public sealed partial class AddPage : Page
         FileTypesRow.Visibility = vis;
         FolderRow.Visibility = vis;
         ParentFolderRow.Visibility = showEntryFields ? Visibility.Collapsed : Visibility.Visible;
+        // The Terminal row is only meaningful for entries that open a console;
+        // SetupTerminalRow (called per entry) decides whether to show it. Folders
+        // never have one.
+        if (!showEntryFields) TerminalRow.Visibility = Visibility.Collapsed;
     }
 
     private void RenderIconPicker(string? iconValue)
@@ -673,6 +678,68 @@ public sealed partial class AddPage : Page
 
     private void Field_Changed(object sender, RoutedEventArgs e) => SaveCurrent();
     private void Field_SelectionChanged(object sender, SelectionChangedEventArgs e) => SaveCurrent();
+
+    /// <summary>Populate + select the Terminal dropdown for an entry, and show it
+    /// only when the entry opens a visible terminal. Caller suppresses field-change
+    /// events around this (it mutates the ComboBox).</summary>
+    private void SetupTerminalRow(RunMode mode, string command, string? terminal)
+    {
+        bool opens = TerminalCatalog.OpensVisibleTerminal(mode, command);
+        TerminalRow.Visibility = opens ? Visibility.Visible : Visibility.Collapsed;
+        if (!opens) { TerminalCustomBox.Visibility = Visibility.Collapsed; return; }
+
+        var opts = TerminalCatalog.OptionsFor(mode, BinaryResolver.Find);
+        TerminalBox.ItemsSource = opts;
+
+        var stored = string.IsNullOrWhiteSpace(terminal) ? "" : terminal!.Trim();
+        var match = opts.FirstOrDefault(o => o.Value == stored);
+        if (match != null)
+        {
+            TerminalBox.SelectedItem = match;
+            TerminalCustomBox.Text = "";
+            TerminalCustomBox.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            // A custom path (or a key not available on this PC) → Custom + textbox.
+            TerminalBox.SelectedItem = opts.FirstOrDefault(o => o.Value == TerminalCatalog.Custom);
+            TerminalCustomBox.Text = stored;
+            TerminalCustomBox.Visibility = Visibility.Visible;
+        }
+    }
+
+    private void Terminal_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressFieldChange) return;
+        bool custom = (TerminalBox.SelectedItem as TerminalCatalog.Option)?.Value == TerminalCatalog.Custom;
+        TerminalCustomBox.Visibility = custom ? Visibility.Visible : Visibility.Collapsed;
+        SaveCurrent();
+    }
+
+    private void RunMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressFieldChange) return;
+        SaveCurrent();
+        // Run mode flips which terminals are valid (shells vs host-only) and
+        // whether the row shows at all — refresh it against the saved entry.
+        if (_selectedKind == "entry" && _vm.Entries.FirstOrDefault(x => x.Id == _selectedId) is { } entry)
+        {
+            _suppressFieldChange = true;
+            try { SetupTerminalRow(entry.RunMode, entry.Command, entry.Terminal); }
+            finally { _suppressFieldChange = false; }
+        }
+    }
+
+    /// <summary>Current Terminal value from the editor, or the entry's existing
+    /// value when the row isn't shown.</summary>
+    private string? ReadTerminal(string? fallback)
+    {
+        if (TerminalRow.Visibility != Visibility.Visible) return fallback;
+        if (TerminalBox.SelectedItem is not TerminalCatalog.Option opt) return fallback;
+        if (opt.Value == TerminalCatalog.Custom)
+            return string.IsNullOrWhiteSpace(TerminalCustomBox.Text) ? null : TerminalCustomBox.Text.Trim();
+        return string.IsNullOrEmpty(opt.Value) ? null : opt.Value;
+    }
     private void NameBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         // Live-update label as the user types. WinUI 3's TextChanged event for
@@ -719,6 +786,7 @@ public sealed partial class AddPage : Page
                     ? null
                     : FileTypesBox.Text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
                 FolderId = newFolderId,
+                Terminal = ReadTerminal(entry.Terminal),
             };
             if (RecordsEffectivelyEqual(entry, updated)) return;
             _vm.ReplaceEntry(updated);
@@ -764,6 +832,7 @@ public sealed partial class AddPage : Page
         if (a.WorkingDir != b.WorkingDir) return false;
         if (a.Scope != b.Scope) return false;
         if (a.RunMode != b.RunMode) return false;
+        if ((a.Terminal ?? "") != (b.Terminal ?? "")) return false;
         if ((a.Icon ?? "") != (b.Icon ?? "")) return false;
         if ((a.FolderId ?? "") != (b.FolderId ?? "")) return false;
         var fa = a.FileTypes ?? Array.Empty<string>();
