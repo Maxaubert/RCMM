@@ -7,7 +7,13 @@
 # if it's missing), shows a boxed arrow-key format menu, and runs the conversion.
 # Needs a VT-capable terminal for the lime highlight (Windows Terminal / modern
 # conhost on Win10 1809+ / Win11).
-param([Parameter(Mandatory = $true)][string]$Path)
+#
+# -DryRun prints the resolved tool + arguments for every target and exits
+# (used to verify command-building without the tools installed).
+param(
+    [Parameter(Mandatory = $true, Position = 0)][string]$Path,
+    [switch]$DryRun
+)
 
 $ErrorActionPreference = 'Stop'
 
@@ -80,63 +86,161 @@ function Show-BoxMenu {
     finally { try { [Console]::CursorVisible = $true } catch {} }
 }
 
+# Resolve a tool by PATH first, then known install locations (Ghostscript and
+# LibreOffice don't reliably add themselves to PATH). Fallbacks may contain
+# environment variables and wildcards.
+function Resolve-Tool([string]$name, [string[]]$fallbacks) {
+    $c = Get-Command $name -ErrorAction SilentlyContinue
+    if ($c) { return $c.Source }
+    foreach ($f in $fallbacks) {
+        $expanded = [Environment]::ExpandEnvironmentVariables($f)
+        $hit = Get-Item -Path $expanded -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($hit) { return $hit.FullName }
+    }
+    return $null
+}
+
+# Output path next to the source, new extension; never overwrites the source.
+function Get-OutPath([string]$in, [string]$ext) {
+    $cand = [System.IO.Path]::ChangeExtension($in, $ext)
+    if ($cand -ieq $in) {
+        $dir = [System.IO.Path]::GetDirectoryName($in)
+        $name = [System.IO.Path]::GetFileNameWithoutExtension($in)
+        $cand = Join-Path $dir ($name + ' (converted)' + $ext)
+    }
+    return $cand
+}
+
+# Category descriptor for a given extension, or $null if unsupported.
+function Get-Category([string]$ext) {
+    $image = @('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp', '.tif', '.tiff')
+    $video = @('.mp4', '.mkv', '.mov', '.webm', '.avi', '.m4v', '.wmv')
+    $audio = @('.mp3', '.wav', '.flac', '.m4a', '.ogg', '.aac', '.wma')
+    $doc   = @('.docx', '.doc', '.odt', '.rtf', '.html', '.htm', '.md')
+
+    if ($image -contains $ext) {
+        return @{ Name = 'Image'; Tool = 'magick'; Fallbacks = @(); WingetId = 'ImageMagick.ImageMagick'; ExcludeSource = $true; Targets = @(
+                @{ Label = 'PNG';  Ext = '.png';  Kind = 'magick' },
+                @{ Label = 'JPG';  Ext = '.jpg';  Kind = 'magick' },
+                @{ Label = 'WebP'; Ext = '.webp'; Kind = 'magick' },
+                @{ Label = 'ICO';  Ext = '.ico';  Kind = 'magick' },
+                @{ Label = 'PDF';  Ext = '.pdf';  Kind = 'magick' }) }
+    }
+    if ($video -contains $ext) {
+        return @{ Name = 'Video'; Tool = 'ffmpeg'; Fallbacks = @(); WingetId = 'Gyan.FFmpeg'; ExcludeSource = $true; Targets = @(
+                @{ Label = 'MP4';  Ext = '.mp4';  Kind = 'ffmpeg' },
+                @{ Label = 'MKV';  Ext = '.mkv';  Kind = 'ffmpeg' },
+                @{ Label = 'MOV';  Ext = '.mov';  Kind = 'ffmpeg' },
+                @{ Label = 'WebM'; Ext = '.webm'; Kind = 'ffmpeg' },
+                @{ Label = 'GIF';  Ext = '.gif';  Kind = 'ffmpeg' },
+                @{ Label = 'Audio (MP3)'; Ext = '.mp3'; Kind = 'ffmpeg'; Extra = @('-vn', '-c:a', 'libmp3lame') }) }
+    }
+    if ($audio -contains $ext) {
+        return @{ Name = 'Audio'; Tool = 'ffmpeg'; Fallbacks = @(); WingetId = 'Gyan.FFmpeg'; ExcludeSource = $true; Targets = @(
+                @{ Label = 'MP3';  Ext = '.mp3';  Kind = 'ffmpeg' },
+                @{ Label = 'WAV';  Ext = '.wav';  Kind = 'ffmpeg' },
+                @{ Label = 'FLAC'; Ext = '.flac'; Kind = 'ffmpeg' },
+                @{ Label = 'M4A';  Ext = '.m4a';  Kind = 'ffmpeg' },
+                @{ Label = 'OGG';  Ext = '.ogg';  Kind = 'ffmpeg' }) }
+    }
+    if ($ext -eq '.pdf') {
+        return @{ Name = 'PDF'; Tool = 'gswin64c'; Fallbacks = @('%ProgramFiles%\gs\*\bin\gswin64c.exe', '%ProgramFiles(x86)%\gs\*\bin\gswin64c.exe'); WingetId = 'ArtifexSoftware.GhostScript'; ExcludeSource = $false; Targets = @(
+                @{ Label = 'Text';            Ext = '.txt'; Kind = 'gs-text' },
+                @{ Label = 'Images (PNG/page)'; Ext = '.png'; Kind = 'gs-images' },
+                @{ Label = 'Compress (smaller PDF)'; Ext = '.pdf'; Kind = 'gs-compress' }) }
+    }
+    if ($doc -contains $ext) {
+        return @{ Name = 'Document'; Tool = 'soffice'; Fallbacks = @('%ProgramFiles%\LibreOffice\program\soffice.com', '%ProgramFiles(x86)%\LibreOffice\program\soffice.com'); WingetId = 'TheDocumentFoundation.LibreOffice'; ExcludeSource = $true; Targets = @(
+                @{ Label = 'PDF';  Ext = '.pdf';  Kind = 'soffice'; Fmt = 'pdf' },
+                @{ Label = 'DOCX'; Ext = '.docx'; Kind = 'soffice'; Fmt = 'docx' },
+                @{ Label = 'ODT';  Ext = '.odt';  Kind = 'soffice'; Fmt = 'odt' },
+                @{ Label = 'HTML'; Ext = '.html'; Kind = 'soffice'; Fmt = 'html' },
+                @{ Label = 'Text'; Ext = '.txt';  Kind = 'soffice'; Fmt = 'txt' }) }
+    }
+    return $null
+}
+
+# Build the argument array + expected output for a target. Returns @{ Args; Out }.
+# Out is $null when the conversion emits multiple/derived files (judge success
+# by exit code instead).
+function Build-Invocation($target, [string]$in) {
+    switch ($target.Kind) {
+        'magick' {
+            $out = Get-OutPath $in $target.Ext
+            return @{ Args = @($in, $out); Out = $out }
+        }
+        'ffmpeg' {
+            $out = Get-OutPath $in $target.Ext
+            $extra = @(); if ($target.Extra) { $extra = $target.Extra }
+            return @{ Args = (@('-y', '-i', $in) + $extra + @($out)); Out = $out }
+        }
+        'gs-text' {
+            $out = Get-OutPath $in '.txt'
+            return @{ Args = @('-dNOPAUSE', '-dBATCH', '-dQUIET', '-sDEVICE=txtwrite', '-o', $out, $in); Out = $out }
+        }
+        'gs-images' {
+            $dir = [System.IO.Path]::GetDirectoryName($in)
+            $name = [System.IO.Path]::GetFileNameWithoutExtension($in)
+            $pattern = Join-Path $dir ($name + '-%03d.png')
+            return @{ Args = @('-dNOPAUSE', '-dBATCH', '-dQUIET', '-sDEVICE=png16m', '-r150', '-o', $pattern, $in); Out = $null }
+        }
+        'gs-compress' {
+            $out = Get-OutPath $in '.pdf'
+            return @{ Args = @('-dNOPAUSE', '-dBATCH', '-dQUIET', '-sDEVICE=pdfwrite', '-dCompatibilityLevel=1.4', '-dPDFSETTINGS=/ebook', '-o', $out, $in); Out = $out }
+        }
+        'soffice' {
+            $dir = [System.IO.Path]::GetDirectoryName($in)
+            $name = [System.IO.Path]::GetFileNameWithoutExtension($in)
+            $out = Join-Path $dir ($name + '.' + $target.Fmt)
+            return @{ Args = @('--headless', '--convert-to', $target.Fmt, '--outdir', $dir, $in); Out = $out }
+        }
+    }
+    return @{ Args = @(); Out = $null }
+}
+
 if (-not (Test-Path -LiteralPath $Path)) {
     Write-Host "File not found: $Path"
     PauseExit
 }
 
 $ext = [System.IO.Path]::GetExtension($Path).ToLowerInvariant()
-
-$imageExts = @('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp', '.tif', '.tiff')
-$videoExts = @('.mp4', '.mkv', '.mov', '.webm', '.avi', '.m4v', '.wmv')
-
-if ($imageExts -contains $ext) {
-    $tool = 'magick'
-    $wingetId = 'ImageMagick.ImageMagick'
-    $targets = @(
-        @{ Label = 'PNG';  Ext = '.png' },
-        @{ Label = 'JPG';  Ext = '.jpg' },
-        @{ Label = 'WebP'; Ext = '.webp' },
-        @{ Label = 'ICO';  Ext = '.ico' }
-    )
-}
-elseif ($videoExts -contains $ext) {
-    $tool = 'ffmpeg'
-    $wingetId = 'Gyan.FFmpeg'
-    $targets = @(
-        @{ Label = 'MP4';  Ext = '.mp4' },
-        @{ Label = 'MKV';  Ext = '.mkv' },
-        @{ Label = 'MOV';  Ext = '.mov' },
-        @{ Label = 'WebM'; Ext = '.webm' },
-        @{ Label = 'GIF';  Ext = '.gif' },
-        @{ Label = 'Audio (MP3)'; Ext = '.mp3'; Extra = @('-vn', '-c:a', 'libmp3lame') }
-    )
-}
-else {
+$cat = Get-Category $ext
+if (-not $cat) {
     Write-Host "RCMM can't convert '$ext' files yet."
     PauseExit
 }
 
-# Don't offer to convert a file into its own format.
-$targets = @($targets | Where-Object { $_.Ext -ne $ext })
+# Don't offer to convert a file into its own format (where that's just a no-op).
+$targets = $cat.Targets
+if ($cat.ExcludeSource) {
+    $targets = @($targets | Where-Object { $_.Ext -ne $ext })
+}
+
+if ($DryRun) {
+    Write-Host ("Category: {0}   Tool: {1}   Winget: {2}" -f $cat.Name, $cat.Tool, $cat.WingetId)
+    foreach ($t in $targets) {
+        $inv = Build-Invocation $t $Path
+        Write-Host ("  [{0}]  {1} {2}   (out: {3})" -f $t.Label, $cat.Tool, ($inv.Args -join ' '), $inv.Out)
+    }
+    exit
+}
 
 # 1. Dependency check (+ optional winget install).
-Write-Host "Checking for $tool... " -NoNewline
-$found = Get-Command $tool -ErrorAction SilentlyContinue
-if (-not $found) {
+Write-Host ("Checking for {0}... " -f $cat.Tool) -NoNewline
+$toolPath = Resolve-Tool $cat.Tool $cat.Fallbacks
+if (-not $toolPath) {
     Write-Host 'not installed.'
-    $ans = Read-Host "Install $tool with winget? [Y/N]"
+    $ans = Read-Host ("Install {0} with winget? [Y/N]" -f $cat.Tool)
     if ($ans -eq '' -or $ans -match '^[Yy]') {
         if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-            Write-Host "winget isn't available here. Install $tool manually, then re-run."
+            Write-Host "winget isn't available here. Install $($cat.Tool) manually, then re-run."
             PauseExit
         }
-        winget install --id $wingetId -e --accept-source-agreements --accept-package-agreements
-        # winget updates the registry PATH, but not this session — refresh it.
+        winget install --id $cat.WingetId -e --accept-source-agreements --accept-package-agreements
         $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
-        $found = Get-Command $tool -ErrorAction SilentlyContinue
-        if (-not $found) {
-            Write-Host "$tool still isn't on PATH. Close this window and try again once the install finishes."
+        $toolPath = Resolve-Tool $cat.Tool $cat.Fallbacks
+        if (-not $toolPath) {
+            Write-Host "$($cat.Tool) still isn't available. Close this window and try again once the install finishes."
             PauseExit
         }
     }
@@ -153,42 +257,27 @@ else {
 Clear-Host
 $labels = @($targets | ForEach-Object { $_.Label })
 $sel = Show-BoxMenu -Title ("Convert  " + [System.IO.Path]::GetFileName($Path)) `
-                    -Status (([char]0x2713) + " $tool ready") -Items $labels
+                    -Status (([char]0x2713) + " $($cat.Tool) ready") -Items $labels
 if ($sel -lt 0) {
     Write-Host ''
     Write-Host 'Cancelled.'
     PauseExit
 }
 $target = $targets[$sel]
-
-# Output path (don't clobber the source).
-$dir = [System.IO.Path]::GetDirectoryName($Path)
-$name = [System.IO.Path]::GetFileNameWithoutExtension($Path)
-$out = Join-Path $dir ($name + $target.Ext)
-if ($out -ieq $Path) {
-    $out = Join-Path $dir ($name + ' (converted)' + $target.Ext)
-}
+$inv = Build-Invocation $target $Path
 
 Write-Host ''
-Write-Host ("Converting -> " + [System.IO.Path]::GetFileName($out) + ' ...')
-if ($tool -eq 'ffmpeg') {
-    $extra = @()
-    if ($target.Extra) { $extra = $target.Extra }
-    & $tool -y -i $Path @extra $out
-}
-else {
-    & $tool $Path $out
-}
+Write-Host ("Converting -> {0} ..." -f $target.Label)
+$toolArgs = $inv.Args
+& $toolPath @toolArgs
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host ''
-    if (Test-Path -LiteralPath $out) {
-        Write-Host "Done -> $out"
-        Start-Process explorer.exe -ArgumentList ("/select,`"" + $out + "`"")
+    if ($inv.Out -and (Test-Path -LiteralPath $inv.Out)) {
+        Write-Host ("Done -> " + $inv.Out)
+        Start-Process explorer.exe -ArgumentList ("/select,`"" + $inv.Out + "`"")
     }
     else {
-        # Some conversions (e.g. an animated GIF -> PNG) emit indexed files like
-        # name-0.png; the tool reported success, so don't cry false failure.
         Write-Host 'Done. Output written next to the source.'
     }
 }
