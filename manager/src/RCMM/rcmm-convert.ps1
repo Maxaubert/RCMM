@@ -124,7 +124,7 @@ Write-Host "Checking for $tool... " -NoNewline
 $found = Get-Command $tool -ErrorAction SilentlyContinue
 if (-not $found) {
     Write-Host 'not installed.'
-    $ans = Read-Host "Install $tool with winget? [Y/n]"
+    $ans = Read-Host "Install $tool with winget? [Y/N]"
     if ($ans -eq '' -or $ans -match '^[Yy]') {
         winget install --id $wingetId -e --accept-source-agreements --accept-package-agreements
         # winget updates the registry PATH, but not this session — refresh it.
