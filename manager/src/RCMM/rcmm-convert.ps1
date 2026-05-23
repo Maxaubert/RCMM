@@ -11,6 +11,10 @@ param([Parameter(Mandatory = $true)][string]$Path)
 
 $ErrorActionPreference = 'Stop'
 
+# Render Unicode (box-drawing + the marker) as real glyphs instead of "?" /
+# best-fit mojibake from a legacy console codepage.
+try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}
+
 function PauseExit {
     Write-Host ''
     Read-Host 'Press Enter to close' | Out-Null
@@ -29,12 +33,11 @@ function Show-BoxMenu {
 
     $TL = [char]0x250C; $TR = [char]0x2510; $BL = [char]0x2514; $BR = [char]0x2518
     $VL = [char]0x251C; $VR = [char]0x2524; $V = [char]0x2502
-    $arrow = [char]0x25B8; $up = [char]0x2191; $down = [char]0x2193
+    $arrow = [char]0x25B8
 
-    $footerText = "$up/$down move   enter   esc"
     # Width = widest inner line + margin (min 30).
     $width = 30
-    foreach ($s in (@($Title, $Status, $footerText) + $Items)) {
+    foreach ($s in (@($Title, $Status) + $Items)) {
         if ($s -and ($s.Length + 5) -gt $width) { $width = $s.Length + 5 }
     }
     $H = ([string][char]0x2500) * $width
@@ -62,8 +65,6 @@ function Show-BoxMenu {
                     $lines.Add("  " + $V + $dim + $inner + $reset + $V)
                 }
             }
-            $lines.Add("  " + $VL + $H + $VR)
-            $lines.Add("  " + $V + $dim + ("  " + $footerText).PadRight($width) + $reset + $V)
             $lines.Add("  " + $BL + $H + $BR)
             [Console]::Out.Write(($lines -join [Environment]::NewLine) + [Environment]::NewLine)
 
