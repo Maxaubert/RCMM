@@ -36,7 +36,7 @@ public static class IconLibrary
         new IconCategory("Identity & security", new[] { "shield","lock","key","user" }),
         new IconCategory("Programming",         new[] { "github","git-branch","package","database" }),
         new IconCategory("AI",                  new[] { "claude","openai" }),
-        new IconCategory("Misc",                new[] { "hash","link","external-link","globe","download","upload","eye","refresh","repeat","monitor" }),
+        new IconCategory("Misc",                new[] { "hash","link","external-link","globe","download","upload","eye","refresh","repeat","redo-2","monitor" }),
     };
 
     /// <summary>
@@ -117,6 +117,8 @@ public static class IconLibrary
         // Lucide "repeat" — convert / change-format loop (spaced to match the
         // other entries so both the XAML and GDI+ path parsers handle it).
         ["repeat"]           = "<path d='m 17 2 l 4 4 l -4 4'/><path d='M 3 11 v -1 a 4 4 0 0 1 4 -4 h 14'/><path d='m 7 22 l -4 -4 l 4 -4'/><path d='M 21 13 v 1 a 4 4 0 0 1 -4 4 H 3'/>",
+        // Lucide "redo-2" — single curved arrow (one half of repeat).
+        ["redo-2"]           = "<path d='m 15 14 l 5 -5 l -5 -5'/><path d='M 20 9 H 9.5 A 5.5 5.5 0 0 0 4 14.5 A 5.5 5.5 0 0 0 9.5 20 H 13'/>",
 
         // Brand marks from Simple Icons (MIT-licensed). Filled shapes, not
         // strokes — flagged in _filled above so the renderers paint them
