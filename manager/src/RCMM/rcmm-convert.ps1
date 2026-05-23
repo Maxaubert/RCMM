@@ -144,10 +144,11 @@ function Get-Category([string]$ext) {
                 @{ Label = 'OGG';  Ext = '.ogg';  Kind = 'ffmpeg' }) }
     }
     if ($ext -eq '.pdf') {
-        return @{ Name = 'PDF'; Tool = 'gswin64c'; Fallbacks = @('%ProgramFiles%\gs\*\bin\gswin64c.exe', '%ProgramFiles(x86)%\gs\*\bin\gswin64c.exe'); WingetId = 'ArtifexSoftware.GhostScript'; ExcludeSource = $false; Targets = @(
-                @{ Label = 'Text';            Ext = '.txt'; Kind = 'gs-text' },
-                @{ Label = 'Images (PNG/page)'; Ext = '.png'; Kind = 'gs-images' },
-                @{ Label = 'Compress (smaller PDF)'; Ext = '.pdf'; Kind = 'gs-compress' }) }
+        # MuPDF's mutool — winget-installable (Ghostscript is NOT in winget).
+        return @{ Name = 'PDF'; Tool = 'mutool'; Fallbacks = @('%LOCALAPPDATA%\Microsoft\WinGet\Packages\ArtifexSoftware.mutool*\*\mutool.exe'); WingetId = 'ArtifexSoftware.mutool'; ExcludeSource = $false; Targets = @(
+                @{ Label = 'Text';            Ext = '.txt'; Kind = 'mutool-text' },
+                @{ Label = 'Images (PNG/page)'; Ext = '.png'; Kind = 'mutool-images' },
+                @{ Label = 'Compress (smaller PDF)'; Ext = '.pdf'; Kind = 'mutool-compress' }) }
     }
     if ($doc -contains $ext) {
         return @{ Name = 'Document'; Tool = 'soffice'; Fallbacks = @('%ProgramFiles%\LibreOffice\program\soffice.com', '%ProgramFiles(x86)%\LibreOffice\program\soffice.com'); WingetId = 'TheDocumentFoundation.LibreOffice'; ExcludeSource = $true; Targets = @(
@@ -174,19 +175,19 @@ function Build-Invocation($target, [string]$in) {
             $extra = @(); if ($target.Extra) { $extra = $target.Extra }
             return @{ Args = (@('-y', '-i', $in) + $extra + @($out)); Out = $out }
         }
-        'gs-text' {
+        'mutool-text' {
             $out = Get-OutPath $in '.txt'
-            return @{ Args = @('-dNOPAUSE', '-dBATCH', '-dQUIET', '-sDEVICE=txtwrite', '-o', $out, $in); Out = $out }
+            return @{ Args = @('draw', '-q', '-F', 'txt', '-o', $out, $in); Out = $out }
         }
-        'gs-images' {
+        'mutool-images' {
             $dir = [System.IO.Path]::GetDirectoryName($in)
             $name = [System.IO.Path]::GetFileNameWithoutExtension($in)
-            $pattern = Join-Path $dir ($name + '-%03d.png')
-            return @{ Args = @('-dNOPAUSE', '-dBATCH', '-dQUIET', '-sDEVICE=png16m', '-r150', '-o', $pattern, $in); Out = $null }
+            $pattern = Join-Path $dir ($name + '-%d.png')
+            return @{ Args = @('draw', '-q', '-F', 'png', '-r', '150', '-o', $pattern, $in); Out = $null }
         }
-        'gs-compress' {
+        'mutool-compress' {
             $out = Get-OutPath $in '.pdf'
-            return @{ Args = @('-dNOPAUSE', '-dBATCH', '-dQUIET', '-sDEVICE=pdfwrite', '-dCompatibilityLevel=1.4', '-dPDFSETTINGS=/ebook', '-o', $out, $in); Out = $out }
+            return @{ Args = @('clean', '-gggg', $in, $out); Out = $out }
         }
         'soffice' {
             $dir = [System.IO.Path]::GetDirectoryName($in)
