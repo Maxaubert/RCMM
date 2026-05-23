@@ -127,6 +127,10 @@ if (-not $found) {
     Write-Host 'not installed.'
     $ans = Read-Host "Install $tool with winget? [Y/N]"
     if ($ans -eq '' -or $ans -match '^[Yy]') {
+        if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+            Write-Host "winget isn't available here. Install $tool manually, then re-run."
+            PauseExit
+        }
         winget install --id $wingetId -e --accept-source-agreements --accept-package-agreements
         # winget updates the registry PATH, but not this session — refresh it.
         $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -176,10 +180,17 @@ else {
     & $tool $Path $out
 }
 
-if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $out)) {
+if ($LASTEXITCODE -eq 0) {
     Write-Host ''
-    Write-Host "Done -> $out"
-    Start-Process explorer.exe ('/select,"{0}"' -f $out)
+    if (Test-Path -LiteralPath $out) {
+        Write-Host "Done -> $out"
+        Start-Process explorer.exe -ArgumentList ("/select,`"" + $out + "`"")
+    }
+    else {
+        # Some conversions (e.g. an animated GIF -> PNG) emit indexed files like
+        # name-0.png; the tool reported success, so don't cry false failure.
+        Write-Host 'Done. Output written next to the source.'
+    }
 }
 else {
     Write-Host ''
