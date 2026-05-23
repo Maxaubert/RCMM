@@ -73,8 +73,8 @@ public class AdditionApplierTests
         var reg = new FakeRegistry();
         var entry = Entry("img", "fileinfo %1", AdditionScope.File) with { FileTypes = new[] { ".png", ".jpg" } };
         new AdditionApplier(reg).Apply(new AdditionState { Entries = new[] { entry } });
-        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\.png\\shell\\RCMM.001.img"));
-        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\.jpg\\shell\\RCMM.001.img"));
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\SystemFileAssociations\\.png\\shell\\RCMM.001.img"));
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\SystemFileAssociations\\.jpg\\shell\\RCMM.001.img"));
     }
 
     [Fact]
@@ -214,7 +214,7 @@ public class AdditionApplierTests
             }
         });
         Assert.False(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\Background\\shell\\RCMM.001.f"));
-        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\.png\\shell\\RCMM.001.f"));
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\SystemFileAssociations\\.png\\shell\\RCMM.001.f"));
     }
 
     // ---------- Purge ----------
@@ -228,6 +228,7 @@ public class AdditionApplierTests
         reg.SetValue(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\Background\\shell\\NotOurs", "", "leave alone");
         reg.SetValue(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\Background\\ContextMenus\\RCMM.001.oldfolder\\shell\\RCMM.001.kid", "", "x");
         reg.SetValue(RegistryHive.CurrentUser, "Software\\Classes\\.png\\shell\\RCMM.001.imgverb", "", "x");
+        reg.SetValue(RegistryHive.CurrentUser, "Software\\Classes\\SystemFileAssociations\\.png\\shell\\RCMM.001.imgverb2", "", "x");
 
         new AdditionApplier(reg).PurgeOwnedKeys(new[] { ".png" });
 
@@ -235,6 +236,7 @@ public class AdditionApplierTests
         Assert.False(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\Background\\shell\\RCMM.001.old2"));
         Assert.False(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\Background\\ContextMenus\\RCMM.001.oldfolder"));
         Assert.False(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\.png\\shell\\RCMM.001.imgverb"));
+        Assert.False(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\SystemFileAssociations\\.png\\shell\\RCMM.001.imgverb2"));
         Assert.True(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\Directory\\Background\\shell\\NotOurs"));
     }
 

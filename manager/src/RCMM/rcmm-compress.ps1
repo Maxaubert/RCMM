@@ -31,9 +31,13 @@ $ErrorActionPreference = 'Stop'
 # glyphs instead of "?" / best-fit mojibake from a legacy console codepage.
 try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}
 
-function PauseExit {
+function PauseExit([string]$openPath = $null) {
     Write-Host ''
-    Read-Host 'Press Enter to close' | Out-Null
+    $canOpen = $openPath -and (Test-Path -LiteralPath $openPath)
+    $prompt  = if ($canOpen) { 'Press Enter to open the result and close' } else { 'Press Enter to close' }
+    Read-Host $prompt | Out-Null
+    # On success, open the output (file -> default app, folder -> Explorer) and exit.
+    if ($canOpen) { try { Start-Process $openPath } catch {} }
     exit
 }
 
@@ -150,6 +154,125 @@ function Resolve-Tool([string]$name, [string[]]$fallbacks) {
     return $null
 }
 
+# Image branch: CaesiumCLT (winget SaeraSoft.CaesiumCLT) — quality / format /
+# downscale / metadata. Runs its own pickers and exits; never returns.
+function Invoke-ImageCompress([string]$in, [string]$ext) {
+    $caeFallbacks = @(
+        '%LOCALAPPDATA%\Microsoft\WinGet\Packages\SaeraSoft.CaesiumCLT*\*\caesiumclt.exe',
+        '%LOCALAPPDATA%\Microsoft\WinGet\Links\caesiumclt.exe')
+    Write-Host 'Checking for CaesiumCLT... ' -NoNewline
+    $cae = Resolve-Tool 'caesiumclt' $caeFallbacks
+    if (-not $cae) {
+        Write-Host 'not installed.'
+        $ans = Read-Host 'Install CaesiumCLT (image compressor) with winget? [Y/N]'
+        if ($ans -eq '' -or $ans -match '^[Yy]') {
+            if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+                Write-Host "winget isn't available here. Install CaesiumCLT manually, then re-run."; PauseExit
+            }
+            winget install --id SaeraSoft.CaesiumCLT -e --accept-source-agreements --accept-package-agreements
+            $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+            $cae = Resolve-Tool 'caesiumclt' $caeFallbacks
+            if (-not $cae) { Write-Host "CaesiumCLT still isn't available. Try again once the install finishes."; PauseExit }
+        }
+        else { Write-Host 'Cancelled.'; PauseExit }
+    }
+    else { Write-Host 'ok.' }
+
+    if ($DryRun) {
+        Write-Host ("CaesiumCLT: {0}" -f $cae)
+        Write-Host ('Sample (Balanced / keep format): caesiumclt -q 75 --suffix " (compressed)" -o "<dir>" "{0}"' -f $in)
+        exit
+    }
+
+    $fileName = [System.IO.Path]::GetFileName($in)
+    $Xm = [char]0x00D7   # x  (the script-level $X isn't set yet on the image branch)
+
+    # Read dimensions + size up front so the downscale picker can show the
+    # resulting resolution next to each option, the way the video picker does.
+    Add-Type -AssemblyName System.Drawing
+    $imgW = 0; $imgH = 0
+    try { $im = [System.Drawing.Image]::FromFile($in); $imgW = $im.Width; $imgH = $im.Height; $im.Dispose() } catch {}
+    $inLen = (Get-Item -LiteralPath $in).Length
+    $sizeStr = if ($inLen -ge 1MB) { "{0:0.0} MB" -f ($inLen / 1MB) } else { "{0:0} KB" -f ($inLen / 1KB) }
+    $srcParts = @($ext.TrimStart('.').ToUpper())
+    if ($imgW -gt 0) { $srcParts += ("{0}{1}{2}" -f $imgW, $Xm, $imgH) }
+    $srcParts += $sizeStr
+    $sourceLine = 'Source: ' + [string]::Join('    ', $srcParts)
+
+    Clear-Host
+    $fSel = Show-ColumnMenu -Title ("Compress image:  " + $fileName) -Status $sourceLine `
+                            -Headers 'Format' -Rows @('Keep original', 'WebP  (smaller)') -HideHeader
+    if ($fSel -lt 0) { Write-Host ''; Write-Host 'Cancelled.'; PauseExit }
+    $fmt = @('original', 'webp')[$fSel]
+    $fmtLabel = @('keep format', 'WebP')[$fSel]
+
+    Clear-Host
+    $qSel = Show-ColumnMenu -Title 'Compress image:  quality' -Status ("Format: " + $fmtLabel) `
+                            -Headers 'Quality' -Rows @('Keep as is', 'High', 'Balanced', 'Low') -HideHeader
+    if ($qSel -lt 0) { Write-Host ''; Write-Host 'Cancelled.'; PauseExit }
+    $qLabel = @('Keep as is', 'High', 'Balanced', 'Low')[$qSel]
+
+    Clear-Host
+    if ($imgW -gt 0) {
+        $dRows = @(
+            ("Keep original|{0}{1}{2}" -f $imgW, $Xm, $imgH),
+            ("75%|{0}{1}{2}" -f (Calc-Dim $imgW 0.75), $Xm, (Calc-Dim $imgH 0.75)),
+            ("50%|{0}{1}{2}" -f (Calc-Dim $imgW 0.5),  $Xm, (Calc-Dim $imgH 0.5)),
+            ("25%|{0}{1}{2}" -f (Calc-Dim $imgW 0.25), $Xm, (Calc-Dim $imgH 0.25))
+        )
+        $dHeaders = 'Scale|Resolution'
+    } else {
+        $dRows = @('Keep original', '75%', '50%', '25%')
+        $dHeaders = 'Scale'
+    }
+    $dSel = Show-ColumnMenu -Title 'Compress image:  downscale' `
+                            -Status ("Format: " + $fmtLabel + "    Quality: " + $qLabel) `
+                            -Headers $dHeaders -Rows $dRows -HideHeader
+    if ($dSel -lt 0) { Write-Host ''; Write-Host 'Cancelled.'; PauseExit }
+    $factor = @(0, 0.75, 0.5, 0.25)[$dSel]
+    $resLabel = @('full size', '75%', '50%', '25%')[$dSel]
+
+    Clear-Host
+    $mSel = Show-ColumnMenu -Title 'Compress image:  metadata' `
+                            -Status ("Format: " + $fmtLabel + "    Quality: " + $qLabel + "    Size: " + $resLabel) `
+                            -Headers 'Metadata' -Rows @('Keep metadata', 'Strip metadata') -HideHeader
+    if ($mSel -lt 0) { Write-Host ''; Write-Host 'Cancelled.'; PauseExit }
+
+    # Build CaesiumCLT args.
+    $caeArgs = @()
+    if ($qSel -eq 0) { $caeArgs += '--lossless' }
+    else { $caeArgs += @('-q', [string]@(0, 90, 75, 55)[$qSel]) }
+    if ($fmt -eq 'webp') { $caeArgs += @('--format', 'webp') }
+    if ($factor -ne 0 -and $imgW -gt 0) {
+        $longest = [Math]::Max($imgW, $imgH)
+        $caeArgs += @('--long-edge', [string][int][Math]::Round($longest * $factor), '--no-upscale')
+    }
+    if ($mSel -eq 0) { $caeArgs += '-e' }   # keep EXIF (Caesium strips by default)
+    $dir = [System.IO.Path]::GetDirectoryName($in)
+    $caeArgs += @('--suffix', ' (compressed)', '-o', $dir, $in)
+
+    $outExt = if ($fmt -eq 'webp') { '.webp' } else { $ext }
+    $out = Join-Path $dir ([System.IO.Path]::GetFileNameWithoutExtension($in) + ' (compressed)' + $outExt)
+
+    Write-Host ''
+    Write-Host ("Compressing -> {0} ..." -f [System.IO.Path]::GetFileName($out))
+    Write-Host ''
+    & $cae @caeArgs
+
+    if (Test-Path -LiteralPath $out) {
+        $inSize = (Get-Item -LiteralPath $in).Length
+        $outSize = (Get-Item -LiteralPath $out).Length
+        $pct = if ($inSize -gt 0) { [int](100 - ($outSize / $inSize * 100)) } else { 0 }
+        Write-Host ''
+        Write-Host ("Done -> {0}" -f $out)
+        Write-Host ("  {0:0.0} KB -> {1:0.0} KB  ({2}% smaller)" -f ($inSize / 1KB), ($outSize / 1KB), $pct)
+        PauseExit $out
+    }
+    Write-Host ''
+    Write-Host 'Image compression failed.'
+    PauseExit
+}
+
 # ffprobe codec_name -> friendly label for the Source: line.
 function Friendly-Codec([string]$c) {
     switch ($c) {
@@ -202,13 +325,17 @@ if (-not (Test-Path -LiteralPath $Path)) {
     PauseExit
 }
 
-# Video only for now (images / other types reuse this picker later — see
-# ROADMAP.md). Gate by extension: ffprobe would happily treat a PNG as a
-# single-frame "video", so we can't rely on stream detection alone.
+# Branch by type: images -> CaesiumCLT, videos -> ffmpeg. (Gate by extension —
+# ffprobe would treat a PNG as a single-frame "video", so stream detection alone
+# isn't enough.)
 $ext = [System.IO.Path]::GetExtension($Path).ToLowerInvariant()
+$imageExt = @('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tif', '.tiff')
 $videoExt = @('.mp4', '.mkv', '.mov', '.webm', '.avi', '.m4v', '.wmv', '.flv', '.ts', '.m2ts', '.mpg', '.mpeg')
+if ($imageExt -contains $ext) {
+    Invoke-ImageCompress $Path $ext   # runs the image pipeline, then exits
+}
 if ($videoExt -notcontains $ext) {
-    Write-Host "RCMM can only compress video files for now (got '$ext')."
+    Write-Host "RCMM compresses images or videos (got '$ext')."
     PauseExit
 }
 
@@ -373,7 +500,7 @@ $codecLabel  = @('Keep as is', 'H.265', 'H.264', 'AV1')[$sel]
 
 # 4. Picker 2 — Quality (single column, no header needed).
 Clear-Host
-$qSel = Show-ColumnMenu -Title 'Compress video  ·  quality' -Status ("Codec: " + $codecLabel) `
+$qSel = Show-ColumnMenu -Title 'Compress video:  quality' -Status ("Codec: " + $codecLabel) `
                         -Headers 'Quality' -Rows @('Keep as is', 'High', 'Balanced', 'Low') -HideHeader
 if ($qSel -lt 0) { Write-Host ''; Write-Host 'Cancelled.'; PauseExit }
 $qualityKey   = @('keep', 'High', 'Balanced', 'Low')[$qSel]
@@ -387,7 +514,7 @@ $resRows = @(
     ("50%|{0}{1}{2}" -f (Calc-Dim $vw 0.5),  $X, (Calc-Dim $vh 0.5)),
     ("25%|{0}{1}{2}" -f (Calc-Dim $vw 0.25), $X, (Calc-Dim $vh 0.25))
 )
-$rSel = Show-ColumnMenu -Title 'Compress video  ·  resolution' `
+$rSel = Show-ColumnMenu -Title 'Compress video:  resolution' `
                         -Status ("Codec: " + $codecLabel + "   Quality: " + $qualityLabel) `
                         -Headers 'Scale|Resolution' -Rows $resRows -HideHeader
 if ($rSel -lt 0) { Write-Host ''; Write-Host 'Cancelled.'; PauseExit }
@@ -398,7 +525,7 @@ $resLabel  = @('Keep as is', '75%', '50%', '25%')[$rSel]
 $audioMode = 'keep'
 if ($hasAudio) {
     Clear-Host
-    $aSel = Show-ColumnMenu -Title 'Compress video  ·  audio' `
+    $aSel = Show-ColumnMenu -Title 'Compress video:  audio' `
                             -Status ("Codec: " + $codecLabel + "   " + $qualityLabel + "   " + $resLabel) `
                             -Headers 'Audio|Effect' -Rows @(
         'Keep as is|no change to audio',
@@ -430,7 +557,7 @@ if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $outPath)) {
     Write-Host ''
     Write-Host ("Done -> {0}" -f $outPath)
     Write-Host ("  {0:0.0} MB -> {1:0.0} MB  ({2}% smaller)" -f ($inSize / 1MB), ($outSize / 1MB), $pct)
-    Start-Process explorer.exe -ArgumentList ("/select,`"" + $outPath + "`"")
+    PauseExit $outPath
 }
 else {
     Write-Host ''

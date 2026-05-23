@@ -15,10 +15,11 @@ public class AdditionTemplatesTests
         // reason (the folder you right-clicked).
         foreach (var t in AdditionTemplates.All)
         {
-            // Smart-action entries target a clicked File or Folder, not the
-            // folder background (e.g. Change format / Upscale / "Upscale images").
+            // Smart-action entries target a clicked File / Folder / any object,
+            // not the folder background (Change format / Upscale / Remove background).
             if (t.Scope == AdditionScope.File) continue;
             if (t.Scope == AdditionScope.Folder) continue;
+            if (t.Scope == AdditionScope.AllFilesystemObjects) continue;
             Assert.Equal(AdditionScope.FolderBackground, t.Scope);
             Assert.Equal("%V", t.WorkingDir);
         }
@@ -144,6 +145,8 @@ public class AdditionTemplatesTests
         Assert.Contains("rcmm-compress.ps1", t.Command);
         Assert.Contains("%1", t.Command);
         Assert.Equal("lib:shrink", t.Icon);
+        Assert.Contains("mp4", t.FileTypes!);   // video — ffmpeg pipeline
+        Assert.Contains("png", t.FileTypes!);   // image — CaesiumCLT pipeline
     }
 
     [Fact]
@@ -158,6 +161,30 @@ public class AdditionTemplatesTests
         Assert.Contains("rcmm-upscale.ps1", t.Command);
         Assert.Contains("%1", t.Command);
         Assert.Equal("lib:arrow-big-up-dash", t.Icon);
+    }
+
+    [Theory]
+    [InlineData("Change format",    "mp4")]
+    [InlineData("Compress",         "mp4")]
+    [InlineData("Upscale",          "png")]
+    [InlineData("Remove background", "png")]
+    public void Media_smart_actions_are_file_type_scoped(string name, string sampleExt)
+    {
+        // Scoped to relevant extensions so they appear only on those file types,
+        // not on every file (the catch-all "*").
+        var t = AdditionTemplates.All.SingleOrDefault(x => x.Name == name);
+        Assert.NotNull(t);
+        Assert.Equal(AdditionScope.File, t!.Scope);
+        Assert.NotNull(t.FileTypes);
+        Assert.NotEmpty(t.FileTypes!);
+        Assert.Contains(sampleExt, t.FileTypes!);
+    }
+
+    [Fact]
+    public void Remove_background_has_no_separate_folder_entry()
+    {
+        // One image-scoped File entry; the folder-batch variant was dropped.
+        Assert.DoesNotContain(AdditionTemplates.All, x => x.Name == "Remove backgrounds");
     }
 
     [Fact]

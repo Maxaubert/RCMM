@@ -79,7 +79,11 @@ public sealed class AdditionApplier
             return new[] { ScopeRootFor(entry.Scope) };
         if (entry.FileTypes == null || entry.FileTypes.Count == 0)
             return new[] { "*" };
-        return entry.FileTypes.Select(ext => ext.StartsWith('.') ? ext : "." + ext).ToList();
+        // Per-extension verbs must live under SystemFileAssociations\<.ext>\shell —
+        // Explorer does NOT read context-menu verbs from a bare <.ext>\shell key.
+        return entry.FileTypes
+            .Select(ext => "SystemFileAssociations\\" + (ext.StartsWith('.') ? ext : "." + ext))
+            .ToList();
     }
 
     /// <summary>
@@ -329,7 +333,14 @@ public sealed class AdditionApplier
     /// </summary>
     public void PurgeOwnedKeys(IEnumerable<string> extraExtensionRoots)
     {
-        var roots = _staticScopeRoots.Concat(extraExtensionRoots.Select(NormaliseExtension))
+        // Purge both the SystemFileAssociations\<.ext> location we now write, AND
+        // the bare <.ext> location an earlier build wrote (so its dead keys go too).
+        var extRoots = extraExtensionRoots.SelectMany(ext =>
+        {
+            var dotted = NormaliseExtension(ext);
+            return new[] { dotted, "SystemFileAssociations\\" + dotted };
+        });
+        var roots = _staticScopeRoots.Concat(extRoots)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 

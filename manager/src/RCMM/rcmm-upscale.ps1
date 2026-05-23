@@ -32,9 +32,13 @@ $ToolDir = Join-Path $env:LOCALAPPDATA 'RCMM\tools\realesrgan'
 $ExeName = 'realesrgan-ncnn-vulkan.exe'
 $X       = [char]0x00D7   # ×
 
-function PauseExit {
+function PauseExit([string]$openPath = $null) {
     Write-Host ''
-    Read-Host 'Press Enter to close' | Out-Null
+    $canOpen = $openPath -and (Test-Path -LiteralPath $openPath)
+    $prompt  = if ($canOpen) { 'Press Enter to open the result and close' } else { 'Press Enter to close' }
+    Read-Host $prompt | Out-Null
+    # On success, open the output (file -> default app, folder -> Explorer) and exit.
+    if ($canOpen) { try { Start-Process $openPath } catch {} }
     exit
 }
 
@@ -238,7 +242,7 @@ $modelLabel = @('Photo', 'Anime')[$mSel]
 
 # 3. Scale picker.
 Clear-Host
-$sSel = Show-BoxMenu -Title 'Upscale  ·  scale' -Status ("Model: " + $modelLabel) `
+$sSel = Show-BoxMenu -Title 'Upscale:  scale' -Status ("Model: " + $modelLabel) `
                      -Items @("2$X  (faster)", "3$X", "4$X  (max detail, slower)")
 if ($sSel -lt 0) { Write-Host ''; Write-Host 'Cancelled.'; PauseExit }
 $scale = @(2, 3, 4)[$sSel]
@@ -280,6 +284,7 @@ if ($isFolder) {
     } else { 0 }
     if ($made -gt 0) {
         Write-Host ("Done -> {0}  ({1} of {2} image(s))" -f $out, $made, $imgs.Count)
+        PauseExit $out
     }
     else {
         Write-Host "Upscale failed (exit $LASTEXITCODE). No Vulkan GPU? Real-ESRGAN can't run."
@@ -287,6 +292,7 @@ if ($isFolder) {
 }
 elseif ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $out)) {
     Write-Host ("Done -> " + $out)
+    PauseExit $out
 }
 else {
     Write-Host "Upscale failed (exit $LASTEXITCODE). No Vulkan GPU? Real-ESRGAN can't run."

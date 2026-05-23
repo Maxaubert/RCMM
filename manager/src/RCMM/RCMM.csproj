@@ -23,6 +23,7 @@
     <Content Include="rcmm-convert.ps1" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="rcmm-compress.ps1" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="rcmm-upscale.ps1" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="rcmm-removebg.ps1" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="rcmm-action.ps1" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>

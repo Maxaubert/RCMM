@@ -178,6 +178,7 @@ public sealed partial class TemplatesPage : Page
             Scope = t.Scope,
             RunMode = t.RunMode,
             Icon = icon,
+            FileTypes = t.FileTypes,
         };
         _vm.AddEntry(entry);
         if (Frame.CanGoBack) Frame.GoBack();

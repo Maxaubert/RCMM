@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using RCMM.Core.Models;
 
 namespace RCMM.Core.Services;
@@ -39,7 +40,28 @@ public static class AdditionTemplates
         /// <summary>Fallback install paths for <see cref="IconBinary"/> when
         /// PATH lookup fails. Environment variables are expanded.</summary>
         public IReadOnlyList<string>? IconBinaryFallbacks { get; init; }
+
+        /// <summary>When set on a File-scope template, the added entry registers
+        /// only under these extensions (e.g. "png", "mp4") instead of the
+        /// catch-all "*", so it appears only on those file types.</summary>
+        public IReadOnlyList<string>? FileTypes { get; init; }
     }
+
+    // ---- File-type sets for the media smart actions (so they only appear on
+    //      relevant files, not every file). Match what each script accepts. ----
+    private static readonly string[] _imageExts = { "png", "jpg", "jpeg", "webp", "bmp" };          // Upscale / Remove background
+    private static readonly string[] _videoExts = { "mp4", "mkv", "mov", "webm", "avi", "m4v", "wmv", "flv", "ts", "m2ts", "mpg", "mpeg" }; // Compress
+    private static readonly string[] _changeFormatExts =                                            // everything Change format detects
+    {
+        "png", "jpg", "jpeg", "bmp", "gif", "webp", "tif", "tiff",
+        "mp4", "mkv", "mov", "webm", "avi", "m4v", "wmv",
+        "mp3", "wav", "flac", "m4a", "ogg", "aac", "wma",
+        "pdf", "docx", "doc", "odt", "rtf", "html", "htm", "md",
+    };
+    // Compress handles both: videos (ffmpeg) + images (CaesiumCLT). The script
+    // branches on the clicked file's extension.
+    private static readonly string[] _compressExts =
+        _videoExts.Concat(new[] { "png", "jpg", "jpeg", "webp", "bmp", "gif", "tif", "tiff" }).ToArray();
 
     // ---- Well-known install paths (declared before All so the catalogue's
     //      static initializer can read them in order). -----------------------
@@ -188,6 +210,7 @@ public static class AdditionTemplates
             Scope = AdditionScope.File,
             RunMode = RunMode.Background,
             Icon = "lib:redo-2",
+            FileTypes = _changeFormatExts,
         },
 
         // "Compress" opens a terminal running rcmm-compress.ps1 on the clicked
@@ -203,6 +226,7 @@ public static class AdditionTemplates
             Scope = AdditionScope.File,
             RunMode = RunMode.Background,
             Icon = "lib:shrink",
+            FileTypes = _compressExts,
         },
 
         // "Upscale" runs rcmm-upscale.ps1 on the clicked image: AI super-
@@ -218,6 +242,7 @@ public static class AdditionTemplates
             Scope = AdditionScope.File,
             RunMode = RunMode.Background,
             Icon = "lib:arrow-big-up-dash",
+            FileTypes = _imageExts,
         },
 
         // Same script on a folder right-click (%1 = the clicked folder): it
@@ -231,6 +256,22 @@ public static class AdditionTemplates
             Scope = AdditionScope.Folder,
             RunMode = RunMode.Background,
             Icon = "lib:arrow-big-up-dash",
+        },
+
+        // "Remove background" — AI image cutout via rembg (run through uv).
+        // File scope + image FileTypes so it only appears on image files (the
+        // folder-batch option was dropped in favour of this filtering). Pickers:
+        // model / edge refinement / background (transparent or composited via
+        // ImageMagick).
+        new Template
+        {
+            Name = "Remove background",
+            Command = "powershell -NoProfile -ExecutionPolicy Bypass -File \"%selfdir%\\rcmm-removebg.ps1\" \"%1\"",
+            Ecosystem = "Files",
+            Scope = AdditionScope.File,
+            RunMode = RunMode.Background,
+            Icon = "lib:eraser",
+            FileTypes = _imageExts,
         },
 
         // File power actions, routed through rcmm-action.ps1 (silent / self-
