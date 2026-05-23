@@ -4,7 +4,7 @@
 
 #define MyAppName        "RCMM"
 #define MyAppFullName    "Right-Click Menu Manager"
-#define MyAppVersion     "0.7.0"
+#define MyAppVersion     "0.7.1"
 #define MyAppPublisher   "Max"
 #define MyAppExeName     "RCMM.exe"
 #define MyAppId          "{{CB056509-57B8-424B-B7D2-8A75A523AC65}"
