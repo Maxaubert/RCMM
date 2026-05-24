@@ -132,6 +132,10 @@ public static class AdditionTemplates
         Shell("Git Bash here",         "\"%bin%\" \"--cd=%V\"",     "git-bash.exe", _gitBashPaths),
         Shell("WSL here",              "\"%bin%\" --cd \"%V\"",     "wsl.exe", null),
         Shell("Windows Terminal here", "\"%bin%\" -d \"%V\"",       "wt.exe", null),
+        // Tabby (tabby.sh) isn't on PATH, so %bin% resolves via the fallbacks.
+        // Its CLI verb `open [directory]` opens a shell in that folder.
+        Shell("Open Tabby here",       "\"%bin%\" open \"%V\"",     "Tabby.exe",
+              new[] { @"%ProgramFiles%\Tabby\Tabby.exe", @"%LOCALAPPDATA%\Programs\tabby\Tabby.exe" }),
 
         // AI CLI launchers — open Windows Terminal in the folder and
         // immediately drop into a tool's REPL/session. The trailing token
