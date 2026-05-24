@@ -6,13 +6,16 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
 using RCMM.Core.Diagnostics;
 using RCMM.Core.Models;
 using RCMM.Core.Services;
 using RCMM.Core.ViewModels;
 using RCMM.Util;
+using System.Threading.Tasks;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Storage.Streams;
 
 namespace RCMM.Views;
 
@@ -333,18 +336,7 @@ public sealed partial class AddPage : Page
             badge.Text = r.Badge ?? "";
             badge.Visibility = string.IsNullOrEmpty(r.Badge) ? Visibility.Collapsed : Visibility.Visible;
         }
-        // Icon — fresh Path per row (Geometry can't be shared across Paths).
-        if (g.FindName("IconHost") is Border iconHost)
-        {
-            if (IconLibrary.IsLibraryName(r.IconValue))
-            {
-                var p = IconRender.BuildIconElement(r.IconValue!, 16,
-                    (Brush)Application.Current.Resources["AppTextMuted"], thickness: 1.75);
-                if (p != null) { iconHost.Child = p; iconHost.Visibility = Visibility.Visible; }
-                else { iconHost.Child = null; iconHost.Visibility = Visibility.Collapsed; }
-            }
-            else { iconHost.Child = null; iconHost.Visibility = Visibility.Collapsed; }
-        }
+        PaintRowIcon(g, r, "IconHost", 16);
     }
 
     private void MidRowRoot_Loaded(object sender, RoutedEventArgs e)
@@ -367,17 +359,65 @@ public sealed partial class AddPage : Page
             sub.Text = r.SubText ?? "";
             sub.Visibility = string.IsNullOrEmpty(r.SubText) ? Visibility.Collapsed : Visibility.Visible;
         }
-        if (g.FindName("MidIconHost") is Border iconHost)
+        PaintRowIcon(g, r, "MidIconHost", 20);
+    }
+
+    /// <summary>
+    /// Paint a row's icon host from the row's stored IconValue. Two kinds, matching
+    /// what an entry's Icon can hold (and mirroring <c>TemplatesPage.ApplyTemplateRowIcon</c>):
+    ///   • a <c>lib:</c> name → synchronous lucide vector via <see cref="IconRender"/>.
+    ///   • anything else → a file/exe/dll/.ico path (e.g. what a Shell template stores
+    ///     after +Add resolves its IconBinary). Extracted off the UI thread and painted
+    ///     back as an Image. Previously only the lib case was handled, so binary-icon
+    ///     entries (Tabby, Windows Terminal, …) showed blank in this list.
+    /// </summary>
+    private void PaintRowIcon(Grid g, AddRow r, string hostName, double size)
+    {
+        if (g.FindName(hostName) is not Border host) return;
+        host.Child = null;
+        host.Visibility = Visibility.Collapsed;
+        var value = r.IconValue;
+        if (string.IsNullOrWhiteSpace(value)) return;
+
+        if (IconLibrary.IsLibraryName(value))
         {
-            if (IconLibrary.IsLibraryName(r.IconValue))
-            {
-                var p = IconRender.BuildIconElement(r.IconValue!, 20,
-                    (Brush)Application.Current.Resources["AppTextMuted"], thickness: 1.75);
-                if (p != null) { iconHost.Child = p; iconHost.Visibility = Visibility.Visible; }
-                else { iconHost.Child = null; iconHost.Visibility = Visibility.Collapsed; }
-            }
-            else { iconHost.Child = null; iconHost.Visibility = Visibility.Collapsed; }
+            // Fresh Path per row — Geometry can't be shared across Paths.
+            var p = IconRender.BuildIconElement(value!, size,
+                (Brush)Application.Current.Resources["AppTextMuted"], thickness: 1.75);
+            if (p != null) { host.Child = p; host.Visibility = Visibility.Visible; }
+            return;
         }
+        _ = LoadPathIconAsync(g, r, hostName, value!, size);
+    }
+
+    /// <summary>Extract an icon from a file/exe/dll/.ico path off the UI thread and
+    /// paint it into the row's host. Guards on the container's DataContext at each
+    /// await so a row recycled to a different entry mid-load isn't painted with a
+    /// stale icon (same recycle hazard handled in the left-pane visual painter).</summary>
+    private static async Task LoadPathIconAsync(Grid g, AddRow r, string hostName, string value, double size)
+    {
+        var bytes = await IconHelper.LoadIconBytesAsync(value);
+        if (bytes == null || bytes.Length == 0) return;
+        if (!ReferenceEquals(g.DataContext, r)) return;
+        if (g.FindName(hostName) is not Border host) return;
+        try
+        {
+            using var stream = new InMemoryRandomAccessStream();
+            using (var dw = new DataWriter(stream))
+            {
+                dw.WriteBytes(bytes);
+                await dw.StoreAsync();
+                await dw.FlushAsync();
+                dw.DetachStream();
+            }
+            stream.Seek(0);
+            var bmp = new BitmapImage();
+            await bmp.SetSourceAsync(stream);
+            if (!ReferenceEquals(g.DataContext, r)) return;
+            host.Child = new Image { Source = bmp, Width = size, Height = size };
+            host.Visibility = Visibility.Visible;
+        }
+        catch { }
     }
 
     // -------------------------------------------------------------------------
