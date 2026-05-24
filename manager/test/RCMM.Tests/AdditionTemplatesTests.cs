@@ -106,6 +106,7 @@ public class AdditionTemplatesTests
     [InlineData("Git Bash here",            "Shell",        "git-bash.exe")]
     [InlineData("WSL here",                 "Shell",        "wsl.exe")]
     [InlineData("Windows Terminal here",    "Shell",        "wt.exe")]
+    [InlineData("Open Tabby here",          "Shell",        "Tabby.exe")]
     [InlineData("Open Claude here",         "Shell",        "wt.exe")]
     [InlineData("Open Codex here",          "Shell",        "wt.exe")]
     [InlineData("Open Gemini here",         "Shell",        "wt.exe")]
