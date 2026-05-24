@@ -112,6 +112,8 @@ public class AdditionTemplatesTests
     [InlineData("Open Aider here",          "Shell",        "wt.exe")]
     [InlineData("Open Claude (resume)",     "Shell",        "wt.exe")]
     [InlineData("Open admin Terminal here", "Shell",        "wt.exe")]
+    [InlineData("Tabby here",               "Shell",        "Tabby.exe")]
+    [InlineData("Open Claude here (Tabby)", "Shell",        "Tabby.exe")]
     public void Binary_template_metadata(string name, string ecosystem, string expectedBinary)
     {
         var t = AdditionTemplates.All.SingleOrDefault(x => x.Name == name);
@@ -230,6 +232,31 @@ public class AdditionTemplatesTests
         Assert.Contains("rcmm-action.ps1", t.Command);
         Assert.Contains("-Action adminterm", t.Command);
         Assert.Contains("%V", t.Command);
+    }
+
+    [Fact]
+    public void Tabby_templates_exist()
+    {
+        // Clean primitive: open a Tabby shell in the folder (no dialog).
+        var here = AdditionTemplates.All.SingleOrDefault(x => x.Name == "Tabby here");
+        Assert.NotNull(here);
+        Assert.Equal("Shell", here!.Ecosystem);
+        Assert.Equal(AdditionScope.FolderBackground, here.Scope);
+        Assert.Equal(RunMode.Background, here.RunMode);
+        Assert.Equal("\"%bin%\" open \"%V\"", here.Command);
+        Assert.Equal("Tabby.exe", here.IconBinary);
+
+        // Experimental: claude in Tabby via `run cmd /k` so it cds to the folder
+        // and stays open. The claude brand icon wins over the Tabby exe icon.
+        var claude = AdditionTemplates.All.SingleOrDefault(x => x.Name == "Open Claude here (Tabby)");
+        Assert.NotNull(claude);
+        Assert.Equal(RunMode.Background, claude!.RunMode);
+        Assert.Equal("Tabby.exe", claude.IconBinary);
+        Assert.Equal("lib:claude", claude.Icon);
+        Assert.Contains("run powershell", claude.Command);   // Tabby `run` target
+        Assert.Contains("Set-Location -LiteralPath '%V'", claude.Command);  // cds to the folder
+        Assert.Contains("claude", claude.Command);
+        Assert.DoesNotContain("\"\"", claude.Command);        // no fragile doubled quotes
     }
 
     [Fact]

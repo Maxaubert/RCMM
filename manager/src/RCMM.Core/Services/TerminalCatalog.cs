@@ -40,6 +40,15 @@ public static class TerminalCatalog
         @"%LOCALAPPDATA%\Microsoft\PowerShell\7\pwsh.exe",
     };
 
+    // Tabby isn't on PATH and registers no App Paths entry, so it can't be
+    // launched by bare name from a shell verb — its option Value is the resolved
+    // absolute exe path (like a Custom terminal), and Wrap detects it by filename.
+    private static readonly IReadOnlyList<string> _tabbyPaths = new[]
+    {
+        @"%ProgramFiles%\Tabby\Tabby.exe",
+        @"%LOCALAPPDATA%\Programs\Tabby\Tabby.exe",
+    };
+
     /// <summary>
     /// Terminal options for the editor, filtered to what resolves on this PC.
     /// <paramref name="resolve"/> is the binary resolver (name + fallbacks → path
@@ -50,11 +59,15 @@ public static class TerminalCatalog
     {
         var list = new List<Option>();
         bool hasWt = resolve("wt.exe", null) != null;
+        // Resolved absolute path or null — the Value carries the path so Wrap can
+        // launch Tabby without it being on PATH.
+        var tabby = resolve("Tabby.exe", _tabbyPaths);
 
         if (mode == RunMode.VisibleTerminal)
         {
             list.Add(new Option("Command Prompt", ""));                 // default for plain commands
             if (hasWt) list.Add(new Option("Windows Terminal", "wt"));
+            if (tabby != null) list.Add(new Option("Tabby", tabby));
             list.Add(new Option("Windows PowerShell", "powershell"));
             if (resolve("pwsh.exe", _pwshPaths) != null) list.Add(new Option("PowerShell 7", "pwsh"));
             if (resolve("wsl.exe", null) != null) list.Add(new Option("WSL", "wsl"));
@@ -63,6 +76,7 @@ public static class TerminalCatalog
         {
             list.Add(new Option("Default console", ""));                 // host-only choices
             if (hasWt) list.Add(new Option("Windows Terminal", "wt"));
+            if (tabby != null) list.Add(new Option("Tabby", tabby));
         }
         list.Add(new Option("Custom…", Custom));
         return list;
@@ -111,6 +125,11 @@ public static class TerminalCatalog
         var t = string.IsNullOrWhiteSpace(terminal) ? null : terminal!.Trim();
         bool isPath = t != null &&
                       (t.Contains('\\') || t.Contains('/') || t.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
+        // Tabby's option Value is its absolute exe path; detect it by filename so we
+        // emit Tabby's CLI grammar (`run` / `open`) rather than the generic custom
+        // "exe + command" wrap, which Tabby's subcommand parser would reject.
+        bool isTabby = isPath &&
+                       string.Equals(System.IO.Path.GetFileName(t), "Tabby.exe", StringComparison.OrdinalIgnoreCase);
 
         if (mode == RunMode.VisibleTerminal)
         {
@@ -124,6 +143,10 @@ public static class TerminalCatalog
                 case "pwsh":       return "pwsh -NoExit -Command \"" + PsEscape(command) + "\"";
                 case "wsl":        return "wsl.exe -e bash -lic \"" + BashEscape(command) + "; exec bash\"";
             }
+            // Tabby's `run` runs the command in a new tab (cmd /k keeps it open) but
+            // pops its own "Run …?" prompt and ignores the launching cwd, so a plain
+            // command lands in Tabby's default profile dir — a documented caveat.
+            if (isTabby) return "\"" + t + "\" run cmd /k " + command;
             if (isPath) return "\"" + t + "\" " + command;   // custom terminal — best effort
             return "cmd /k " + command;
         }
@@ -131,6 +154,7 @@ public static class TerminalCatalog
         // Background: host the existing command as-is (no shell re-interpretation).
         if (t == null || t == "cmd" || t == "powershell") return command;
         if (t == "wt") return "wt.exe -d . " + command;
+        if (isTabby) return "\"" + t + "\" run " + command;   // best-effort host (Tabby prompts)
         if (isPath) return "\"" + t + "\" " + command;
         return command;
     }

@@ -41,6 +41,16 @@ public class TerminalCatalogTests
             TerminalCatalog.Wrap("git pull", RunMode.VisibleTerminal, @"C:\tools\alacritty.exe"));
     }
 
+    [Fact]
+    public void Visible_tabby_runs_command_via_run_cmd_k()
+    {
+        // Tabby's Value is its absolute path; detected by filename, it gets Tabby's
+        // `run` grammar (not the generic custom "exe + command" wrap). cmd /k keeps
+        // the tab open.
+        Assert.Equal("\"C:\\Program Files\\Tabby\\Tabby.exe\" run cmd /k git pull",
+            TerminalCatalog.Wrap("git pull", RunMode.VisibleTerminal, @"C:\Program Files\Tabby\Tabby.exe"));
+    }
+
     // ---- Wrap: script action (Background) is only hosted, never re-shelled ----
 
     [Fact]
@@ -56,6 +66,14 @@ public class TerminalCatalogTests
     {
         var cmd = "powershell -NoProfile -File \"x.ps1\" \"%1\"";
         Assert.Equal("wt.exe -d . " + cmd, TerminalCatalog.Wrap(cmd, RunMode.Background, "wt"));
+    }
+
+    [Fact]
+    public void Background_tabby_hosts_via_run_without_requoting()
+    {
+        var cmd = "powershell -NoProfile -File \"x.ps1\" \"%1\"";
+        Assert.Equal("\"C:\\Program Files\\Tabby\\Tabby.exe\" run " + cmd,
+            TerminalCatalog.Wrap(cmd, RunMode.Background, @"C:\Program Files\Tabby\Tabby.exe"));
     }
 
     // ---- OpensVisibleTerminal ----
@@ -114,5 +132,33 @@ public class TerminalCatalogTests
         string? Resolve(string name, IReadOnlyList<string>? _) => name == "wt.exe" ? @"C:\wt.exe" : null;
         var values = TerminalCatalog.OptionsFor(RunMode.Background, Resolve).Select(o => o.Value).ToList();
         Assert.Equal(new[] { "", "wt", TerminalCatalog.Custom }, values);  // no shells
+    }
+
+    // ---- Tabby: offered (with its resolved path as Value) only when installed ----
+
+    [Fact]
+    public void Options_include_tabby_with_resolved_path_when_installed()
+    {
+        const string tabbyPath = @"C:\Program Files\Tabby\Tabby.exe";
+        string? Resolve(string name, IReadOnlyList<string>? _) => name switch
+        {
+            "Tabby.exe" => tabbyPath,
+            "wt.exe"    => @"C:\wt.exe",
+            _           => null,
+        };
+
+        foreach (var mode in new[] { RunMode.VisibleTerminal, RunMode.Background })
+        {
+            var opts = TerminalCatalog.OptionsFor(mode, Resolve);
+            Assert.Contains(opts, o => o.Display == "Tabby" && o.Value == tabbyPath);
+        }
+    }
+
+    [Fact]
+    public void Options_omit_tabby_when_not_installed()
+    {
+        string? Resolve(string name, IReadOnlyList<string>? _) => name == "wt.exe" ? @"C:\wt.exe" : null;
+        var opts = TerminalCatalog.OptionsFor(RunMode.VisibleTerminal, Resolve);
+        Assert.DoesNotContain(opts, o => o.Display == "Tabby");
     }
 }

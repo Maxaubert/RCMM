@@ -93,6 +93,12 @@ public static class AdditionTemplates
         @"%LOCALAPPDATA%\Programs\Git\git-bash.exe",
     };
 
+    private static readonly IReadOnlyList<string> _tabbyPaths = new[]
+    {
+        @"%ProgramFiles%\Tabby\Tabby.exe",
+        @"%LOCALAPPDATA%\Programs\Tabby\Tabby.exe",
+    };
+
     // ---- Section-by-section catalogue (display order matters) ---------------
 
     public static IReadOnlyList<Template> All { get; } = new List<Template>
@@ -132,6 +138,10 @@ public static class AdditionTemplates
         Shell("Git Bash here",         "\"%bin%\" \"--cd=%V\"",     "git-bash.exe", _gitBashPaths),
         Shell("WSL here",              "\"%bin%\" --cd \"%V\"",     "wsl.exe", null),
         Shell("Windows Terminal here", "\"%bin%\" -d \"%V\"",       "wt.exe", null),
+        // Tabby's only dialog-free primitive is `open <dir>` — opens a shell tab in
+        // the folder. Icon is extracted from Tabby.exe (resolved via fallbacks since
+        // Tabby isn't on PATH).
+        Shell("Tabby here",            "\"%bin%\" open \"%V\"",     "Tabby.exe", _tabbyPaths),
 
         // AI CLI launchers — open Windows Terminal in the folder and
         // immediately drop into a tool's REPL/session. The trailing token
@@ -143,6 +153,11 @@ public static class AdditionTemplates
         Shell("Open Gemini here", "\"%bin%\" -d \"%V\" gemini", "wt.exe", null),
         Shell("Open Aider here",  "\"%bin%\" -d \"%V\" aider",  "wt.exe", null),
         Shell("Open Claude (resume)", "\"%bin%\" -d \"%V\" claude --resume", "wt.exe", null, icon: "lib:claude"),
+        // Experimental: claude in Tabby. Tabby's `run` ignores the launching cwd, so
+        // PowerShell does the Set-Location (single-quoted path = no nested double-quotes
+        // to survive three parsers), then drops into claude. -NoExit keeps the tab open.
+        // Tabby still shows its "Run …?" prompt on every launch — that's a Tabby behavior.
+        Shell("Open Claude here (Tabby)", "\"%bin%\" run powershell -NoExit -Command \"Set-Location -LiteralPath '%V'; claude\"", "Tabby.exe", _tabbyPaths, icon: "lib:claude"),
 
         // Open an ELEVATED terminal in the folder (Windows' "Open in Terminal"
         // is non-admin only). Routed through rcmm-action.ps1, which self-elevates
