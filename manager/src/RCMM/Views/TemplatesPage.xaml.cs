@@ -136,6 +136,13 @@ public sealed partial class TemplatesPage : Page
     private void AddTemplate(AdditionTemplates.Template t)
     {
         var (command, icon) = ExpandTemplate(t);
+        // Seed the configured default terminal only for templates that open a visible
+        // terminal; a GUI-launch template has no meaningful terminal. (Terminal isn't a
+        // hashed field, so this doesn't affect template-update tracking.) null = never
+        // chosen → preferred default (Windows Terminal if installed).
+        var def = new SettingsStore().Load().DefaultTerminal ?? TerminalCatalog.DefaultPreferred(BinaryResolver.Find);
+        string? terminal = !string.IsNullOrWhiteSpace(def) && TerminalCatalog.OpensVisibleTerminal(t.RunMode, command)
+            ? def : null;
         var entry = new AdditionEntry
         {
             Id = Guid.NewGuid().ToString("N"),
@@ -146,6 +153,7 @@ public sealed partial class TemplatesPage : Page
             RunMode = t.RunMode,
             Icon = icon,
             FileTypes = t.FileTypes,
+            Terminal = terminal,
         };
         // Stamp so RCMM can later notice if we change this template and offer an update.
         entry = TemplateUpdateService.Stamp(entry, t);

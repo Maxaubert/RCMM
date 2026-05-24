@@ -455,12 +455,23 @@ public sealed class MainViewModel : ObservableObject
         "App Resolver",
     };
 
+    // Verbs that must never be offered for hiding because disabling them breaks
+    // core navigation. "open" is the double-click / Enter action for folders,
+    // drives and files — hiding it would make the user unable to open anything,
+    // so it has no business being a toggle. Ids are "verb:" + lowercased verb.
+    private static readonly string[] _suppressedEntryIds =
+    {
+        "verb:open",
+    };
+
     private void FilterIntoAllEntries()
     {
         AllEntries.Clear();
         foreach (var row in _allRows)
         {
             if (row.IsBuiltIn && !_showBuiltIns) continue;
+            // Never offer verbs whose removal would break core navigation (e.g. "open").
+            if (_suppressedEntryIds.Contains(row.Entry.Id, StringComparer.OrdinalIgnoreCase)) continue;
             // Conditional / informational handlers that surface during probing but
             // aren't real menu options the user can act on.
             if (_suppressedDisplayNames.Contains(row.Entry.DisplayName, StringComparer.OrdinalIgnoreCase)) continue;

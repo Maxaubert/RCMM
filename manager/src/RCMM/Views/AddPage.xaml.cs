@@ -488,6 +488,10 @@ public sealed partial class AddPage : Page
 
     private void NewEntry_Click(object sender, RoutedEventArgs e)
     {
+        // Seed the configured default terminal (a new entry is VisibleTerminal, so it
+        // always opens a terminal). null = never chosen → preferred default (Windows
+        // Terminal if installed). Empty = Command Prompt, stored as null on the entry.
+        var def = new SettingsStore().Load().DefaultTerminal ?? TerminalCatalog.DefaultPreferred(BinaryResolver.Find);
         var entry = new AdditionEntry
         {
             Id = Guid.NewGuid().ToString("N"),
@@ -496,6 +500,7 @@ public sealed partial class AddPage : Page
             WorkingDir = "%V",
             Scope = AdditionScope.FolderBackground,
             RunMode = RunMode.VisibleTerminal,
+            Terminal = string.IsNullOrWhiteSpace(def) ? null : def,
         };
         _vm.AddEntry(entry);
         SelectAndEdit("entry", entry.Id);

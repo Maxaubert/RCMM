@@ -68,6 +68,14 @@ public static class TerminalCatalog
         return list;
     }
 
+    /// <summary>
+    /// The terminal a new entry should default to when the user hasn't chosen one:
+    /// Windows Terminal if it's installed, otherwise Command Prompt (""). <paramref
+    /// name="resolve"/> is the binary resolver (injected for testability).
+    /// </summary>
+    public static string DefaultPreferred(Func<string, IReadOnlyList<string>?, string?> resolve)
+        => resolve("wt.exe", null) != null ? "wt" : "";
+
     /// <summary>True when the entry pops a visible terminal window, so the
     /// Terminal selector is relevant. Background entries qualify only if their
     /// command launches a shell/terminal and isn't run hidden.</summary>

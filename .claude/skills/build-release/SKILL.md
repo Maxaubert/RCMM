@@ -39,7 +39,7 @@ Outputs:
 
 ## Version bump
 
-Edit `installer\RCMM.iss` → `#define MyAppVersion "X.Y.Z"`. Bump this when releasing a new version so Windows' Add/Remove Programs perceives an upgrade. The `chore: bump installer to X.Y.Z` commits in history follow this convention.
+**Single source of truth: `<Version>` in `manager\src\RCMM\RCMM.csproj`.** Edit that one number and everything follows — the About page reads it from the assembly at runtime, and `installer\RCMM.iss` reads it from the built `RCMM.exe` (`GetStringFileInfo(..., "ProductVersion")`), so the installer / Add-Remove-Programs version and the `RCMM-Setup-x64-<version>.exe` filename match automatically. Don't hardcode the version anywhere else. (`IncludeSourceRevisionInInformationalVersion` is `false` so ProductVersion stays a clean `x.y.z` instead of .NET 8's default `x.y.z+<gitsha>`.) Order matters: the publish to `dist\publish` must run **before** ISCC, since ISCC reads the version from that exe. The older `chore: bump installer to X.Y.Z` commits predate this.
 
 ## Release
 

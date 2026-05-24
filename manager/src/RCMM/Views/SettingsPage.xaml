@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="RCMM.Views.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Page.Resources>
+        <!-- Lime accent for toggles / dropdowns. The app-wide theme override doesn't
+             reliably reach in-page controls, so scope the brushes here (the pattern
+             ScopePage uses for its row toggles). -->
+        <SolidColorBrush x:Key="ToggleSwitchFillOn"                Color="#d4ff3a"/>
+        <SolidColorBrush x:Key="ToggleSwitchFillOnPointerOver"     Color="#e5ff5a"/>
+        <SolidColorBrush x:Key="ToggleSwitchFillOnPressed"         Color="#c2eb28"/>
+        <SolidColorBrush x:Key="ToggleSwitchStrokeOn"              Color="#d4ff3a"/>
+        <SolidColorBrush x:Key="ToggleSwitchStrokeOnPointerOver"   Color="#d4ff3a"/>
+        <SolidColorBrush x:Key="ToggleSwitchStrokeOnPressed"       Color="#c2eb28"/>
+        <SolidColorBrush x:Key="ToggleSwitchKnobFillOn"            Color="#0a0a0a"/>
+        <SolidColorBrush x:Key="ToggleSwitchKnobFillOnPointerOver" Color="#0a0a0a"/>
+        <SolidColorBrush x:Key="ToggleSwitchKnobFillOnPressed"     Color="#0a0a0a"/>
+        <SolidColorBrush x:Key="AccentFillColorDefaultBrush"       Color="#d4ff3a"/>
+        <SolidColorBrush x:Key="AccentFillColorSecondaryBrush"     Color="#e5ff5a"/>
+        <SolidColorBrush x:Key="AccentFillColorTertiaryBrush"      Color="#c2eb28"/>
+        <SolidColorBrush x:Key="TextOnAccentFillColorPrimaryBrush" Color="#0a0a0a"/>
+    </Page.Resources>
+
+    <!-- Opaque background on the page AND the scroll surface: a transparent
+         ScrollViewer forces the compositor to re-blend the window background behind
+         the moving text every frame, which shows up as tearing/shimmer while
+         scrolling. An opaque scroll surface composites as one layer and stops it. -->
+    <Grid Background="{ThemeResource WindowBackground}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto"
+                      Background="{ThemeResource WindowBackground}">
+            <StackPanel Padding="48,28,48,32" Spacing="22" MaxWidth="900" HorizontalAlignment="Left">
+
+                <!-- Heading -->
+                <StackPanel Spacing="8">
+                    <TextBlock Text="Settings" FontSize="38" FontWeight="Medium"
+                               Foreground="{ThemeResource AppText}" CharacterSpacing="-15"/>
+                    <TextBlock Text="Changes are staged until you press Apply at the bottom of the page."
+                               Foreground="{ThemeResource AppTextMuted}" FontSize="13" TextWrapping="Wrap" MaxWidth="640"/>
+                </StackPanel>
+
+                <!-- General -->
+                <Border Background="{ThemeResource AppSurface}" BorderBrush="{ThemeResource AppBorder}"
+                        BorderThickness="1" CornerRadius="12" Padding="22,18">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,4">
+                            <FontIcon Glyph="&#xE713;" FontSize="16" Foreground="{ThemeResource AppAccent}"/>
+                            <TextBlock Text="General" FontSize="16" FontWeight="SemiBold" Foreground="{ThemeResource AppText}"/>
+                        </StackPanel>
+
+                        <Grid Padding="0,12" BorderBrush="{ThemeResource AppBorder}" BorderThickness="0,1,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
+                                <TextBlock Text="Restart Explorer automatically" Foreground="{ThemeResource AppText}" FontSize="14"/>
+                                <TextBlock Text="Restart Explorer on Apply so changes show immediately." Foreground="{ThemeResource AppTextMuted}" FontSize="12" TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <ToggleSwitch x:Name="RestartExplorerToggle" Grid.Column="1" VerticalAlignment="Center"
+                                          MinWidth="0" OnContent="" OffContent="" Toggled="RestartExplorer_Toggled"/>
+                        </Grid>
+
+                        <Grid Padding="0,12" BorderBrush="{ThemeResource AppBorder}" BorderThickness="0,1,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
+                                <TextBlock Text="Set default terminal" Foreground="{ThemeResource AppText}" FontSize="14"/>
+                                <TextBlock Text="New entries open in this terminal. Pick &#8220;Browse for .exe&#8230;&#8221; for one that isn't listed."
+                                           Foreground="{ThemeResource AppTextMuted}" FontSize="12" TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <ComboBox x:Name="DefaultTerminalBox" Grid.Column="1" MinWidth="200" VerticalAlignment="Center"
+                                      DisplayMemberPath="Display" SelectionChanged="DefaultTerminal_Changed"/>
+                        </Grid>
+
+                        <Grid Padding="0,12" BorderBrush="{ThemeResource AppBorder}" BorderThickness="0,1,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
+                                <TextBlock Text="Context menu" Foreground="{ThemeResource AppText}" FontSize="14"/>
+                                <TextBlock Text="Restarts Explorer to apply; your hidden and added entries are kept."
+                                           Foreground="{ThemeResource AppTextMuted}" FontSize="12" TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <ComboBox x:Name="ContextMenuBox" Grid.Column="1" MinWidth="200" VerticalAlignment="Center"
+                                      SelectionChanged="ContextMenu_Changed">
+                                <ComboBoxItem Content="Classic (Recommended)"/>
+                                <ComboBoxItem Content="Win 11"/>
+                            </ComboBox>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- Maintenance -->
+                <Border Background="{ThemeResource AppSurface}" BorderBrush="{ThemeResource AppBorder}"
+                        BorderThickness="1" CornerRadius="12" Padding="22,18">
+                    <StackPanel Spacing="14">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <FontIcon Glyph="&#xEC7A;" FontSize="16" Foreground="{ThemeResource AppAccent}"/>
+                            <TextBlock Text="Maintenance" FontSize="16" FontWeight="SemiBold" Foreground="{ThemeResource AppText}"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <Button x:Name="OpenLogsButton" Content="Open logs folder" Click="OpenLogs_Click"
+                                    Style="{StaticResource SurfaceButton}"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- About -->
+                <Border Background="{ThemeResource AppSurface}" BorderBrush="{ThemeResource AppBorder}"
+                        BorderThickness="1" CornerRadius="12" Padding="22,18">
+                    <StackPanel Spacing="6">
+                        <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,4">
+                            <FontIcon Glyph="&#xE946;" FontSize="16" Foreground="{ThemeResource AppAccent}"/>
+                            <TextBlock Text="About" FontSize="16" FontWeight="SemiBold" Foreground="{ThemeResource AppText}"/>
+                        </StackPanel>
+                        <TextBlock Text="RCMM — Right-Click Menu Manager" Foreground="{ThemeResource AppText}" FontSize="14"/>
+                        <TextBlock x:Name="VersionText" Foreground="{ThemeResource AppTextMuted}" FontSize="12"/>
+                    </StackPanel>
+                </Border>
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Docked Apply bar — always visible so a change made up top is one click away. -->
+        <Border Grid.Row="1" Background="{ThemeResource FooterBackground}" BorderBrush="{ThemeResource AppBorder}"
+                BorderThickness="0,1,0,0" Padding="48,12">
+            <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <TextBlock x:Name="DirtyHint" Grid.Column="0" VerticalAlignment="Center" Text="Unsaved changes"
+                           Foreground="{ThemeResource AppTextMuted}" FontSize="13" Visibility="Collapsed"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12">
+                    <Button x:Name="ResetButton" Content="Reset to defaults" Click="Reset_Click"
+                            Style="{StaticResource SurfaceButton}"/>
+                    <Button x:Name="ApplyButton" Content="Apply" Click="Apply_Click"
+                            Style="{StaticResource AccentButton}" IsEnabled="False"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Page>

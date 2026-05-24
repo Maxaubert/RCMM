@@ -126,7 +126,10 @@ public sealed class TemplateUpdateService
             foreach (var r in removed) sb.Append(" -").Append(r);
             parts.Add(sb.ToString());
         }
-        if (!string.Equals(e.Command, t.Command, StringComparison.Ordinal)) parts.Add("command updated");
+        // NB: we don't diff the command. The entry stores it with %selfdir% / %bin%
+        // already resolved to absolute paths, while the template keeps the placeholders,
+        // so a raw compare always reports "changed". A genuine command-only change still
+        // surfaces via the hash and falls through to the generic "updated" below.
         if (e.Scope != t.Scope) parts.Add($"scope -> {t.Scope}");
         if (e.RunMode != t.RunMode) parts.Add($"run mode -> {t.RunMode}");
         if (!string.Equals(e.WorkingDir, t.WorkingDir, StringComparison.Ordinal)) parts.Add("working dir updated");

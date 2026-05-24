@@ -61,21 +61,41 @@ public class MainViewModelTests : System.IDisposable
     [Fact]
     public void Rescan_dedupes_same_verb_across_multiple_targets()
     {
+        // Uses "edit" rather than "open": the generic "open" verb is intentionally
+        // suppressed from the list (hiding it would break opening files/folders).
         var (vm, reg, cap) = BuildSut();
-        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\open", "", "Open");
-        reg.SetValue(RegistryHive.ClassesRoot, @"Directory\shell\open", "", "Open");
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\edit", "", "Edit");
+        reg.SetValue(RegistryHive.ClassesRoot, @"Directory\shell\edit", "", "Edit");
 
         foreach (var target in _targets.GetTargets())
         {
             cap.Map[target] = new List<CapturedItem>
             {
-                new() { TargetPath = target, Position = 0, DisplayName = "Open", Verb = "open" }
+                new() { TargetPath = target, Position = 0, DisplayName = "Edit", Verb = "edit" }
             };
         }
 
         vm.Rescan();
 
         Assert.Single(vm.AllEntries);
+    }
+
+    [Fact]
+    public void Rescan_suppresses_the_generic_open_verb()
+    {
+        // "open" is the default action for files/folders/drives — hiding it would
+        // make them un-openable, so it's never offered in the list.
+        var (vm, reg, cap) = BuildSut();
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\open", "", "Open");
+        var target = FirstFileTarget();
+        cap.Map[target] = new List<CapturedItem>
+        {
+            new() { TargetPath = target, Position = 0, DisplayName = "Open", Verb = "open" }
+        };
+
+        vm.Rescan();
+
+        Assert.DoesNotContain(vm.AllEntries, r => r.Entry.Id == "verb:open");
     }
 
     [Fact]

@@ -22,6 +22,7 @@ public sealed partial class MainWindow : Window
     private WindowMinSize? _minSize;
     private bool _busy;
     private bool _templateUpdatesChecked;
+    private bool _settingsLeaveGuard;
 
     public MainWindow()
     {
@@ -57,6 +58,13 @@ public sealed partial class MainWindow : Window
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
+        // SetTitleBar's automatic pass-through for interactive children is unreliable —
+        // clicks on the nav / settings buttons get swallowed by the title bar's drag
+        // region and need a second click. Explicitly mark each button's rectangle as a
+        // pass-through (interactive) region so the first click always lands. Refreshed
+        // on layout because the rects are in physical pixels and depend on size/DPI.
+        AppTitleBar.Loaded += (_, __) => SetTitleBarInteractiveRegions();
+        AppTitleBar.SizeChanged += (_, __) => SetTitleBarInteractiveRegions();
         TryRemoveWindowBorder();
         _minSize = WindowMinSize.Apply(WinRT.Interop.WindowNative.GetWindowHandle(this), 600, 480);
         CenterOnPrimaryDisplay();
@@ -89,6 +97,7 @@ public sealed partial class MainWindow : Window
             UpdateFooterApplyVisibility(e.SourcePageType);
             UpdateNavButtons();
         };
+        ContentFrame.Navigating += ContentFrame_Navigating;
         ContentFrame.Navigate(typeof(LandingPage), new NavArgs(ViewModel));
 
         // Once the visual tree is up (XamlRoot ready), check whether any added
@@ -117,6 +126,41 @@ public sealed partial class MainWindow : Window
     private void NavHome_Click(object sender, RoutedEventArgs e)
     {
         while (ContentFrame.CanGoBack) ContentFrame.GoBack();
+    }
+
+    private void Settings_Click(object sender, RoutedEventArgs e)
+    {
+        if (ContentFrame.CurrentSourcePageType != typeof(SettingsPage))
+            ContentFrame.Navigate(typeof(SettingsPage), new NavArgs(ViewModel));
+    }
+
+    /// <summary>Guard navigation away from a dirty Settings page: cancel the move,
+    /// ask Apply / Discard / Cancel, then re-issue the navigation per the choice. The
+    /// re-issued navigation is let through by <see cref="_settingsLeaveGuard"/>.</summary>
+    private async void ContentFrame_Navigating(object sender, Microsoft.UI.Xaml.Navigation.NavigatingCancelEventArgs e)
+    {
+        if (_settingsLeaveGuard) { _settingsLeaveGuard = false; return; }
+        if (ContentFrame.Content is not SettingsPage sp || !sp.IsDirty) return;
+
+        var target = e.SourcePageType;
+        var param = e.Parameter;
+        var mode = e.NavigationMode;
+        e.Cancel = true;   // must be set before the first await
+
+        var choice = await sp.ConfirmLeaveAsync();
+        if (choice == SettingsLeaveChoice.Cancel) return;
+        if (choice == SettingsLeaveChoice.Apply)
+        {
+            try { await sp.ApplyAsync(); }
+            catch (Exception ex) { Log.Error("settings", "apply-on-leave failed", ex); }
+        }
+        else sp.Revert();
+
+        _settingsLeaveGuard = true;
+        if (mode == Microsoft.UI.Xaml.Navigation.NavigationMode.Back && ContentFrame.CanGoBack)
+            ContentFrame.GoBack();
+        else if (target != null)
+            ContentFrame.Navigate(target, param);
     }
 
     private void UpdateFooterApplyVisibility(Type pageType)
@@ -156,7 +200,11 @@ public sealed partial class MainWindow : Window
         try
         {
             await Task.Run(() => ViewModel.ApplyPending());
-            await Task.Run(() => new ExplorerRestart().Restart());
+            // Honor the "Restart Explorer automatically" setting. Off = write the
+            // registry but leave Explorer alone (some changes then show only after
+            // the user restarts Explorer or signs out).
+            if (new SettingsStore().Load().RestartExplorerOnApply)
+                await Task.Run(() => new ExplorerRestart().Restart());
             await ViewModel.RescanAsync();
         }
         catch (Exception ex) { Log.Error("apply", "apply/rescan failed", ex); }
@@ -239,6 +287,38 @@ private void LoadIconsForAllEntries()
         int x = display.WorkArea.X + (display.WorkArea.Width - appWindow.Size.Width) / 2;
         int y = display.WorkArea.Y + (display.WorkArea.Height - appWindow.Size.Height) / 2;
         appWindow.Move(new Windows.Graphics.PointInt32(x, y));
+    }
+
+    /// <summary>Declare the title-bar buttons' rectangles as pass-through (interactive)
+    /// regions so the window's non-client hit-testing delivers clicks to them on the
+    /// first press instead of swallowing it. Rects are physical pixels (scaled by the
+    /// rasterization scale), so this must re-run whenever the title bar lays out.</summary>
+    private void SetTitleBarInteractiveRegions()
+    {
+        if (AppTitleBar.XamlRoot is null) return;
+        double scale = AppTitleBar.XamlRoot.RasterizationScale;
+        var buttons = new FrameworkElement[] { NavBackButton, NavHomeButton, SettingsButton };
+        var rects = new System.Collections.Generic.List<Windows.Graphics.RectInt32>(buttons.Length);
+        foreach (var b in buttons)
+        {
+            if (b.ActualWidth <= 0 || b.ActualHeight <= 0) continue;
+            var bounds = b.TransformToVisual(null)
+                .TransformBounds(new Windows.Foundation.Rect(0, 0, b.ActualWidth, b.ActualHeight));
+            rects.Add(new Windows.Graphics.RectInt32(
+                (int)Math.Round(bounds.X * scale),
+                (int)Math.Round(bounds.Y * scale),
+                (int)Math.Round(bounds.Width * scale),
+                (int)Math.Round(bounds.Height * scale)));
+        }
+        if (rects.Count == 0) return;
+        try
+        {
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd);
+            var src = Microsoft.UI.Input.InputNonClientPointerSource.GetForWindowId(windowId);
+            src.SetRegionRects(Microsoft.UI.Input.NonClientRegionKind.Passthrough, rects.ToArray());
+        }
+        catch (Exception ex) { Log.Error("ui", "title-bar passthrough regions failed", ex); }
     }
 
     private void TryRemoveWindowBorder()

@@ -4,10 +4,13 @@
 
 #define MyAppName        "RCMM"
 #define MyAppFullName    "Right-Click Menu Manager"
-#define MyAppVersion     "0.7.2"
 #define MyAppPublisher   "Max"
 #define MyAppExeName     "RCMM.exe"
 #define MyAppId          "{{CB056509-57B8-424B-B7D2-8A75A523AC65}"
+; Version is read from the built exe so it never drifts — the single source is
+; <Version> in manager\src\RCMM\RCMM.csproj. Requires the self-contained publish to
+; exist first (the release flow publishes to dist\publish before running ISCC).
+#define MyAppVersion     GetStringFileInfo(AddBackslash(SourcePath) + "..\dist\publish\" + MyAppExeName, "ProductVersion")
 
 [Setup]
 AppId={#MyAppId}

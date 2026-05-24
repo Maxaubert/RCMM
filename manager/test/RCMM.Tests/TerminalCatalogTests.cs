@@ -92,6 +92,22 @@ public class TerminalCatalogTests
         Assert.DoesNotContain("wsl", values);                   // not resolved
     }
 
+    // ---- DefaultPreferred: Windows Terminal when installed, else Command Prompt ----
+
+    [Fact]
+    public void DefaultPreferred_is_wt_when_installed()
+    {
+        string? Resolve(string name, IReadOnlyList<string>? _) => name == "wt.exe" ? @"C:\wt.exe" : null;
+        Assert.Equal("wt", TerminalCatalog.DefaultPreferred(Resolve));
+    }
+
+    [Fact]
+    public void DefaultPreferred_is_command_prompt_when_wt_absent()
+    {
+        string? Resolve(string name, IReadOnlyList<string>? _) => null;   // nothing installed
+        Assert.Equal("", TerminalCatalog.DefaultPreferred(Resolve));
+    }
+
     [Fact]
     public void Options_background_is_host_only()
     {

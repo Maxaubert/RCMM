@@ -45,8 +45,15 @@
                 </Button>
             </StackPanel>
 
-            <!-- Drag area (rest of bar) -->
-            <Grid Grid.Column="3" Background="Transparent"/>
+            <!-- Drag area (rest of bar) + Settings on the right -->
+            <Grid Grid.Column="3" Background="Transparent">
+                <Button x:Name="SettingsButton" Click="Settings_Click"
+                        Style="{StaticResource TitleBarIconButton}"
+                        ToolTipService.ToolTip="Settings"
+                        HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <FontIcon Glyph="&#xE713;" FontSize="15"/>
+                </Button>
+            </Grid>
         </Grid>
 
         <!-- Content -->

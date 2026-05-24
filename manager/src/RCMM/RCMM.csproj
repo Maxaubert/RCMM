@@ -10,6 +10,12 @@
     <LangVersion>12</LangVersion>
     <Platforms>x64</Platforms>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <!-- Single source of truth for the app version. The About page reads it from the
+         assembly at runtime, and the installer reads it from the built exe — so this
+         is the ONLY place to bump on release. (Suffix off so the version stays a clean
+         "x.y.z" rather than ".NET 8's default "x.y.z+<gitsha>".) -->
+    <Version>0.7.3</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <WindowsPackageType>None</WindowsPackageType>
     <EnableMsixTooling>true</EnableMsixTooling>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
