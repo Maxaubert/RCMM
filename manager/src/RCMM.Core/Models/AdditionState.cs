@@ -8,11 +8,14 @@ namespace RCMM.Core.Models;
 ///        <see cref="AdditionFolder.Scope"/>). Single level of nesting only.
 ///   v2 — folder nesting (max 3 levels in the editor), explicit folder Scope,
 ///        item order captured by list position in <see cref="Folders"/>/<see cref="Entries"/>.
-/// AdditionStore.Load migrates v1 → v2 transparently.
+///   v3 — template-update tracking: back-fills <see cref="AdditionEntry.SourceTemplateId"/>
+///        and <see cref="AdditionEntry.AppliedTemplateHash"/> on entries whose Name
+///        matches a built-in template, so RCMM can offer updates when we change one.
+/// AdditionStore.Load migrates older schemas transparently.
 /// </summary>
 public sealed record AdditionState
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
     public int SchemaVersion { get; init; } = CurrentSchemaVersion;
     public IReadOnlyList<AdditionFolder> Folders { get; init; } = new List<AdditionFolder>();
     public IReadOnlyList<AdditionEntry> Entries { get; init; } = new List<AdditionEntry>();

@@ -513,6 +513,13 @@ public sealed partial class AddPage : Page
         Frame.Navigate(typeof(TemplatesPage), _args);
     }
 
+    private async void CheckUpdates_Click(object sender, RoutedEventArgs e)
+    {
+        await TemplateUpdatesDialog.RunAsync(_args.ViewModel, XamlRoot, manual: true);
+        // Merged entries may have changed in place — re-render the list/editor.
+        RebuildLeftRows();
+    }
+
     private void SelectAndEdit(string kind, string id)
     {
         _selectedKind = kind; _selectedId = id; _middlePath.Clear();

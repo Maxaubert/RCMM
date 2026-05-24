@@ -1091,6 +1091,29 @@ public sealed class MainViewModel : ObservableObject
             }
             catch (Exception ex) { Log.Error("apply", "additions failed", ex); }
         }
+        else if (_additionApplier != null && (_pendingHide.Count > 0 || _pendingUnhide.Count > 0))
+        {
+            // A hide/unhide batch ran with no addition edits of its own. Re-assert
+            // the user's existing added entries as part of the same Apply: after a
+            // large Blocked-list hide + Explorer restart, Explorer can stop rendering
+            // user-added Directory\Background verbs even though their keys are intact
+            // (RCMM still captures them on rescan). A fresh registry write under
+            // …\shell is what forces the classic menu to rebuild — exactly the manual
+            // "re-apply additions" workaround, now automatic. Idempotent purge+rewrite;
+            // nothing is dirtied or persisted because the state is unchanged.
+            try
+            {
+                var state = _addPage != null
+                    ? _addPage.Snapshot()
+                    : new AdditionStore(AdditionStore.DefaultPath()).Load();
+                if (state.Entries.Count > 0 || state.Folders.Count > 0)
+                {
+                    Log.Info("apply", $"re-asserting {state.Entries.Count} added entries after hide change (menu-cache refresh)");
+                    _additionApplier.Apply(state);
+                }
+            }
+            catch (Exception ex) { Log.Error("apply", "additions re-assert failed", ex); }
+        }
         _pendingHide.Clear();
         _pendingUnhide.Clear();
         _post(() =>

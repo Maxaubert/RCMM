@@ -131,6 +131,8 @@ public class AdditionTemplatesTests
         Assert.Contains("%selfdir%", t.Command);
         Assert.Contains("rcmm-convert.ps1", t.Command);
         Assert.Contains("%1", t.Command);
+        Assert.Contains("heic", t.FileTypes!);   // iPhone photos route to the image pipeline
+        Assert.Contains("svg", t.FileTypes!);     // vector input -> raster targets
     }
 
     [Fact]

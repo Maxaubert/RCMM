@@ -30,4 +30,17 @@ public sealed record AdditionEntry
     /// custom terminal exe path. Applied at write-time by
     /// <see cref="Services.TerminalCatalog.Wrap"/>.</summary>
     public string? Terminal { get; init; }
+
+    // --- Template-update tracking (schema v3) ---
+    /// <summary>If this entry was cloned from a built-in template, the template's
+    /// stable id (its Name). Null for hand-authored entries. Lets RCMM notice when
+    /// we later change that template and offer to update the entry.</summary>
+    public string? SourceTemplateId { get; init; }
+    /// <summary>Content hash of the template's tracked fields (Command, FileTypes,
+    /// Scope, RunMode, WorkingDir) as they were when the entry was added or last
+    /// updated. A mismatch against the live template means an update is available.</summary>
+    public string? AppliedTemplateHash { get; init; }
+    /// <summary>The template hash the user last chose to Skip. Suppresses the
+    /// update prompt until we change the template again (hash moves on).</summary>
+    public string? SkippedTemplateHash { get; init; }
 }

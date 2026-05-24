@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -64,10 +65,47 @@ public sealed class AdditionStore
     /// (both fields ship as defaults from the record, but we bump the version
     /// explicitly so a subsequent save records v2 in the file). No data loss.
     /// </summary>
-    internal static AdditionState MigrateIfNeeded(AdditionState state)
+    public static AdditionState MigrateIfNeeded(AdditionState state)
     {
         if (state.SchemaVersion >= AdditionState.CurrentSchemaVersion) return state;
         Log.Info(Cat, $"migrating schema v{state.SchemaVersion} → v{AdditionState.CurrentSchemaVersion}");
+
+        // v2 → v3: back-fill template-update tracking. Entries created before this
+        // feature carry no SourceTemplateId, so we best-effort match each entry to a
+        // built-in template by Name. The baseline hash is the ENTRY's current fields,
+        // so an entry that already drifted from its (now newer) template — e.g. a
+        // Change format added before the heic/jxl expansion — surfaces immediately as
+        // an available update, while one that still matches stays quiet.
+        if (state.SchemaVersion < 3)
+        {
+            var byName = new Dictionary<string, AdditionTemplates.Template>(StringComparer.Ordinal);
+            foreach (var t in AdditionTemplates.All) byName[t.Name] = t;
+
+            var migrated = new List<AdditionEntry>(state.Entries.Count);
+            foreach (var e in state.Entries)
+            {
+                if (e.SourceTemplateId != null || !byName.TryGetValue(e.Name, out var t))
+                {
+                    migrated.Add(e);   // already stamped, or not from a known template (renamed/hand-authored)
+                }
+                else
+                {
+                    // Baseline = the live template hash only when the entry's non-command
+                    // fields still match it (in sync). If they've drifted — e.g. an old
+                    // Change format entry missing heic/jxl — leave the baseline null so it
+                    // surfaces as an available update. (Command is excluded from the match:
+                    // the entry's is path-expanded, the template's still has placeholders.)
+                    var inSync = TemplateUpdateService.MatchesIgnoringCommand(e, t);
+                    migrated.Add(e with
+                    {
+                        SourceTemplateId = t.Name,
+                        AppliedTemplateHash = inSync ? TemplateUpdateService.Hash(t) : null,
+                    });
+                }
+            }
+            state = state with { Entries = migrated };
+        }
+
         return state with { SchemaVersion = AdditionState.CurrentSchemaVersion };
     }
 

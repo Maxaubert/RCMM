@@ -113,9 +113,13 @@ function Get-OutPath([string]$in, [string]$ext) {
 
 # Category descriptor for a given extension, or $null if unsupported.
 function Get-Category([string]$ext) {
-    $image = @('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp', '.tif', '.tiff')
-    $video = @('.mp4', '.mkv', '.mov', '.webm', '.avi', '.m4v', '.wmv')
-    $audio = @('.mp3', '.wav', '.flac', '.m4a', '.ogg', '.aac', '.wma')
+    # HEIC/HEIF/AVIF read via ImageMagick's libheif delegate; SVG via its built-in
+    # renderer (good enough for simple vectors). All ride the same magick path.
+    $image = @('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp', '.tif', '.tiff', '.heic', '.heif', '.avif', '.jxl', '.svg', '.tga', '.ppm', '.xcf', '.mpo')
+    # Includes "weird downloaded video" containers ffmpeg demuxes natively. .ts is
+    # deliberately excluded — it collides with TypeScript, and RCMM's users write code.
+    $video = @('.mp4', '.mkv', '.mov', '.webm', '.avi', '.m4v', '.wmv', '.flv', '.mpg', '.mpeg', '.3gp', '.3g2', '.vob', '.mxf', '.asf', '.ogv')
+    $audio = @('.mp3', '.wav', '.flac', '.m4a', '.ogg', '.aac', '.wma', '.ac3', '.aiff', '.aif', '.amr')
     $doc   = @('.docx', '.doc', '.odt', '.rtf', '.html', '.htm', '.md')
 
     if ($image -contains $ext) {
@@ -123,7 +127,12 @@ function Get-Category([string]$ext) {
                 @{ Label = 'PNG';  Ext = '.png';  Kind = 'magick' },
                 @{ Label = 'JPG';  Ext = '.jpg';  Kind = 'magick' },
                 @{ Label = 'WebP'; Ext = '.webp'; Kind = 'magick' },
-                @{ Label = 'ICO';  Ext = '.ico';  Kind = 'magick' },
+                @{ Label = 'AVIF'; Ext = '.avif'; Kind = 'magick' },
+                @{ Label = 'JXL';  Ext = '.jxl';  Kind = 'magick' },
+                @{ Label = 'TIFF'; Ext = '.tiff'; Kind = 'magick' },
+                @{ Label = 'BMP';  Ext = '.bmp';  Kind = 'magick' },
+                @{ Label = 'GIF';  Ext = '.gif';  Kind = 'magick' },
+                @{ Label = 'ICO';  Ext = '.ico';  Kind = 'magick'; Extra = @('-define', 'icon:auto-resize=256,128,64,48,32,16') },
                 @{ Label = 'PDF';  Ext = '.pdf';  Kind = 'magick' }) }
     }
     if ($video -contains $ext) {
@@ -132,16 +141,20 @@ function Get-Category([string]$ext) {
                 @{ Label = 'MKV';  Ext = '.mkv';  Kind = 'ffmpeg' },
                 @{ Label = 'MOV';  Ext = '.mov';  Kind = 'ffmpeg' },
                 @{ Label = 'WebM'; Ext = '.webm'; Kind = 'ffmpeg' },
+                @{ Label = 'AVI';  Ext = '.avi';  Kind = 'ffmpeg' },
                 @{ Label = 'GIF';  Ext = '.gif';  Kind = 'ffmpeg' },
-                @{ Label = 'Audio (MP3)'; Ext = '.mp3'; Kind = 'ffmpeg'; Extra = @('-vn', '-c:a', 'libmp3lame') }) }
+                @{ Label = 'Audio (MP3)'; Ext = '.mp3'; Kind = 'ffmpeg'; Extra = @('-vn', '-c:a', 'libmp3lame') },
+                @{ Label = 'Audio (M4A)'; Ext = '.m4a'; Kind = 'ffmpeg'; Extra = @('-vn', '-c:a', 'aac') }) }
     }
     if ($audio -contains $ext) {
         return @{ Name = 'Audio'; Tool = 'ffmpeg'; Fallbacks = @(); WingetId = 'Gyan.FFmpeg'; ExcludeSource = $true; Targets = @(
                 @{ Label = 'MP3';  Ext = '.mp3';  Kind = 'ffmpeg' },
-                @{ Label = 'WAV';  Ext = '.wav';  Kind = 'ffmpeg' },
-                @{ Label = 'FLAC'; Ext = '.flac'; Kind = 'ffmpeg' },
                 @{ Label = 'M4A';  Ext = '.m4a';  Kind = 'ffmpeg' },
-                @{ Label = 'OGG';  Ext = '.ogg';  Kind = 'ffmpeg' }) }
+                @{ Label = 'AAC';  Ext = '.aac';  Kind = 'ffmpeg' },
+                @{ Label = 'OGG';  Ext = '.ogg';  Kind = 'ffmpeg' },
+                @{ Label = 'OPUS'; Ext = '.opus'; Kind = 'ffmpeg' },
+                @{ Label = 'FLAC'; Ext = '.flac'; Kind = 'ffmpeg' },
+                @{ Label = 'WAV';  Ext = '.wav';  Kind = 'ffmpeg' }) }
     }
     if ($ext -eq '.pdf') {
         # MuPDF's mutool — winget-installable (Ghostscript is NOT in winget).
@@ -168,7 +181,8 @@ function Build-Invocation($target, [string]$in) {
     switch ($target.Kind) {
         'magick' {
             $out = Get-OutPath $in $target.Ext
-            return @{ Args = @($in, $out); Out = $out }
+            $extra = @(); if ($target.Extra) { $extra = $target.Extra }
+            return @{ Args = (@($in) + $extra + @($out)); Out = $out }
         }
         'ffmpeg' {
             $out = Get-OutPath $in $target.Ext
@@ -276,7 +290,18 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host ''
     if ($inv.Out -and (Test-Path -LiteralPath $inv.Out)) {
         Write-Host ("Done -> " + $inv.Out)
-        Start-Process explorer.exe -ArgumentList ("/select,`"" + $inv.Out + "`"")
+        # Only auto-open formats a stock Windows 10 1809+/11 is guaranteed to open
+        # with a built-in app (Photos, Media Player, Edge, Notepad) — no Store codec
+        # or Office required. Anything else (AVIF/JXL/WebM/OGG/OPUS/DOCX/ODT/ICO,
+        # multi-file outputs with Out=$null) just reports its path, so we never
+        # pop a "how do you want to open this?" prompt or a player that can't decode.
+        $autoOpen = @('.pdf', '.txt', '.html', '.htm',
+                      '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tif', '.tiff', '.webp',
+                      '.mp3', '.wav', '.flac', '.m4a', '.aac',
+                      '.mp4', '.mov', '.avi', '.mkv')
+        if ($autoOpen -contains $target.Ext) {
+            try { Start-Process -FilePath $inv.Out } catch {}
+        }
     }
     else {
         Write-Host 'Done. Output written next to the source.'

@@ -21,6 +21,7 @@ public sealed partial class MainWindow : Window
     private Windows.UI.ViewManagement.UISettings? _uiSettings;
     private WindowMinSize? _minSize;
     private bool _busy;
+    private bool _templateUpdatesChecked;
 
     public MainWindow()
     {
@@ -89,6 +90,17 @@ public sealed partial class MainWindow : Window
             UpdateNavButtons();
         };
         ContentFrame.Navigate(typeof(LandingPage), new NavArgs(ViewModel));
+
+        // Once the visual tree is up (XamlRoot ready), check whether any added
+        // entries came from templates we've since updated, and offer to apply.
+        // One-shot — RootGrid.Loaded can fire more than once.
+        RootGrid.Loaded += async (_, __) =>
+        {
+            if (_templateUpdatesChecked) return;
+            _templateUpdatesChecked = true;
+            try { await TemplateUpdatesDialog.RunAsync(ViewModel, RootGrid.XamlRoot, manual: false); }
+            catch (Exception ex) { Log.Error("tplupd", "startup template-update check failed", ex); }
+        };
     }
 
     private void UpdateNavButtons()

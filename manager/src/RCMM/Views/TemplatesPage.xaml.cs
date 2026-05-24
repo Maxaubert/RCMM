@@ -135,15 +135,36 @@ public sealed partial class TemplatesPage : Page
 
     private void AddTemplate(AdditionTemplates.Template t)
     {
-        // For "Open in…" templates we resolve the target binary at +Add time:
-        //   • Command: %bin% substitutes for the resolved absolute path.
-        //   • Icon priority:
-        //       1. template.Icon (e.g. "lib:claude") wins if set — used so the
-        //          AI CLI launchers show a brand icon instead of the host
-        //          terminal's icon.
-        //       2. Otherwise: resolved binary path (Windows extracts the icon
-        //          from .exe resources).
-        //       3. Otherwise: null.
+        var (command, icon) = ExpandTemplate(t);
+        var entry = new AdditionEntry
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Name = t.Name,
+            Command = command,
+            WorkingDir = t.WorkingDir,
+            Scope = t.Scope,
+            RunMode = t.RunMode,
+            Icon = icon,
+            FileTypes = t.FileTypes,
+        };
+        // Stamp so RCMM can later notice if we change this template and offer an update.
+        entry = TemplateUpdateService.Stamp(entry, t);
+        _vm.AddEntry(entry);
+        if (Frame.CanGoBack) Frame.GoBack();
+    }
+
+    /// <summary>
+    /// Resolve a template's placeholders to the concrete (command, icon) used when
+    /// writing an entry. Shared by +Add and the template-update merge so both produce
+    /// identical commands:
+    ///   • <c>%bin%</c> → the resolved target binary's absolute path (or the literal
+    ///     binary name if it can't be found, so the user sees what's missing).
+    ///   • <c>%selfdir%</c> → the directory of RCMM.exe (where the shipped scripts live).
+    ///   • Icon priority: explicit template.Icon (e.g. "lib:claude") wins; else the
+    ///     resolved binary (Windows extracts its .exe icon); else null.
+    /// </summary>
+    internal static (string command, string? icon) ExpandTemplate(AdditionTemplates.Template t)
+    {
         string command = t.Command;
         string? icon = t.Icon;
         if (!string.IsNullOrEmpty(t.IconBinary))
@@ -156,32 +177,13 @@ public sealed partial class TemplatesPage : Page
             }
             else
             {
-                // No icon, and %bin% will stay literal — the command will fail
-                // until the user installs the tool. Better that than silently
-                // mapping to the wrong thing.
                 command = command.Replace("%bin%", t.IconBinary!);
             }
         }
-
-        // Smart-action templates (Convert) point at the shipped script next to
-        // the installed RCMM.exe; %selfdir% = that directory.
         var selfDir = System.IO.Path.GetDirectoryName(Environment.ProcessPath)
                       ?? AppContext.BaseDirectory.TrimEnd('\\');
         command = command.Replace("%selfdir%", selfDir);
-
-        var entry = new AdditionEntry
-        {
-            Id = Guid.NewGuid().ToString("N"),
-            Name = t.Name,
-            Command = command,
-            WorkingDir = t.WorkingDir,
-            Scope = t.Scope,
-            RunMode = t.RunMode,
-            Icon = icon,
-            FileTypes = t.FileTypes,
-        };
-        _vm.AddEntry(entry);
-        if (Frame.CanGoBack) Frame.GoBack();
+        return (command, icon);
     }
 
     // ---- Template row icons (lib vector, or extracted exe icon) -------------

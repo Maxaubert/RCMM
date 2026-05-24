@@ -53,9 +53,9 @@ public static class AdditionTemplates
     private static readonly string[] _videoExts = { "mp4", "mkv", "mov", "webm", "avi", "m4v", "wmv", "flv", "ts", "m2ts", "mpg", "mpeg" }; // Compress
     private static readonly string[] _changeFormatExts =                                            // everything Change format detects
     {
-        "png", "jpg", "jpeg", "bmp", "gif", "webp", "tif", "tiff",
-        "mp4", "mkv", "mov", "webm", "avi", "m4v", "wmv",
-        "mp3", "wav", "flac", "m4a", "ogg", "aac", "wma",
+        "png", "jpg", "jpeg", "bmp", "gif", "webp", "tif", "tiff", "heic", "heif", "avif", "jxl", "svg", "tga", "ppm", "xcf", "mpo",
+        "mp4", "mkv", "mov", "webm", "avi", "m4v", "wmv", "flv", "mpg", "mpeg", "3gp", "3g2", "vob", "mxf", "asf", "ogv",
+        "mp3", "wav", "flac", "m4a", "ogg", "aac", "wma", "ac3", "aiff", "aif", "amr",
         "pdf", "docx", "doc", "odt", "rtf", "html", "htm", "md",
     };
     // Compress handles both: videos (ffmpeg) + images (CaesiumCLT). The script
