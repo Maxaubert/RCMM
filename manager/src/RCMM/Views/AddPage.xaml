@@ -39,9 +39,6 @@
                     Style="{StaticResource SurfaceButton}"/>
             <Button x:Name="TemplatesButton" Content="Browse templates" Click="Templates_Click"
                     Style="{StaticResource SurfaceButton}"/>
-            <Button x:Name="CheckUpdatesButton" Content="Check for updates" Click="CheckUpdates_Click"
-                    Style="{StaticResource SurfaceButton}"
-                    ToolTipService.ToolTip="See if any added entries came from templates we've since updated"/>
         </StackPanel>
 
         <!-- Master grid: 2-col by default, 3-col when a folder is selected -->
