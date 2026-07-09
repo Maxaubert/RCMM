@@ -101,7 +101,7 @@ public class AdditionTemplatesTests
     [InlineData("Open project in VS Code",  "Open project", "Code.exe")]
     [InlineData("Open project in Cursor",   "Open project", "Cursor.exe")]
     [InlineData("Open project in Windsurf", "Open project", "Windsurf.exe")]
-    [InlineData("PowerShell here",          "Shell",        "powershell.exe")]
+    [InlineData("PowerShell here",          "Shell",        "wt.exe")]
     [InlineData("Command Prompt here",      "Shell",        "cmd.exe")]
     [InlineData("Git Bash here",            "Shell",        "git-bash.exe")]
     [InlineData("WSL here",                 "Shell",        "wsl.exe")]
@@ -119,6 +119,23 @@ public class AdditionTemplatesTests
         Assert.NotNull(t);
         Assert.Equal(ecosystem, t!.Ecosystem);
         Assert.Equal(expectedBinary, t.IconBinary);
+    }
+
+    [Fact]
+    public void No_template_embeds_a_substituted_path_inside_a_PowerShell_Command_argument()
+    {
+        // Explorer substitutes %V / %1 into the command after RCMM is out of the
+        // loop, so RCMM cannot escape them. A path interpolated into a PowerShell
+        // -Command string is therefore an injection sink (a folder named  $(calc)
+        // runs). Safe templates either pass the path as a plain argument to a
+        // program that never re-parses it (wt -d, code "%V"), or hand it to a helper
+        // script as a bound -Path parameter. Guard against reintroducing the sink.
+        var offenders = AdditionTemplates.All
+            .Where(t => t.Command.Contains("-Command", System.StringComparison.OrdinalIgnoreCase)
+                        && (t.Command.Contains("%V") || t.Command.Contains("%1")))
+            .Select(t => t.Name)
+            .ToList();
+        Assert.True(offenders.Count == 0, "Templates embed a substituted path in a -Command argument: " + string.Join(", ", offenders));
     }
 
     [Fact]
