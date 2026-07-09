@@ -43,4 +43,12 @@ public sealed record AdditionEntry
     /// <summary>The template hash the user last chose to Skip. Suppresses the
     /// update prompt until we change the template again (hash moves on).</summary>
     public string? SkippedTemplateHash { get; init; }
+
+    // --- Hidden state (schema v4) ---
+    /// <summary>True when the user has hidden this entry from the Show/Hide page.
+    /// Hidden-ness must be persisted here rather than left as a LegacyDisable value
+    /// in the registry: Apply purges every RCMM.-prefixed key and rewrites it from
+    /// this store, so a registry-only marker would be destroyed on the next Apply.
+    /// <see cref="Services.AdditionApplier.WriteEntry"/> re-emits LegacyDisable.</summary>
+    public bool Hidden { get; init; }
 }

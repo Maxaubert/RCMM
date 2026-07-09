@@ -54,6 +54,33 @@ public sealed class AddPageViewModel : ObservableObject
         Log.Debug(Cat, $"DeleteEntry id={id}");
     }
 
+    /// <summary>
+    /// Flip an entry's hidden flag. Returns false when <paramref name="id"/> is not
+    /// one of ours, which tells the caller to fall back to the normal registry-marker
+    /// hide path. Returning true for an already-correct flag is deliberate: the entry
+    /// is still ours, so the caller must not also write a registry marker.
+    /// </summary>
+    public bool SetEntryHidden(string id, bool hidden)
+    {
+        for (int i = 0; i < Entries.Count; i++)
+        {
+            if (Entries[i].Id != id) continue;
+            if (Entries[i].Hidden != hidden)
+            {
+                Entries[i] = Entries[i] with { Hidden = hidden };
+                HasPendingChanges = true;
+                Log.Debug(Cat, $"SetEntryHidden id={id} hidden={hidden}");
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>Persist through the store this view-model was built with. Callers
+    /// must not reach for AdditionStore.DefaultPath() themselves — that ignores an
+    /// injected store and writes the real user file from under a test.</summary>
+    public void Save(AdditionState state) => _store.Save(state);
+
     public void ReplaceEntry(AdditionEntry replacement)
     {
         for (int i = 0; i < Entries.Count; i++)
