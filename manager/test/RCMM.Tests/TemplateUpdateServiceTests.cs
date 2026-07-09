@@ -113,7 +113,7 @@ public class TemplateUpdateServiceTests
         var migrated = AdditionStore.MigrateIfNeeded(
             new AdditionState { SchemaVersion = 2, Entries = new[] { sync, drift, hand } });
 
-        Assert.Equal(3, migrated.SchemaVersion);
+        Assert.Equal(AdditionState.CurrentSchemaVersion, migrated.SchemaVersion);
         var a = migrated.Entries.Single(e => e.Id == "a");
         Assert.Equal("Change format", a.SourceTemplateId);
         Assert.Equal(TemplateUpdateService.Hash(cf), a.AppliedTemplateHash);   // in sync

@@ -981,6 +981,34 @@ public sealed class MainViewModel : ObservableObject
         return null;
     }
 
+    /// <summary>
+    /// A hide for one of RCMM's own added entries cannot be written as a registry
+    /// marker. The addition re-assert later in this same ApplyPending calls
+    /// AdditionApplier.Apply → PurgeOwnedKeys, which deletes every RCMM.-prefixed
+    /// verb key and rewrites it from additions.json — erasing any LegacyDisable we
+    /// just wrote. So the intent has to live in the store, where the rewrite can
+    /// reproduce it. Returns false for foreign verbs (Tabby, WinRAR, Defender…),
+    /// which take the normal HideService path unchanged. See issue #10.
+    /// </summary>
+    private bool TryRouteOwnedHide(IReadOnlyList<HideTarget> targets, bool hidden)
+    {
+        if (_addPage == null || _additionApplier == null || targets.Count == 0) return false;
+
+        // Every target must resolve to the same owned entry. A File-scope entry
+        // fans out to one target per extension, so multiple targets are normal —
+        // but a mixed or non-LegacyDisable set means this isn't a plain owned verb.
+        string? entryId = null;
+        foreach (var t in targets)
+        {
+            if (t.Kind != HideKind.LegacyDisable) return false;
+            var keyName = t.Path[(t.Path.LastIndexOf('\\') + 1)..];
+            if (!AdditionApplier.TryParseOwnedVerb(keyName, out var parsed)) return false;
+            if (entryId != null && entryId != parsed) return false;
+            entryId = parsed;
+        }
+        return entryId != null && _addPage.SetEntryHidden(entryId, hidden);
+    }
+
     private void OnRowToggled(EntryRowViewModel row, bool isHidden)
     {
         var id = row.Entry.Id;
@@ -1040,6 +1068,11 @@ public sealed class MainViewModel : ObservableObject
 
         foreach (var (id, targets) in _pendingHide)
         {
+            if (TryRouteOwnedHide(targets, hidden: true))
+            {
+                Log.Debug("apply", $"hide id='{id}' routed to additions store (RCMM-owned entry)");
+                continue;
+            }
             Log.Debug("apply", $"hide id='{id}' targets={targets.Count}");
             foreach (var t in targets)
                 Log.Debug("apply", $"  hide  kind={t.Kind} hive={t.Hive} path='{t.Path}' value='{t.ValueName}'");
@@ -1048,6 +1081,11 @@ public sealed class MainViewModel : ObservableObject
         }
         foreach (var (id, targets) in _pendingUnhide)
         {
+            if (TryRouteOwnedHide(targets, hidden: false))
+            {
+                Log.Debug("apply", $"unhide id='{id}' routed to additions store (RCMM-owned entry)");
+                continue;
+            }
             Log.Debug("apply", $"unhide id='{id}' targets={targets.Count}");
             foreach (var t in targets)
                 Log.Debug("apply", $"  unhide kind={t.Kind} hive={t.Hive} path='{t.Path}' value='{t.ValueName}'");
@@ -1097,7 +1135,7 @@ public sealed class MainViewModel : ObservableObject
             {
                 _additionApplier.Apply(state);
                 // Persist only after registry write succeeds so a failed Apply leaves the JSON on the previous state.
-                new AdditionStore(AdditionStore.DefaultPath()).Save(state);
+                _addPage.Save(state);
                 _post(() => _addPage.MarkClean());
             }
             catch (Exception ex) { Log.Error("apply", "additions failed", ex); }

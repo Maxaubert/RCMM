@@ -27,6 +27,9 @@ public sealed class AdditionApplier
     private const string Cat = "addapply";
     private const string VerbPrefix = "RCMM.";
     private const string ClassesRoot = "Software\\Classes";
+    /// <summary>The value Explorer treats as "don't render this verb". Same marker
+    /// HideService.HideKind.LegacyDisable writes for non-owned classic verbs.</summary>
+    private const string LegacyDisableValue = "LegacyDisable";
     private static readonly string[] _staticScopeRoots =
     {
         "Directory\\Background",
@@ -95,6 +98,30 @@ public sealed class AdditionApplier
     /// </summary>
     internal static string VerbName(int ordinal, string id)
         => $"{VerbPrefix}{ordinal:D3}.{id}";
+
+    /// <summary>
+    /// Inverse of <see cref="VerbName"/>: recognises a verb key name this applier
+    /// owns and recovers the entry id. The ordinal is deliberately discarded — it
+    /// is a rendering-order artifact that shifts whenever the user reorders or
+    /// deletes a sibling, so the id is the only stable handle back to the entry.
+    /// Rejects foreign verbs (Tabby, OpenInTerminal, …) and the pre-v2 unordered
+    /// <c>RCMM.&lt;id&gt;</c> shape, which no live build writes.
+    /// </summary>
+    public static bool TryParseOwnedVerb(string keyName, out string id)
+    {
+        id = "";
+        if (string.IsNullOrEmpty(keyName)) return false;
+        if (!keyName.StartsWith(VerbPrefix, StringComparison.Ordinal)) return false;
+
+        var rest = keyName.AsSpan(VerbPrefix.Length);
+        if (rest.Length < 5) return false;              // "NNN." + at least one id char
+        if (rest[3] != '.') return false;
+        for (int i = 0; i < 3; i++)
+            if (!char.IsAsciiDigit(rest[i])) return false;
+
+        id = rest[4..].ToString();
+        return true;
+    }
 
     public void Apply(AdditionState state)
     {
@@ -243,6 +270,7 @@ public sealed class AdditionApplier
             if (!string.IsNullOrWhiteSpace(resolvedIcon))
                 _reg.SetValue(RegistryHive.CurrentUser, path, "Icon", resolvedIcon!);
             _reg.SetValue(RegistryHive.CurrentUser, path + "\\command", "", commandText);
+            WriteHiddenMarker(entry, path);
             return;
         }
 
@@ -260,7 +288,19 @@ public sealed class AdditionApplier
             if (!string.IsNullOrWhiteSpace(resolvedIcon))
                 _reg.SetValue(RegistryHive.CurrentUser, path, "Icon", resolvedIcon!);
             _reg.SetValue(RegistryHive.CurrentUser, path + "\\command", "", commandText);
+            WriteHiddenMarker(entry, path);
         }
+    }
+
+    /// <summary>
+    /// Re-emit the hide marker Apply's purge just erased. Only written when the
+    /// entry is hidden — Apply tore the key down first, so a visible entry needs
+    /// no explicit delete to shed a stale LegacyDisable.
+    /// </summary>
+    private void WriteHiddenMarker(AdditionEntry entry, string verbPath)
+    {
+        if (!entry.Hidden) return;
+        _reg.SetValue(RegistryHive.CurrentUser, verbPath, LegacyDisableValue, "");
     }
 
     /// <summary>
