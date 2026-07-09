@@ -49,7 +49,13 @@ public sealed class ClassicShellexScanner
             var isBuiltIn = LooksMicrosoft(version.CompanyName);
 
             var maskPath = @"Software\Classes\" + scope.ToRegistryRoot() + @"\shellex\ContextMenuHandlers\" + name;
-            var hidden = _reg.KeyExists(RegistryHive.CurrentUser, maskPath);
+            // A key is a MASK (hidden) only when its default value is empty — that's
+            // what suppresses the handler. A per-user-installed handler whose real
+            // registration happens to live here has a non-empty default (its CLSID) and
+            // is ACTIVE, not hidden; treating mere key-existence as "hidden" both
+            // mislabeled it and invited a destructive unhide. See the HkcuMask finding.
+            var hidden = _reg.KeyExists(RegistryHive.CurrentUser, maskPath)
+                         && string.IsNullOrEmpty(_reg.GetValue(RegistryHive.CurrentUser, maskPath, "") as string);
 
             yield return new ContextMenuEntry
             {
