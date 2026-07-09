@@ -77,6 +77,13 @@ public sealed class MainViewModel : ObservableObject
 
     private readonly Dictionary<string, IReadOnlyList<HideTarget>> _pendingHide = new();
     private readonly Dictionary<string, IReadOnlyList<HideTarget>> _pendingUnhide = new();
+    // Guards the two pending dictionaries. OnRowToggled mutates them on the UI
+    // thread; ApplyPending and RescanCore run on a background thread (Task.Run) and
+    // read/clear them. Dictionary<T> is not thread-safe, so an untimed toggle during
+    // a multi-second Apply+Rescan could throw or drop/duplicate a hide. ApplyPending
+    // snapshots-and-clears under this lock at its start, then works on the copies, so
+    // the lock is only ever held briefly and never across the registry writes.
+    private readonly object _pendingLock = new();
     private readonly List<EntryRowViewModel> _allRows = new();
     private bool _showBuiltIns = true;
 
@@ -139,9 +146,15 @@ public sealed class MainViewModel : ObservableObject
     }
 
     public bool RequiresExplorerRestart
-        => _pendingHide.Values.Concat(_pendingUnhide.Values)
-                       .SelectMany(t => t)
-                       .Any(t => t.Kind == HideKind.HkcuMask || t.Kind == HideKind.BlockedShellExt);
+    {
+        get
+        {
+            lock (_pendingLock)
+                return _pendingHide.Values.Concat(_pendingUnhide.Values)
+                               .SelectMany(t => t)
+                               .Any(t => t.Kind == HideKind.HkcuMask || t.Kind == HideKind.BlockedShellExt);
+        }
+    }
 
     public bool ShowBuiltIns
     {
@@ -423,8 +436,11 @@ public sealed class MainViewModel : ObservableObject
         // entry vanishes from RCMM and the user can't un-toggle it.
         RestoreGhostEntries();
 
-        _pendingHide.Clear();
-        _pendingUnhide.Clear();
+        lock (_pendingLock)
+        {
+            _pendingHide.Clear();
+            _pendingUnhide.Clear();
+        }
         // Persist the current snapshot so the next rescan can recover ghosts.
         _knownStore.Save(_allRows.ConvertAll(r => r.Entry));
         for (int i = 0; i < _allRows.Count; i++)
@@ -1014,30 +1030,48 @@ public sealed class MainViewModel : ObservableObject
         var id = row.Entry.Id;
         var currentlyHidden = AllTargetsHidden(row.Entry.HideTargets);
         Log.Debug("toggle", $"id='{id}' name='{row.Entry.DisplayName}' newIsHidden={isHidden} currentlyHidden={currentlyHidden} targets={row.Entry.HideTargets.Count}");
-        if (isHidden == currentlyHidden)
+        lock (_pendingLock)
         {
-            _pendingHide.Remove(id);
-            _pendingUnhide.Remove(id);
-            PendingChangeIds.Remove(id);
-        }
-        else if (isHidden)
-        {
-            _pendingHide[id] = row.Entry.HideTargets;
-            _pendingUnhide.Remove(id);
-            if (!PendingChangeIds.Contains(id)) PendingChangeIds.Add(id);
-        }
-        else
-        {
-            _pendingUnhide[id] = row.Entry.HideTargets;
-            _pendingHide.Remove(id);
-            if (!PendingChangeIds.Contains(id)) PendingChangeIds.Add(id);
+            if (isHidden == currentlyHidden)
+            {
+                _pendingHide.Remove(id);
+                _pendingUnhide.Remove(id);
+                PendingChangeIds.Remove(id);
+            }
+            else if (isHidden)
+            {
+                _pendingHide[id] = row.Entry.HideTargets;
+                _pendingUnhide.Remove(id);
+                if (!PendingChangeIds.Contains(id)) PendingChangeIds.Add(id);
+            }
+            else
+            {
+                _pendingUnhide[id] = row.Entry.HideTargets;
+                _pendingHide.Remove(id);
+                if (!PendingChangeIds.Contains(id)) PendingChangeIds.Add(id);
+            }
         }
         Raise(nameof(RequiresExplorerRestart));
     }
 
     public void ApplyPending()
     {
-        Log.Info("apply", $"begin hide={_pendingHide.Count} unhide={_pendingUnhide.Count}");
+        // Detach the pending sets from the live dictionaries under the lock, then
+        // work only on these snapshots. The user can keep toggling rows during the
+        // (multi-second, Explorer-restarting) apply without racing our enumeration;
+        // any toggle that lands after this point becomes a fresh pending edit for the
+        // next Apply, exactly as if it had arrived a moment later. Clearing here also
+        // preserves the previous semantics (pending was cleared unconditionally at
+        // the end of Apply, success or not).
+        Dictionary<string, IReadOnlyList<HideTarget>> pendingHide, pendingUnhide;
+        lock (_pendingLock)
+        {
+            pendingHide = new(_pendingHide);
+            pendingUnhide = new(_pendingUnhide);
+            _pendingHide.Clear();
+            _pendingUnhide.Clear();
+        }
+        Log.Info("apply", $"begin hide={pendingHide.Count} unhide={pendingUnhide.Count}");
 
         // Cascade-protection pass — runs BEFORE any HKCU\…\Shell Extensions\Blocked
         // write so the protective classic verbs exist by the time Windows decides
@@ -1048,7 +1082,7 @@ public sealed class MainViewModel : ObservableObject
         // cascade" for the underlying Windows behaviour we're guarding against.
         if (_cascadeProtector != null && _backgroundExtsByClsid.Count > 0)
         {
-            foreach (var targets in _pendingHide.Values)
+            foreach (var targets in pendingHide.Values)
             {
                 foreach (var t in targets)
                 {
@@ -1066,7 +1100,7 @@ public sealed class MainViewModel : ObservableObject
             }
         }
 
-        foreach (var (id, targets) in _pendingHide)
+        foreach (var (id, targets) in pendingHide)
         {
             if (TryRouteOwnedHide(targets, hidden: true))
             {
@@ -1079,7 +1113,7 @@ public sealed class MainViewModel : ObservableObject
             try { _hideService.Hide(targets); }
             catch (Exception ex) { Log.Error("apply", $"hide id={id} failed", ex); }
         }
-        foreach (var (id, targets) in _pendingUnhide)
+        foreach (var (id, targets) in pendingUnhide)
         {
             if (TryRouteOwnedHide(targets, hidden: false))
             {
@@ -1097,7 +1131,7 @@ public sealed class MainViewModel : ObservableObject
         // HKCU Blocked, the cascade can't trigger, so we can sweep the protective
         // verbs back out. The sweep is namespace-scoped (RcmmProtect_ prefix only)
         // so user-authored classic verbs are untouched.
-        if (_cascadeProtector != null && _pendingUnhide.Count > 0 && _backgroundExtsByClsid.Count > 0)
+        if (_cascadeProtector != null && pendingUnhide.Count > 0 && _backgroundExtsByClsid.Count > 0)
         {
             try
             {
@@ -1140,7 +1174,7 @@ public sealed class MainViewModel : ObservableObject
             }
             catch (Exception ex) { Log.Error("apply", "additions failed", ex); }
         }
-        else if (_additionApplier != null && (_pendingHide.Count > 0 || _pendingUnhide.Count > 0))
+        else if (_additionApplier != null && (pendingHide.Count > 0 || pendingUnhide.Count > 0))
         {
             // A hide/unhide batch ran with no addition edits of its own. Re-assert
             // the user's existing added entries as part of the same Apply: after a
@@ -1163,8 +1197,6 @@ public sealed class MainViewModel : ObservableObject
             }
             catch (Exception ex) { Log.Error("apply", "additions re-assert failed", ex); }
         }
-        _pendingHide.Clear();
-        _pendingUnhide.Clear();
         _post(() =>
         {
             PendingChangeIds.Clear();
