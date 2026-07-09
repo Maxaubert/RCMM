@@ -14,7 +14,7 @@
          assembly at runtime, and the installer reads it from the built exe — so this
          is the ONLY place to bump on release. (Suffix off so the version stays a clean
          "x.y.z" rather than ".NET 8's default "x.y.z+<gitsha>".) -->
-    <Version>0.7.7</Version>
+    <Version>0.7.8</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <WindowsPackageType>None</WindowsPackageType>
     <EnableMsixTooling>true</EnableMsixTooling>
