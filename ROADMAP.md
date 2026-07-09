@@ -101,4 +101,4 @@ The full custom-entry editor (partly built on the Add page). 📋 planned per `C
 
 ## 5. Hardening (from AUDIT.md)
 
-Full audit in `AUDIT.md`. Roadmap-level follow-ups: ✅ C1/H1 threading (PR #1) · 🔭 H3 cascade-protection sweep correctness · 🔭 H5/H6 Add-to-RCM injection + validation · 🔭 H8 untested icon/path parsers · 🔭 X1 `MainViewModel` decomposition.
+Full audit in `AUDIT.md`, including the **2026-07 follow-up remediation log** (fixes shipped 0.7.5 → 0.7.8). Roadmap-level follow-ups: ✅ C1/H1 threading (PR #1) · ✅ H5 Add-to-RCM injection — elevated `adminterm` (PR #12) + `PowerShell here` template (PR #15) · ✅ HkcuMask per-user data loss (PR #19) · ✅ toggle/apply + startup/apply races (PR #17, #21) · ✅ folder-delete + hidden-state + migration data loss (PR #11, #12, #21) · 🚧 H6 Add-to-RCM input validation (empty/duplicate names) · 🔭 H3 cascade-protection sweep correctness · 🔭 H8 untested icon/path parsers · 🔭 X1 `MainViewModel` decomposition · 🔭 hidden-shellex un-unhideable filter (issue #22) · 🔭 File-scope per-extension verb leak (issue #23) · 🔭 WinUI view-layer + `IconRender` never audited.

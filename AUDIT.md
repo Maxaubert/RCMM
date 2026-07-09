@@ -21,6 +21,27 @@ Recommended remediation order: **C1 → H1** (threading; they're coupled), then 
 
 ---
 
+## Remediation log — 2026-07 follow-up audit (shipped 0.7.5 → 0.7.8)
+
+A second, adversarially-verified audit (finders per subsystem → 3-lens refutation → coverage critic) confirmed a further set of defects, several new and two more severe than this document's originals. All of the below are fixed on `main`, each via its own issue → branch → PR with a test proven to fail without the fix.
+
+| Area | Defect | Fixed in | Relates to |
+|---|---|---|---|
+| Add-to-RCM (elevated) | Folder name injected into the elevated `rcmm-action.ps1` `adminterm` `-Command` string ran arbitrary code as admin | PR #12 / #13 | H5 |
+| Add-to-RCM (template) | `PowerShell here` embedded `%V` in a `-Command` string; `$(…)` in a folder name executed. `%V` is Explorer-substituted so RCMM can't escape it — now hosted via `wt -d "%V" powershell` | PR #15 / #14 | H5 |
+| Add-to-RCM (data loss) | `DeleteFolder` reparented child entries but not subfolders, so `AdditionApplier` silently dropped the whole subtree on Apply | PR #12 / #13 | — |
+| Add-to-RCM (data loss) | Hiding an RCMM-added entry was silently reverted by `PurgeOwnedKeys`; hidden state now persists in `AdditionEntry.Hidden` (schema v4) | PR #11 | — |
+| Hide / apply (data loss) | `HkcuMask` hide/unhide destroyed a per-user (HKCU) shellex's real registration; now stashes + restores, never `DeleteKey`s a live key | PR #19 / #18 | more severe than M-D1 / M-H2 |
+| ViewModels (race) | Row toggles during a background Apply/Rescan corrupted the pending-hide dictionaries; now lock-guarded + snapshot-at-boundary | PR #17 / #16 | distinct from C1 / H1 (already fixed) |
+| ViewModels (race) | Startup `RescanAsync` could race the template-update dialog's `ApplyPending`; a `_workGate` now serializes them | PR #21 / #20 | — |
+| Persistence | v2→v3 migration stamped entries as template-derived by Name alone, so a hand-authored entry could later be offered a destructive "update"; now requires a structural match | PR #21 / #20 | — |
+
+**Still open (hand-confirmed, not yet fixed):** a hidden shellex can become un-unhideable when its rename fails on a later rescan (`FilterIntoAllEntries` runs `LooksTechnical` before the `IsHidden` hatch) — issue #22; and a File-scope entry leaks its per-extension verb when an extension is dropped (`PurgeOwnedKeys` only visits extensions still in state) — issue #23.
+
+**Coverage gap:** the follow-up audit did not probe the WinUI view layer (drag-reorder, dialogs, converters) or `IconRender.cs`; those remain unexamined by either audit.
+
+---
+
 ## Critical
 
 ### C1 — The whole rescan/apply pipeline runs synchronously on the UI thread
