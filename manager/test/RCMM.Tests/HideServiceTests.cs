@@ -165,6 +165,58 @@ public class HideServiceTests
             @"Software\Classes\*\shellex\ContextMenuHandlers\X"));
     }
 
+    // --- HkcuMask must not destroy a shellex whose REAL home is HKCU ---
+    // (per-user installed handlers, not an HKLM original RCMM is shadowing).
+
+    private const string RealClsid = "{11111111-2222-3333-4444-555555555555}";
+    private const string PerUserPath = @"Software\Classes\*\shellex\ContextMenuHandlers\PerUserHandler";
+
+    [Fact]
+    public void Hide_HkcuMask_over_a_real_per_user_registration_stashes_the_original_and_masks()
+    {
+        var reg = new FakeRegistry();
+        // A genuine per-user shellex: the HKCU key already carries a real CLSID.
+        reg.SetValue(RegistryHive.CurrentUser, PerUserPath, "", RealClsid);
+        var sut = new HideService(reg);
+
+        sut.Hide(new[] { new HideTarget(HideKind.HkcuMask, RegistryHive.CurrentUser, PerUserPath, null) });
+
+        // Masked (default emptied) but the original CLSID preserved for restore.
+        Assert.Equal("", reg.GetValue(RegistryHive.CurrentUser, PerUserPath, ""));
+        Assert.Equal(RealClsid, reg.GetValue(RegistryHive.CurrentUser, PerUserPath, HideService.SavedDefaultValueName));
+    }
+
+    [Fact]
+    public void Unhide_HkcuMask_restores_the_stashed_registration_instead_of_deleting_it()
+    {
+        var reg = new FakeRegistry();
+        reg.SetValue(RegistryHive.CurrentUser, PerUserPath, "", RealClsid);
+        var sut = new HideService(reg);
+
+        sut.Hide(new[] { new HideTarget(HideKind.HkcuMask, RegistryHive.CurrentUser, PerUserPath, null) });
+        sut.Unhide(new[] { new HideTarget(HideKind.HkcuMask, RegistryHive.CurrentUser, PerUserPath, null) });
+
+        // Fully reversible: the real registration is back, the stash is gone, the key survives.
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, PerUserPath));
+        Assert.Equal(RealClsid, reg.GetValue(RegistryHive.CurrentUser, PerUserPath, ""));
+        Assert.Null(reg.GetValue(RegistryHive.CurrentUser, PerUserPath, HideService.SavedDefaultValueName));
+    }
+
+    [Fact]
+    public void Unhide_HkcuMask_does_not_delete_a_key_that_still_holds_a_real_registration()
+    {
+        // A per-user handler that RCMM never masked (e.g. falsely shown as hidden).
+        // Unhide must not wipe it: there is nothing of ours to remove.
+        var reg = new FakeRegistry();
+        reg.SetValue(RegistryHive.CurrentUser, PerUserPath, "", RealClsid);
+        var sut = new HideService(reg);
+
+        sut.Unhide(new[] { new HideTarget(HideKind.HkcuMask, RegistryHive.CurrentUser, PerUserPath, null) });
+
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, PerUserPath));
+        Assert.Equal(RealClsid, reg.GetValue(RegistryHive.CurrentUser, PerUserPath, ""));
+    }
+
     [Fact]
     public void RequiresExplorerRestart_list_overload_is_true_when_any_target_is_HkcuMask()
     {

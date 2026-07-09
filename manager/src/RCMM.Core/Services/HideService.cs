@@ -8,6 +8,12 @@ public sealed class HideService
     public const string BlockedListPath =
         @"Software\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked";
 
+    /// <summary>Private value under a masked HKCU shellex key where Hide stashes the
+    /// original default (the real CLSID) when the key was a genuine per-user
+    /// registration rather than RCMM's empty shadow, so Unhide can restore it instead
+    /// of destroying the handler. The "RCMM." prefix keeps it clearly ours.</summary>
+    public const string SavedDefaultValueName = "RCMM.SavedDefault";
+
     /// <summary>
     /// Constructs a HideTarget that blocks a shell extension CLSID via the
     /// Shell Extensions\Blocked list. HKCU is tried first because it doesn't
@@ -61,6 +67,21 @@ public sealed class HideService
                     _reg.SetValue(t.Hive, t.Path, t.ValueName ?? "LegacyDisable", "");
                     break;
                 case HideKind.HkcuMask:
+                    // The mask works by giving the HKCU\Software\Classes shellex key an
+                    // empty default value, which wins in HKCR's merged view and stops the
+                    // handler loading. That assumes the key is a throwaway shadow over an
+                    // HKLM original. But a per-user-installed handler's REAL registration
+                    // lives at exactly this key — emptying its default would corrupt it and
+                    // a later Unhide's DeleteKey would destroy it. So if the key already
+                    // holds a real CLSID, stash it first; Unhide restores from the stash
+                    // instead of deleting. See the HkcuMask data-loss audit finding.
+                    if (_reg.KeyExists(t.Hive, t.Path)
+                        && _reg.GetValue(t.Hive, t.Path, "") is string existing
+                        && !string.IsNullOrEmpty(existing)
+                        && _reg.GetValue(t.Hive, t.Path, SavedDefaultValueName) == null)
+                    {
+                        _reg.SetValue(t.Hive, t.Path, SavedDefaultValueName, existing);
+                    }
                     _reg.CreateKey(t.Hive, t.Path);
                     _reg.SetValue(t.Hive, t.Path, "", "");
                     break;
@@ -83,7 +104,21 @@ public sealed class HideService
                     _reg.DeleteValue(t.Hive, t.Path, t.ValueName ?? "LegacyDisable");
                     break;
                 case HideKind.HkcuMask:
-                    _reg.DeleteKey(t.Hive, t.Path);
+                    // Mirror of Hide. If we stashed a real per-user registration, restore
+                    // it and drop the stash rather than deleting the key. If the key still
+                    // holds a real (non-empty) default we never masked, leave it alone —
+                    // deleting would wipe a live handler. Only delete the empty shadow keys
+                    // we actually created to mask an HKLM original.
+                    var saved = _reg.GetValue(t.Hive, t.Path, SavedDefaultValueName) as string;
+                    if (saved != null)
+                    {
+                        _reg.SetValue(t.Hive, t.Path, "", saved);
+                        _reg.DeleteValue(t.Hive, t.Path, SavedDefaultValueName);
+                    }
+                    else if (string.IsNullOrEmpty(_reg.GetValue(t.Hive, t.Path, "") as string))
+                    {
+                        _reg.DeleteKey(t.Hive, t.Path);
+                    }
                     break;
                 case HideKind.BlockedShellExt:
                     _reg.DeleteValue(t.Hive, t.Path, t.ValueName!);
