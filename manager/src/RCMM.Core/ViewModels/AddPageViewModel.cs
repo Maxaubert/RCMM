@@ -105,11 +105,21 @@ public sealed class AddPageViewModel : ObservableObject
         var folder = Folders.FirstOrDefault(f => f.Id == id);
         if (folder == null) return;
         Folders.Remove(folder);
-        // Move child entries to top-level so they aren't silently lost.
+        // Promote direct children one level, to where the deleted folder lived, so
+        // nothing under it is silently lost. Subfolders must be reparented too:
+        // leaving them pointing at the deleted id orphans their whole subtree, which
+        // AdditionApplier then drops on the next Apply (it only walks folders reachable
+        // from a live parent). Entries get the same treatment for consistency.
+        var promoteTo = folder.ParentFolderId;
+        for (int i = 0; i < Folders.Count; i++)
+        {
+            if (Folders[i].ParentFolderId == id)
+                Folders[i] = Folders[i] with { ParentFolderId = promoteTo };
+        }
         for (int i = 0; i < Entries.Count; i++)
         {
             if (Entries[i].FolderId == id)
-                Entries[i] = Entries[i] with { FolderId = null };
+                Entries[i] = Entries[i] with { FolderId = promoteTo };
         }
         HasPendingChanges = true;
         Log.Debug(Cat, $"DeleteFolder id={id}");

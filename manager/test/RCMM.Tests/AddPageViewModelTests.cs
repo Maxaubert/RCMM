@@ -229,6 +229,44 @@ public class AddPageViewModelTests
     }
 
     [Fact]
+    public void DeleteFolder_promotes_subfolders_and_their_entries_instead_of_dropping_them()
+    {
+        // Regression: DeleteFolder used to reparent only direct child *entries*,
+        // leaving subfolders pointing at the deleted id. On Apply those subfolders
+        // (and everything under them) silently vanished from the registry.
+        var vm = new AddPageViewModel(new AdditionStore(TempFile()));
+        vm.AddFolder(F("parent"));
+        vm.AddFolder(F("sub", "parent"));
+        vm.AddEntry(E("deep", folderId: "sub"));
+        vm.AddEntry(E("shallow", folderId: "parent"));
+
+        vm.DeleteFolder("parent");
+
+        // The subfolder survives, promoted to where its parent was (top level here).
+        var sub = Assert.Single(vm.Folders);
+        Assert.Equal("sub", sub.Id);
+        Assert.Null(sub.ParentFolderId);
+        // Nothing is lost: the deep entry stays under 'sub', the shallow one rises.
+        Assert.Equal("sub", vm.Entries.Single(e => e.Id == "deep").FolderId);
+        Assert.Null(vm.Entries.Single(e => e.Id == "shallow").FolderId);
+    }
+
+    [Fact]
+    public void DeleteFolder_promotes_a_nested_folders_children_to_the_grandparent()
+    {
+        var vm = new AddPageViewModel(new AdditionStore(TempFile()));
+        vm.AddFolder(F("grand"));
+        vm.AddFolder(F("mid", "grand"));
+        vm.AddFolder(F("leaf", "mid"));
+
+        vm.DeleteFolder("mid");
+
+        Assert.DoesNotContain(vm.Folders, f => f.Id == "mid");
+        // leaf rises from mid to grand, not to top level.
+        Assert.Equal("grand", vm.Folders.Single(f => f.Id == "leaf").ParentFolderId);
+    }
+
+    [Fact]
     public void Snapshot_returns_AdditionState_of_current_buffer()
     {
         var store = new AdditionStore(TempFile());

@@ -68,8 +68,13 @@ try {
                 Start-Process wt -Verb RunAs -ArgumentList @('-d', $Path)
             }
             else {
+                # Double every apostrophe so $Path can't break out of the single-quoted
+                # string. Inside a single-quoted PowerShell literal that is the ONLY
+                # metacharacter, so this fully neutralizes a folder name crafted to
+                # inject commands into this ELEVATED shell (e.g. a folder named  '; calc; ').
+                $safe = $Path.Replace("'", "''")
                 Start-Process powershell -Verb RunAs -ArgumentList @(
-                    '-NoExit', '-NoProfile', '-Command', ("Set-Location -LiteralPath '" + $Path + "'"))
+                    '-NoExit', '-NoProfile', '-Command', ("Set-Location -LiteralPath '" + $safe + "'"))
             }
         }
     }
