@@ -127,7 +127,13 @@ public static class AdditionTemplates
         // "Shell" — terminal/shell launchers. Absolute paths via %bin% for
         // the same robustness reason (no PATH dependency, no app-execution-
         // alias quirks for wt.exe).
-        Shell("PowerShell here",       "\"%bin%\" -NoExit -Command \"Set-Location -LiteralPath '%V'\"", "powershell.exe", null),
+        // Host PowerShell inside Windows Terminal (wt -d "<dir>" powershell) rather
+        // than launching powershell.exe with -Command "Set-Location '%V'". Explorer
+        // substitutes %V after RCMM is out of the loop, so RCMM cannot escape it; a
+        // folder named  '; calc; '  or  $(calc)  injected into that -Command string
+        // and ran. wt takes the directory as a plain -d argument it never re-parses
+        // as code, closing the injection. Same safe pattern as the AI-CLI launchers.
+        Shell("PowerShell here",       "\"%bin%\" -d \"%V\" powershell", "wt.exe", null),
         Shell("Command Prompt here",   "\"%bin%\" /K cd /d \"%V\"", "cmd.exe", null),
         Shell("Git Bash here",         "\"%bin%\" \"--cd=%V\"",     "git-bash.exe", _gitBashPaths),
         Shell("WSL here",              "\"%bin%\" --cd \"%V\"",     "wsl.exe", null),
