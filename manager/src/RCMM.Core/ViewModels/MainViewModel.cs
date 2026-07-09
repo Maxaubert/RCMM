@@ -84,6 +84,14 @@ public sealed class MainViewModel : ObservableObject
     // snapshots-and-clears under this lock at its start, then works on the copies, so
     // the lock is only ever held briefly and never across the registry writes.
     private readonly object _pendingLock = new();
+    // Serializes Rescan and ApplyPending so they never run concurrently. Both run on
+    // background threads (Task.Run) and mutate shared, non-thread-safe state
+    // (_allRows, _backgroundExtsByClsid, the packaged-COM maps). The startup path
+    // fires RescanAsync and can also trigger ApplyPending from the template-update
+    // dialog before that scan finishes, so the old "Apply button stays disabled until
+    // the first rescan" invariant is not enough. This gate is. See the startup-race
+    // audit finding. Rescan and ApplyPending never call each other, so no re-entrancy.
+    private readonly object _workGate = new();
     private readonly List<EntryRowViewModel> _allRows = new();
     private bool _showBuiltIns = true;
 
@@ -168,8 +176,11 @@ public sealed class MainViewModel : ObservableObject
 
     public void Rescan()
     {
-        try { RescanCore(); }
-        catch (Exception ex) { Log.Error("rescan", "rescan failed", ex); }
+        lock (_workGate)
+        {
+            try { RescanCore(); }
+            catch (Exception ex) { Log.Error("rescan", "rescan failed", ex); }
+        }
     }
 
     /// <summary>Runs the rescan pipeline on a background thread. UI-affecting
@@ -1055,6 +1066,13 @@ public sealed class MainViewModel : ObservableObject
     }
 
     public void ApplyPending()
+    {
+        // Serialize against Rescan (see _workGate) so the two never run concurrently.
+        lock (_workGate)
+            ApplyPendingCore();
+    }
+
+    private void ApplyPendingCore()
     {
         // Detach the pending sets from the live dictionaries under the lock, then
         // work only on these snapshots. The user can keep toggling rows during the

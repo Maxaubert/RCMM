@@ -85,11 +85,9 @@ public sealed partial class MainWindow : Window
         // Fire-and-forget: RescanAsync never faults (it wraps the guarded Rescan),
         // so this can't leave an unobserved faulted Task. The window paints now and
         // rows populate when the scan's UI tail marshals back via _post/RescanComplete.
-        // NOTE: rescans are intentionally NOT protected by a busy guard. That is safe
-        // only because the Apply button — the sole other rescan trigger — stays
-        // disabled until the first rescan populates PendingChangeIds, so two rescans
-        // can't run concurrently against the shared _allRows/_packaged* state. A future
-        // "Refresh" trigger would need a real busy/IsBusy guard.
+        // Rescan and ApplyPending serialize against each other via MainViewModel's work
+        // gate, so this startup scan and the template-update dialog's Apply below can't
+        // race the shared _allRows/_packaged* state even if the dialog is accepted first.
         _ = ViewModel.RescanAsync();
         UpdateFooterApply();
 

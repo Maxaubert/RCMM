@@ -84,22 +84,27 @@ public sealed class AdditionStore
             var migrated = new List<AdditionEntry>(state.Entries.Count);
             foreach (var e in state.Entries)
             {
-                if (e.SourceTemplateId != null || !byName.TryGetValue(e.Name, out var t))
+                // Only stamp an entry as template-derived when its name matches a built-in
+                // AND its structural fields (scope / run mode / working dir / file types)
+                // match too. A name-only collision is treated as hand-authored: we cannot
+                // tell a genuinely-drifted legacy template entry from a user who simply
+                // named their own entry "Command Prompt here", and stamping the latter
+                // would later offer a template "update" that overwrites their command.
+                // Cost of the safe choice: a real pre-v3 entry that drifted from its
+                // template won't get an update offer; the user can re-add it. See the
+                // migration-by-name audit finding.
+                if (e.SourceTemplateId != null
+                    || !byName.TryGetValue(e.Name, out var t)
+                    || !TemplateUpdateService.MatchesIgnoringCommand(e, t))
                 {
-                    migrated.Add(e);   // already stamped, or not from a known template (renamed/hand-authored)
+                    migrated.Add(e);
                 }
                 else
                 {
-                    // Baseline = the live template hash only when the entry's non-command
-                    // fields still match it (in sync). If they've drifted — e.g. an old
-                    // Change format entry missing heic/jxl — leave the baseline null so it
-                    // surfaces as an available update. (Command is excluded from the match:
-                    // the entry's is path-expanded, the template's still has placeholders.)
-                    var inSync = TemplateUpdateService.MatchesIgnoringCommand(e, t);
                     migrated.Add(e with
                     {
                         SourceTemplateId = t.Name,
-                        AppliedTemplateHash = inSync ? TemplateUpdateService.Hash(t) : null,
+                        AppliedTemplateHash = TemplateUpdateService.Hash(t),
                     });
                 }
             }
