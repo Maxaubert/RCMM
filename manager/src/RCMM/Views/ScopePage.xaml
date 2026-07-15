@@ -96,14 +96,21 @@
                             PointerEntered="Tile_PointerEntered"
                             PointerExited="Tile_PointerExited">
                         <Grid>
-                            <!-- Lime corner check = entry currently visible in the menu.
-                                 Redundant with the border color on purpose: state must
-                                 not read from hue alone. -->
-                            <FontIcon Glyph="&#xE73E;" FontFamily="Segoe Fluent Icons"
-                                      FontSize="11" Margin="0,1,1,0"
-                                      Foreground="{ThemeResource AppAccent}"
-                                      HorizontalAlignment="Right" VerticalAlignment="Top"
-                                      Visibility="{x:Bind IsHidden, Mode=OneWay, Converter={StaticResource InvertBoolToVisibilityConverter}}"/>
+                            <!-- Corner badge (lime circle, dark check) = entry currently
+                                 visible in the menu. Redundant with the border color on
+                                 purpose: state must not read from hue alone. The dark ring
+                                 separates the badge from the lime tile border when they
+                                 sit close in the corner. -->
+                            <Border Width="19" Height="19" CornerRadius="10"
+                                    Background="{ThemeResource AppAccent}"
+                                    BorderBrush="{ThemeResource WindowBackground}" BorderThickness="2"
+                                    HorizontalAlignment="Right" VerticalAlignment="Top"
+                                    Margin="0,-4,-4,0"
+                                    Visibility="{x:Bind IsHidden, Mode=OneWay, Converter={StaticResource InvertBoolToVisibilityConverter}}">
+                                <FontIcon Glyph="&#xE73E;" FontFamily="Segoe Fluent Icons"
+                                          FontSize="9" Foreground="#0a0a0a"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
                             <TextBlock Text="locked" FontSize="10"
                                        FontFamily="Consolas, Cascadia Code, monospace"
                                        Foreground="{ThemeResource AppTextDim}"
