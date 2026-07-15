@@ -57,10 +57,12 @@ toggle" variant over the original two-line cards.)*
   from the viewport on `Loaded` + `SizeChanged`); virtualization required
   (60+ entries with icons).
 - **The whole tile is the on/off control** — no `ToggleSwitch`. Tile face:
-  32px icon + display name (2-line wrap, centered). Visible entries sit
-  bright with a lime border, lime-glow fill, and a lime corner dot (the dot
-  keeps state readable without relying on hue alone); hidden entries dim to
-  half opacity and brighten on hover so their label stays readable.
+  32px icon + display name (2-line wrap, centered). Visible entries keep the
+  plain surface fill but get a lime border and a lime corner checkmark (the
+  check keeps state readable without relying on hue alone); hidden entries
+  dim to half opacity and brighten on hover so their label stays readable.
+  (Amended during testing: an earlier lime-glow fill read as solid olive at
+  tile size and was dropped for the uncolored background.)
 - Publisher + kind move to the tile tooltip (`Source · Item/Submenu`);
   the BUILT-IN badge leaves the tile face (the Apps/Windows chips carry
   that dimension).

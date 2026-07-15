@@ -492,7 +492,6 @@
             <local:InvertBoolToVisibilityConverter x:Key="InvertBoolToVisibilityConverter"/>
             <local:ObjectToImageSourceConverter x:Key="ObjectToImageSourceConverter"/>
             <local:HiddenToTileOpacityConverter x:Key="HiddenToTileOpacityConverter"/>
-            <local:HiddenToTileBackgroundConverter x:Key="HiddenToTileBackgroundConverter"/>
             <local:HiddenToTileBorderBrushConverter x:Key="HiddenToTileBorderBrushConverter"/>
         </ResourceDictionary>
     </Application.Resources>

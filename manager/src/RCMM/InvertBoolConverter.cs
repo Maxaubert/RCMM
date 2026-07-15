@@ -41,14 +41,6 @@ public sealed class HiddenToTileOpacityConverter : IValueConverter
         => throw new System.NotSupportedException();
 }
 
-public sealed class HiddenToTileBackgroundConverter : IValueConverter
-{
-    public object Convert(object value, System.Type t, object p, string l)
-        => Application.Current.Resources[(bool)value ? "AppSurface" : "AppAccentGlow"];
-    public object ConvertBack(object value, System.Type t, object p, string l)
-        => throw new System.NotSupportedException();
-}
-
 public sealed class HiddenToTileBorderBrushConverter : IValueConverter
 {
     public object Convert(object value, System.Type t, object p, string l)

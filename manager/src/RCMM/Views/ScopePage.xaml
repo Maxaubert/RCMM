@@ -48,10 +48,11 @@
         </Grid>
 
         <!-- Grid of square entry tiles. The WHOLE TILE is the on/off control
-             (no ToggleSwitch): visible entries sit bright with a lime edge and
-             corner dot, hidden ones dim to half opacity. ItemWidth/ItemHeight
-             are computed in code-behind (~132px min square) so the column
-             count adapts; Loaded covers the first layout, SizeChanged the rest. -->
+             (no ToggleSwitch): visible entries keep the plain surface but get a
+             lime edge and corner check, hidden ones dim to half opacity.
+             ItemWidth/ItemHeight are computed in code-behind (~132px min square)
+             so the column count adapts; Loaded covers the first layout,
+             SizeChanged the rest. -->
         <GridView Grid.Row="2" x:Name="EntriesGrid" SelectionMode="None"
                   Background="Transparent" Padding="0" IsItemClickEnabled="True"
                   ItemClick="EntriesGrid_ItemClick"
@@ -88,20 +89,21 @@
             <GridView.ItemTemplate>
                 <DataTemplate x:DataType="vm:EntryRowViewModel">
                     <Border Margin="0,0,9,9" Padding="10" CornerRadius="10" BorderThickness="1"
-                            Background="{x:Bind IsHidden, Mode=OneWay, Converter={StaticResource HiddenToTileBackgroundConverter}}"
+                            Background="{ThemeResource AppSurface}"
                             BorderBrush="{x:Bind IsHidden, Mode=OneWay, Converter={StaticResource HiddenToTileBorderBrushConverter}}"
                             Opacity="{x:Bind IsHidden, Mode=OneWay, Converter={StaticResource HiddenToTileOpacityConverter}}"
                             ToolTipService.ToolTip="{x:Bind Detail}"
                             PointerEntered="Tile_PointerEntered"
                             PointerExited="Tile_PointerExited">
                         <Grid>
-                            <!-- Lime corner dot = entry currently visible in the menu.
+                            <!-- Lime corner check = entry currently visible in the menu.
                                  Redundant with the border color on purpose: state must
                                  not read from hue alone. -->
-                            <Ellipse Width="7" Height="7" Margin="0,1,1,0"
-                                     Fill="{ThemeResource AppAccent}"
-                                     HorizontalAlignment="Right" VerticalAlignment="Top"
-                                     Visibility="{x:Bind IsHidden, Mode=OneWay, Converter={StaticResource InvertBoolToVisibilityConverter}}"/>
+                            <FontIcon Glyph="&#xE73E;" FontFamily="Segoe Fluent Icons"
+                                      FontSize="11" Margin="0,1,1,0"
+                                      Foreground="{ThemeResource AppAccent}"
+                                      HorizontalAlignment="Right" VerticalAlignment="Top"
+                                      Visibility="{x:Bind IsHidden, Mode=OneWay, Converter={StaticResource InvertBoolToVisibilityConverter}}"/>
                             <TextBlock Text="locked" FontSize="10"
                                        FontFamily="Consolas, Cascadia Code, monospace"
                                        Foreground="{ThemeResource AppTextDim}"
