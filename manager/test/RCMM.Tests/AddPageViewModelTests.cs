@@ -283,6 +283,48 @@ public class AddPageViewModelTests
     }
 
     [Fact]
+    public void Load_marks_pending_when_v4_store_had_only_hand_authored_entries()
+    {
+        // Migration silently drops hand-authored entries from the loaded state, but
+        // their registry keys are still live until an Apply rewrites from the store.
+        // Load() must light up HasPendingChanges so Apply is reachable even though
+        // the buffer itself ends up empty.
+        var path = TempFile();
+        try
+        {
+            File.WriteAllText(path,
+                @"{""schemaVersion"":4,
+                   ""entries"":[
+                     {""id"":""e1"",""name"":""My own thing"",""command"":""calc.exe"",""workingDir"":""%V"",""scope"":""folderBackground"",""runMode"":""background""}]}");
+            var vm = new AddPageViewModel(new AdditionStore(path));
+            vm.Load();
+
+            Assert.Empty(vm.Entries);
+            Assert.True(vm.HasPendingChanges);
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_leaves_pending_false_when_store_already_current_with_template_entry()
+    {
+        var path = TempFile();
+        try
+        {
+            File.WriteAllText(path,
+                @"{""schemaVersion"":5,
+                   ""entries"":[
+                     {""id"":""e2"",""name"":""git pull"",""command"":""git pull"",""workingDir"":""%V"",""scope"":""folderBackground"",""runMode"":""visibleTerminal"",""sourceTemplateId"":""git pull"",""appliedTemplateHash"":""x""}]}");
+            var vm = new AddPageViewModel(new AdditionStore(path));
+            vm.Load();
+
+            Assert.Single(vm.Entries);
+            Assert.False(vm.HasPendingChanges);
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
     public void MarkClean_resets_pending_flag()
     {
         var store = new AdditionStore(TempFile());
