@@ -2,17 +2,9 @@ using RCMM.Core.ViewModels;
 
 namespace RCMM.Views;
 
-public enum ListFilter
-{
-    All,
-    ApplicationSpecific,  // IsBuiltIn = false
-    WindowsSpecific       // IsBuiltIn = true
-}
-
 /// <summary>
-/// Frame.Navigate parameter — every page in the new layout takes the same
-/// ViewModel reference. The list page also takes a filter so one ScopePage
-/// instance can render either the application-specific or Windows-specific
-/// subset.
+/// Frame.Navigate parameter — every page in the layout takes the same
+/// ViewModel reference. (The old ListFilter went away with ShowHidePage:
+/// the unified list filters via page-local chips, not navigation args.)
 /// </summary>
-public sealed record NavArgs(MainViewModel ViewModel, ListFilter Filter = ListFilter.All);
+public sealed record NavArgs(MainViewModel ViewModel);

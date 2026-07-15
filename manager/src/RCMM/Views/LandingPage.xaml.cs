@@ -108,7 +108,7 @@ public sealed partial class LandingPage : Page
 
     private void ShowHide_Click(object sender, RoutedEventArgs e)
     {
-        Frame.Navigate(typeof(ShowHidePage), _args);
+        Frame.Navigate(typeof(ScopePage), _args);
     }
 
     private void AddToMenu_Click(object sender, RoutedEventArgs e)
