@@ -47,10 +47,15 @@
             </TextBox>
         </Grid>
 
-        <!-- Grid of entry tiles. ItemWidth is computed in code-behind from the
-             viewport width (min tile ~360px) so the column count adapts. -->
+        <!-- Grid of square entry tiles. The WHOLE TILE is the on/off control
+             (no ToggleSwitch): visible entries sit bright with a lime edge and
+             corner dot, hidden ones dim to half opacity. ItemWidth/ItemHeight
+             are computed in code-behind (~132px min square) so the column
+             count adapts; Loaded covers the first layout, SizeChanged the rest. -->
         <GridView Grid.Row="2" x:Name="EntriesGrid" SelectionMode="None"
-                  Background="Transparent" Padding="0" IsItemClickEnabled="False"
+                  Background="Transparent" Padding="0" IsItemClickEnabled="True"
+                  ItemClick="EntriesGrid_ItemClick"
+                  Loaded="EntriesGrid_Loaded"
                   SizeChanged="EntriesGrid_SizeChanged">
             <GridView.ItemsPanel>
                 <ItemsPanelTemplate>
@@ -82,68 +87,34 @@
             </GridView.ItemContainerStyle>
             <GridView.ItemTemplate>
                 <DataTemplate x:DataType="vm:EntryRowViewModel">
-                    <Border Margin="0,0,10,10" Padding="14,12" CornerRadius="10"
-                            Background="{ThemeResource AppSurface}"
-                            BorderBrush="{ThemeResource AppBorder}" BorderThickness="1"
-                            PointerEntered="Row_PointerEntered"
-                            PointerExited="Row_PointerExited"
-                            Tapped="Row_Tapped">
-                        <Grid ColumnSpacing="14">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="32"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <Image Width="22" Height="22"
-                                   Source="{x:Bind Icon, Converter={StaticResource ObjectToImageSourceConverter}, Mode=OneWay}"
-                                   VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                            <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
-                                <TextBlock Text="{x:Bind DisplayName}" FontSize="14"
+                    <Border Margin="0,0,9,9" Padding="10" CornerRadius="10" BorderThickness="1"
+                            Background="{x:Bind IsHidden, Mode=OneWay, Converter={StaticResource HiddenToTileBackgroundConverter}}"
+                            BorderBrush="{x:Bind IsHidden, Mode=OneWay, Converter={StaticResource HiddenToTileBorderBrushConverter}}"
+                            Opacity="{x:Bind IsHidden, Mode=OneWay, Converter={StaticResource HiddenToTileOpacityConverter}}"
+                            ToolTipService.ToolTip="{x:Bind Detail}"
+                            PointerEntered="Tile_PointerEntered"
+                            PointerExited="Tile_PointerExited">
+                        <Grid>
+                            <!-- Lime corner dot = entry currently visible in the menu.
+                                 Redundant with the border color on purpose: state must
+                                 not read from hue alone. -->
+                            <Ellipse Width="7" Height="7" Margin="0,1,1,0"
+                                     Fill="{ThemeResource AppAccent}"
+                                     HorizontalAlignment="Right" VerticalAlignment="Top"
+                                     Visibility="{x:Bind IsHidden, Mode=OneWay, Converter={StaticResource InvertBoolToVisibilityConverter}}"/>
+                            <TextBlock Text="locked" FontSize="10"
+                                       FontFamily="Consolas, Cascadia Code, monospace"
+                                       Foreground="{ThemeResource AppTextDim}"
+                                       HorizontalAlignment="Left" VerticalAlignment="Top"
+                                       Visibility="{x:Bind CanHide, Converter={StaticResource InvertBoolToVisibilityConverter}}"/>
+                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+                                <Image Width="32" Height="32" HorizontalAlignment="Center"
+                                       Source="{x:Bind Icon, Converter={StaticResource ObjectToImageSourceConverter}, Mode=OneWay}"/>
+                                <TextBlock Text="{x:Bind DisplayName}" FontSize="12"
+                                           Foreground="{ThemeResource AppText}"
+                                           TextWrapping="Wrap" MaxLines="2"
                                            TextTrimming="CharacterEllipsis"
-                                           Foreground="{ThemeResource AppText}"/>
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <Border Padding="4,1" CornerRadius="3"
-                                            Background="#1a2810" BorderBrush="#3d5a1d" BorderThickness="1"
-                                            Visibility="{x:Bind IsBuiltIn, Converter={StaticResource BoolToVisibilityConverter}}">
-                                        <TextBlock Text="BUILT-IN" FontSize="9"
-                                                   FontFamily="Consolas, Cascadia Code, monospace"
-                                                   Foreground="#92bd4c" CharacterSpacing="100"/>
-                                    </Border>
-                                    <TextBlock FontSize="11"
-                                               FontFamily="Consolas, Cascadia Code, monospace"
-                                               Foreground="{ThemeResource AppTextDim}"
-                                               TextTrimming="CharacterEllipsis">
-                                        <Run Text="{x:Bind Source}"/>
-                                        <Run Text=" · "/>
-                                        <Run Text="{x:Bind KindLabel}"/>
-                                    </TextBlock>
-                                </StackPanel>
-                            </StackPanel>
-                            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                <TextBlock Text="locked" FontSize="10"
-                                           FontFamily="Consolas, Cascadia Code, monospace"
-                                           Foreground="{ThemeResource AppTextDim}"
-                                           VerticalAlignment="Center"
-                                           Visibility="{x:Bind CanHide, Converter={StaticResource InvertBoolToVisibilityConverter}}"/>
-                                <ToggleSwitch IsOn="{x:Bind IsHidden, Mode=TwoWay, Converter={StaticResource InvertBoolConverter}}"
-                                              IsEnabled="{x:Bind CanHide}"
-                                              OnContent="" OffContent="" MinWidth="0">
-                                    <ToggleSwitch.Resources>
-                                        <SolidColorBrush x:Key="ToggleSwitchFillOn"                Color="#d4ff3a"/>
-                                        <SolidColorBrush x:Key="ToggleSwitchFillOnPointerOver"     Color="#e5ff5a"/>
-                                        <SolidColorBrush x:Key="ToggleSwitchFillOnPressed"         Color="#c2eb28"/>
-                                        <SolidColorBrush x:Key="ToggleSwitchStrokeOn"              Color="#d4ff3a"/>
-                                        <SolidColorBrush x:Key="ToggleSwitchStrokeOnPointerOver"   Color="#d4ff3a"/>
-                                        <SolidColorBrush x:Key="ToggleSwitchStrokeOnPressed"       Color="#d4ff3a"/>
-                                        <SolidColorBrush x:Key="ToggleSwitchKnobFillOn"            Color="#0a0a0a"/>
-                                        <SolidColorBrush x:Key="ToggleSwitchKnobFillOnPointerOver" Color="#0a0a0a"/>
-                                        <SolidColorBrush x:Key="ToggleSwitchKnobFillOnPressed"     Color="#0a0a0a"/>
-                                        <SolidColorBrush x:Key="AccentFillColorDefaultBrush"       Color="#d4ff3a"/>
-                                        <SolidColorBrush x:Key="AccentFillColorSecondaryBrush"     Color="#e5ff5a"/>
-                                        <SolidColorBrush x:Key="AccentFillColorTertiaryBrush"      Color="#c2eb28"/>
-                                        <SolidColorBrush x:Key="TextOnAccentFillColorPrimaryBrush" Color="#0a0a0a"/>
-                                    </ToggleSwitch.Resources>
-                                </ToggleSwitch>
+                                           TextAlignment="Center" HorizontalAlignment="Center"/>
                             </StackPanel>
                         </Grid>
                     </Border>

@@ -6,7 +6,6 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using RCMM.Core.ViewModels;
-using Windows.UI;
 
 namespace RCMM.Views;
 
@@ -15,9 +14,6 @@ public sealed partial class ScopePage : Page
     private MainViewModel _vm = null!;
     private OriginFilter _origin = OriginFilter.All;
     private VisibilityFilter _visibility = VisibilityFilter.All;
-
-    // Faint lime-tinted hover (~6% alpha) to match the card glow
-    private static readonly SolidColorBrush HoverBrush = new(Color.FromArgb(0x10, 0xd4, 0xff, 0x3a));
 
     public ScopePage() { InitializeComponent(); }
 
@@ -110,46 +106,48 @@ public sealed partial class ScopePage : Page
 
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e) => RebuildList();
 
-    /// <summary>Adaptive columns: as many ~360px-minimum tiles as fit, tiles
-    /// stretch to share the row exactly. One column below 720px.</summary>
-    private void EntriesGrid_SizeChanged(object sender, SizeChangedEventArgs e)
+    /// <summary>Adaptive square tiles: as many ~132px-minimum squares as fit,
+    /// sharing the row width exactly. ItemHeight tracks ItemWidth so the grid
+    /// stays square regardless of viewport.</summary>
+    private void ApplyItemSizing(double width)
     {
-        if (EntriesGrid.ItemsPanelRoot is not ItemsWrapGrid panel) return;
-        const double minTile = 360;
-        double width = e.NewSize.Width;
         if (width <= 0) return;
+        if (EntriesGrid.ItemsPanelRoot is not ItemsWrapGrid panel) return;
+        const double minTile = 132;
         int columns = Math.Max(1, (int)(width / minTile));
-        panel.ItemWidth = Math.Floor(width / columns);
+        var size = Math.Floor(width / columns);
+        panel.ItemWidth = size;
+        panel.ItemHeight = size;
     }
 
-    private void Row_PointerEntered(object sender, PointerRoutedEventArgs e)
-    {
-        if (sender is Border b) b.Background = HoverBrush;
-    }
+    private void EntriesGrid_SizeChanged(object sender, SizeChangedEventArgs e)
+        => ApplyItemSizing(e.NewSize.Width);
 
-    private void Row_PointerExited(object sender, PointerRoutedEventArgs e)
-    {
-        // Tiles rest on AppSurface (not transparent like the old full-width rows).
-        if (sender is Border b) b.Background = (Brush)Application.Current.Resources["AppSurface"];
-    }
+    /// <summary>First layout: SizeChanged can fire before ItemsPanelRoot exists,
+    /// which left tiles content-sized until the user resized the window. Loaded
+    /// runs after the panel materializes, so sizing applies on first render.</summary>
+    private void EntriesGrid_Loaded(object sender, RoutedEventArgs e)
+        => ApplyItemSizing(EntriesGrid.ActualWidth);
 
-    private void Row_Tapped(object sender, TappedRoutedEventArgs e)
+    /// <summary>The whole tile is the toggle. ItemClick fires for mouse, touch,
+    /// and Enter/Space on a focused tile, so hide/unhide stays keyboard-operable
+    /// without a per-tile switch.</summary>
+    private void EntriesGrid_ItemClick(object sender, ItemClickEventArgs e)
     {
-        // If the tap came from inside the ToggleSwitch, let it handle itself.
-        if (e.OriginalSource is DependencyObject src && FindAncestor<ToggleSwitch>(src) != null) return;
-        if (sender is FrameworkElement fe && fe.DataContext is EntryRowViewModel vm && vm.CanHide)
-        {
+        if (e.ClickedItem is EntryRowViewModel vm && vm.CanHide)
             vm.IsHidden = !vm.IsHidden;
-        }
     }
 
-    private static T? FindAncestor<T>(DependencyObject d) where T : DependencyObject
+    private void Tile_PointerEntered(object sender, PointerRoutedEventArgs e)
     {
-        while (d != null)
-        {
-            if (d is T t) return t;
-            d = VisualTreeHelper.GetParent(d);
-        }
-        return null;
+        // Hidden tiles brighten to full opacity on hover so their label is
+        // readable before you decide to unhide them.
+        if (sender is Border b) b.Opacity = 1.0;
+    }
+
+    private void Tile_PointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is Border b && b.DataContext is EntryRowViewModel vm)
+            b.Opacity = vm.IsHidden ? HiddenToTileOpacityConverter.HiddenOpacity : 1.0;
     }
 }

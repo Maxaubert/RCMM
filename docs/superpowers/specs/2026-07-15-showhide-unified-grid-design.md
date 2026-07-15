@@ -49,16 +49,25 @@ with the system caption buttons.
 
 ### 3. Grid layout
 
-- Responsive multi-column grid: adaptive column count from a minimum tile
-  width of ~360px (2-3 columns at typical window sizes), one column when
-  narrow. `ItemsRepeater` (or `GridView` with adaptive item sizing) —
-  whichever fits WinUI 3 unpackaged constraints; virtualization required
+*(Amended after mockup review: the owner picked the "square, tile is the
+toggle" variant over the original two-line cards.)*
+
+- Responsive grid of **square tiles**, ~132px minimum, sharing the row width
+  exactly (`GridView` + `ItemsWrapGrid`, `ItemWidth`/`ItemHeight` computed
+  from the viewport on `Loaded` + `SizeChanged`); virtualization required
   (60+ entries with icons).
-- Each tile preserves everything a row shows today: icon, display name,
-  source, Item/Submenu badge, hide `ToggleSwitch`.
-- Interactions preserved: tap anywhere on the tile toggles (except on the
-  switch itself), lime hover glow, non-hideable entries greyed/disabled
-  (`CanHide == false`).
+- **The whole tile is the on/off control** — no `ToggleSwitch`. Tile face:
+  32px icon + display name (2-line wrap, centered). Visible entries sit
+  bright with a lime border, lime-glow fill, and a lime corner dot (the dot
+  keeps state readable without relying on hue alone); hidden entries dim to
+  half opacity and brighten on hover so their label stays readable.
+- Publisher + kind move to the tile tooltip (`Source · Item/Submenu`);
+  the BUILT-IN badge leaves the tile face (the Apps/Windows chips carry
+  that dimension).
+- Toggling goes through `GridView.ItemClick`, which also fires for
+  Enter/Space on a focused tile, keeping hide/unhide keyboard-operable.
+- Non-hideable entries show a small "locked" label and don't respond to
+  clicks (`CanHide == false`).
 
 ### 4. Settings gear alignment
 
