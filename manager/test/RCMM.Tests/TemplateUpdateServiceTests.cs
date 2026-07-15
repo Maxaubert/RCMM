@@ -123,6 +123,12 @@ public class TemplateUpdateServiceTests
         Assert.Equal("Change format", a.SourceTemplateId);
         Assert.Equal(TemplateUpdateService.Hash(cf), a.AppliedTemplateHash);      // in sync
 
+        // v5 drops unstamped entries, so absence is the proof v3 left these
+        // unstamped: a wrongly-stamped "b" or "c" would survive the drop and
+        // fail these assertions (regression guard for the name-collision bug).
+        Assert.DoesNotContain(migrated.Entries, e => e.Id == "b");
+        Assert.DoesNotContain(migrated.Entries, e => e.Id == "c");
+
         // Nothing surfaces as an update: only the in-sync entry is stamped, and it matches.
         Assert.Empty(new TemplateUpdateService().FindUpdates(migrated));
     }
@@ -141,7 +147,8 @@ public class TemplateUpdateServiceTests
         var migrated = AdditionStore.MigrateIfNeeded(
             new AdditionState { SchemaVersion = 2, Entries = new[] { mine } });
 
-        // v5 drops the hand-authored entry, so Entries is empty
+        // v5 drops the hand-authored entry: emptiness proves it was not stamped
+        // (a stamped entry would survive and fail this assertion — regression guard).
         Assert.Empty(migrated.Entries);
         Assert.Empty(new TemplateUpdateService().FindUpdates(migrated));
     }
