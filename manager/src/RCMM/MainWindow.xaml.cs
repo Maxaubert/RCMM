@@ -58,6 +58,11 @@ public sealed partial class MainWindow : Window
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
+        // The system caption buttons default to the compact (~32px) strip while
+        // AppTitleBar is 48px, so our title-bar buttons — vertically centered in
+        // the row — sat visibly LOWER than minimize/maximize/close. Tall makes
+        // the system strip 48px too, giving both sets the same vertical center.
+        AppWindow.TitleBar.PreferredHeightOption = Microsoft.UI.Windowing.TitleBarHeightOption.Tall;
         // SetTitleBar's automatic pass-through for interactive children is unreliable —
         // clicks on the nav / settings buttons get swallowed by the title bar's drag
         // region and need a second click. Explicitly mark each button's rectangle as a

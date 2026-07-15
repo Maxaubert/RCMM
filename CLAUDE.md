@@ -12,7 +12,7 @@ Power users and tweakers. People who already know what a shellex or a verb is an
 
 ## UI direction
 
-Modern dark utility: flat, compact, dark-only, no system chrome. Donut chart on the landing page, App / Windows split on the show-hide page. Stay in that direction. Don't introduce a light theme or Fluent/Mica without an explicit decision to change course.
+Modern dark utility: flat, compact, dark-only, no system chrome. Donut chart on the landing page, one unified filterable grid (origin + visibility chips) on the show-hide page. Stay in that direction. Don't introduce a light theme or Fluent/Mica without an explicit decision to change course.
 
 ## Scope
 
