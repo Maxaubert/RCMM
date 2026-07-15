@@ -89,10 +89,11 @@ The enabler for §1c. A small helper that ships with RCMM and is invoked by a "s
 
 ---
 
-## 3. Add to RCM — broader feature
+## 3. Add page — structuring polish
 
-The full custom-entry editor (partly built on the Add page). 📋 planned per `CLAUDE.md`. Backlog: input validation for empty/duplicate names (AUDIT.md **H6**), command-quoting safety for `%V`/`%1` (AUDIT.md **H5**), honor-or-remove the unused **Working dir** field (AUDIT.md **M-A4**), submenu / nested-group polish.
+✅ The Add page shipped **templates-only** (2026-07, spec `docs/superpowers/specs/2026-07-15-templates-only-addpage-design.md`): entries come from the template catalogue; users structure them (drag order, folders, name, icon). The ad-hoc custom-entry editor was removed; schema v5 drops hand-authored entries on load. Consequences for the old backlog: command-quoting (AUDIT.md **H5**) is now confined to templates we author; the unused Working-dir field (AUDIT.md **M-A4**) is no longer user-editable, so the honor-or-remove question moves into template/applier territory.
 
+- 🚧 **H6 input validation, reduced scope** — empty/duplicate *names* only (Name is still editable); command validation is moot.
 - 🔭 **Full Lucide icon set** — bundle all ~1,600 Lucide icons (ISC-licensed) and rebuild the icon picker with a **search box + virtualized grid** (render-on-scroll), replacing today's hand-curated `IconLibrary` handful. Auto-generate the fragment data from the upstream SVGs (`github.com/lucide-icons/lucide` `icons/*.svg`) rather than hand-copying. A raw 1,600-icon grid is unusable without search/virtualization — that's the actual work, not the download.
 
 ## 4. Manage New > submenu
