@@ -27,6 +27,82 @@ function PauseExit {
     exit
 }
 
+# Any unhandled terminating error (EAP=Stop) would otherwise kill the verb-spawned
+# console before the user can read it. Route every escape through PauseExit.
+trap {
+    Write-Host ''
+    Write-Host ("Something went wrong: " + $_.Exception.Message)
+    PauseExit
+}
+
+# --- Display-width helpers (shared TUI box drawing) ----------------------------
+# East-Asian wide / fullwidth glyphs occupy two terminal cells but count as one
+# UTF-16 unit, so String.Length misaligns the box border for such names. Measure
+# real cell width, and pad/truncate by it, so the box stays square and (critically)
+# never exceeds the console width and wraps.
+function Get-DisplayWidth([string]$s) {
+    if (-not $s) { return 0 }
+    $w = 0
+    foreach ($ch in $s.ToCharArray()) {
+        $c = [int]$ch
+        if (($c -ge 0x1100 -and $c -le 0x115F) -or ($c -ge 0x2E80 -and $c -le 0xA4CF) -or
+            ($c -ge 0xAC00 -and $c -le 0xD7A3) -or ($c -ge 0xF900 -and $c -le 0xFAFF) -or
+            ($c -ge 0xFE30 -and $c -le 0xFE4F) -or ($c -ge 0xFF00 -and $c -le 0xFF60) -or
+            ($c -ge 0xFFE0 -and $c -le 0xFFE6)) { $w += 2 } else { $w += 1 }
+    }
+    return $w
+}
+
+# Pad or ellipsize $s to exactly $width display cells.
+function Fit-Display([string]$s, [int]$width) {
+    if ($width -lt 1) { return '' }
+    if ((Get-DisplayWidth $s) -gt $width) {
+        $budget = $width - 1  # room for the ellipsis
+        $out = ''; $w = 0
+        foreach ($ch in $s.ToCharArray()) {
+            $cw = if ((Get-DisplayWidth ([string]$ch)) -eq 2) { 2 } else { 1 }
+            if ($w + $cw -gt $budget) { break }
+            $out += $ch; $w += $cw
+        }
+        $s = $out + ([char]0x2026)
+    }
+    $pad = $width - (Get-DisplayWidth $s)
+    if ($pad -gt 0) { return $s + (' ' * $pad) }
+    return $s
+}
+
+# Widest inner content we can draw without the box wrapping the console.
+function Get-MaxBoxWidth {
+    $cw = 76
+    try { $c = [Console]::WindowWidth; if ($c -gt 10) { $cw = $c - 4 } } catch {}
+    return $cw
+}
+
+# Output path next to the source with a new extension, guaranteed not to collide
+# with the source or any existing file: name.ext -> "name (converted).ext" -> " (2)"...
+function Get-UniqueOutPath([string]$dir, [string]$name, [string]$ext) {
+    $cand = Join-Path $dir ($name + $ext)
+    if (-not (Test-Path -LiteralPath $cand)) { return $cand }
+    $cand = Join-Path $dir ($name + ' (converted)' + $ext)
+    $n = 2
+    while (Test-Path -LiteralPath $cand) {
+        $cand = Join-Path $dir ($name + " (converted $n)" + $ext)
+        $n++
+    }
+    return $cand
+}
+
+# Collision-free directory path: "base" -> "base (2)" -> "base (3)"...
+function Get-UniqueOutDir([string]$dir, [string]$base) {
+    $cand = Join-Path $dir $base
+    $n = 2
+    while (Test-Path -LiteralPath $cand) {
+        $cand = Join-Path $dir ("$base ($n)")
+        $n++
+    }
+    return $cand
+}
+
 # Boxed, arrow-key navigable menu. Returns the chosen index, or -1 on Esc.
 function Show-BoxMenu {
     param([string]$Title, [string]$Status, [string[]]$Items)
@@ -41,11 +117,15 @@ function Show-BoxMenu {
     $VL = [char]0x251C; $VR = [char]0x2524; $V = [char]0x2502
     $arrow = [char]0x25B8
 
-    # Width = widest inner line + margin (min 30).
+    # Width = widest inner line + margin (min 30), but never wider than the
+    # console, or long filenames wrap and shatter the box.
     $width = 30
     foreach ($s in (@($Title, $Status) + $Items)) {
-        if ($s -and ($s.Length + 5) -gt $width) { $width = $s.Length + 5 }
+        $dw = (Get-DisplayWidth $s) + 5
+        if ($dw -gt $width) { $width = $dw }
     }
+    $max = Get-MaxBoxWidth
+    if ($width -gt $max) { $width = $max }
     $H = ([string][char]0x2500) * $width
 
     $sel = 0
@@ -56,18 +136,18 @@ function Show-BoxMenu {
             try { [Console]::SetCursorPosition(0, $start) } catch {}
             $lines = New-Object System.Collections.Generic.List[string]
             $lines.Add("  " + $TL + $H + $TR)
-            $lines.Add("  " + $V + $text + (" " + $Title).PadRight($width) + $reset + $V)
+            $lines.Add("  " + $V + $text + (Fit-Display (" " + $Title) $width) + $reset + $V)
             if ($Status) {
-                $lines.Add("  " + $V + $dim + (" " + $Status).PadRight($width) + $reset + $V)
+                $lines.Add("  " + $V + $dim + (Fit-Display (" " + $Status) $width) + $reset + $V)
             }
             $lines.Add("  " + $VL + $H + $VR)
             for ($i = 0; $i -lt $Items.Count; $i++) {
                 if ($i -eq $sel) {
-                    $inner = (" " + $arrow + " " + $Items[$i]).PadRight($width)
+                    $inner = Fit-Display (" " + $arrow + " " + $Items[$i]) $width
                     $lines.Add("  " + $V + $lime + $inner + $reset + $V)
                 }
                 else {
-                    $inner = ("   " + $Items[$i]).PadRight($width)
+                    $inner = Fit-Display ("   " + $Items[$i]) $width
                     $lines.Add("  " + $V + $dim + $inner + $reset + $V)
                 }
             }
@@ -100,15 +180,12 @@ function Resolve-Tool([string]$name, [string[]]$fallbacks) {
     return $null
 }
 
-# Output path next to the source, new extension; never overwrites the source.
+# Output path next to the source, new extension; never overwrites the source OR
+# any existing unrelated file (e.g. converting clip.mkv when clip.mp4 exists).
 function Get-OutPath([string]$in, [string]$ext) {
-    $cand = [System.IO.Path]::ChangeExtension($in, $ext)
-    if ($cand -ieq $in) {
-        $dir = [System.IO.Path]::GetDirectoryName($in)
-        $name = [System.IO.Path]::GetFileNameWithoutExtension($in)
-        $cand = Join-Path $dir ($name + ' (converted)' + $ext)
-    }
-    return $cand
+    $dir = [System.IO.Path]::GetDirectoryName($in)
+    $name = [System.IO.Path]::GetFileNameWithoutExtension($in)
+    return Get-UniqueOutPath $dir $name $ext
 }
 
 # Category descriptor for a given extension, or $null if unsupported.
@@ -196,8 +273,11 @@ function Build-Invocation($target, [string]$in) {
         'mutool-images' {
             $dir = [System.IO.Path]::GetDirectoryName($in)
             $name = [System.IO.Path]::GetFileNameWithoutExtension($in)
-            $pattern = Join-Path $dir ($name + '-%d.png')
-            return @{ Args = @('draw', '-q', '-F', 'png', '-r', '150', '-o', $pattern, $in); Out = $null }
+            # Page images land in their own collision-free folder, so they never
+            # clobber a pre-existing "name-1.png" sitting next to the PDF.
+            $outdir = Get-UniqueOutDir $dir ($name + ' (pages)')
+            $pattern = Join-Path $outdir ($name + '-%d.png')
+            return @{ Args = @('draw', '-q', '-F', 'png', '-r', '150', '-o', $pattern, $in); Out = $outdir; MakeDir = $outdir }
         }
         'mutool-compress' {
             $out = Get-OutPath $in '.pdf'
@@ -206,8 +286,13 @@ function Build-Invocation($target, [string]$in) {
         'soffice' {
             $dir = [System.IO.Path]::GetDirectoryName($in)
             $name = [System.IO.Path]::GetFileNameWithoutExtension($in)
-            $out = Join-Path $dir ($name + '.' + $target.Fmt)
-            return @{ Args = @('--headless', '--convert-to', $target.Fmt, '--outdir', $dir, $in); Out = $out }
+            # soffice forces "<name>.<fmt>" into --outdir with no rename option, so
+            # convert into a private temp subdir and let the caller move the result
+            # to a collision-free final name instead of clobbering an existing file.
+            $tmp = Join-Path $dir ('.rcmm-convert-' + [System.Guid]::NewGuid().ToString('N'))
+            $produced = Join-Path $tmp ($name + '.' + $target.Fmt)
+            $final = Get-UniqueOutPath $dir $name ('.' + $target.Fmt)
+            return @{ Args = @('--headless', '--convert-to', $target.Fmt, '--outdir', $tmp, $in); Out = $final; TempDir = $tmp; Produced = $produced }
         }
     }
     return @{ Args = @(); Out = $null }
@@ -226,9 +311,15 @@ if (-not $cat) {
 }
 
 # Don't offer to convert a file into its own format (where that's just a no-op).
+# Normalize alias extensions so e.g. a .tif source doesn't get offered "TIFF"
+# (.tiff), a .jpeg source "JPG" (.jpg), or a .htm source "HTML" (.html).
 $targets = $cat.Targets
 if ($cat.ExcludeSource) {
-    $targets = @($targets | Where-Object { $_.Ext -ne $ext })
+    $norm = switch ($ext) {
+        '.tif'  { '.tiff' } '.jpeg' { '.jpg' } '.htm' { '.html' } '.aif' { '.aiff' }
+        default { $ext }
+    }
+    $targets = @($targets | Where-Object { $_.Ext -ne $ext -and $_.Ext -ne $norm })
 }
 
 if ($DryRun) {
@@ -245,7 +336,7 @@ Write-Host ("Checking for {0}... " -f $cat.Tool) -NoNewline
 $toolPath = Resolve-Tool $cat.Tool $cat.Fallbacks
 if (-not $toolPath) {
     Write-Host 'not installed.'
-    $ans = Read-Host ("Install {0} with winget? [Y/N]" -f $cat.Tool)
+    $ans = Read-Host ("Install {0} with winget? [Y/n]" -f $cat.Tool)
     if ($ans -eq '' -or $ans -match '^[Yy]') {
         if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
             Write-Host "winget isn't available here. Install $($cat.Tool) manually, then re-run."
@@ -284,9 +375,22 @@ $inv = Build-Invocation $target $Path
 Write-Host ''
 Write-Host ("Converting -> {0} ..." -f $target.Label)
 $toolArgs = $inv.Args
+# Multi-file (mutool page images) and document (soffice) outputs need their
+# target directory to exist before the tool runs.
+if ($inv.MakeDir) { New-Item -ItemType Directory -Force -Path $inv.MakeDir | Out-Null }
+if ($inv.TempDir) { New-Item -ItemType Directory -Force -Path $inv.TempDir | Out-Null }
 & $toolPath @toolArgs
+$convExit = $LASTEXITCODE
 
-if ($LASTEXITCODE -eq 0) {
+# soffice wrote into a temp dir; move its output to the collision-free final path.
+if ($inv.TempDir) {
+    if ($convExit -eq 0 -and (Test-Path -LiteralPath $inv.Produced)) {
+        Move-Item -LiteralPath $inv.Produced -Destination $inv.Out -Force
+    }
+    Remove-Item -LiteralPath $inv.TempDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+if ($convExit -eq 0) {
     Write-Host ''
     if ($inv.Out -and (Test-Path -LiteralPath $inv.Out)) {
         Write-Host ("Done -> " + $inv.Out)
@@ -309,6 +413,6 @@ if ($LASTEXITCODE -eq 0) {
 }
 else {
     Write-Host ''
-    Write-Host "Conversion failed (exit $LASTEXITCODE)."
+    Write-Host "Conversion failed (exit $convExit)."
 }
 PauseExit
