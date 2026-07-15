@@ -28,16 +28,14 @@
             <TextBlock Grid.Column="1" VerticalAlignment="Bottom" Padding="0,0,0,6"
                        Foreground="{ThemeResource AppTextMuted}" FontSize="13"
                        TextWrapping="Wrap" MaxWidth="720"
-                       Text="Add your own entries to the (classic) right-click menu. Pick a template or write a custom command. Group entries into folders that render as submenus. Drag to reorder, or drop onto a folder to move into it."/>
+                       Text="Add entries to the (classic) right-click menu from the template catalogue. Group them into folders that render as submenus. Drag to reorder, or drop onto a folder to move into it."/>
         </Grid>
 
         <!-- Toolbar -->
         <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="10">
-            <Button x:Name="NewEntryButton" Content="+ New entry" Click="NewEntry_Click"
+            <Button x:Name="TemplatesButton" Content="Browse templates" Click="Templates_Click"
                     Style="{StaticResource SurfaceButton}"/>
             <Button x:Name="NewFolderButton" Content="+ New folder" Click="NewFolder_Click"
-                    Style="{StaticResource SurfaceButton}"/>
-            <Button x:Name="TemplatesButton" Content="Browse templates" Click="Templates_Click"
                     Style="{StaticResource SurfaceButton}"/>
         </StackPanel>
 
@@ -327,55 +325,6 @@
                             <StackPanel Spacing="4">
                                 <TextBlock Text="Name" Foreground="{ThemeResource AppTextMuted}" FontSize="12"/>
                                 <TextBox x:Name="NameBox" LostFocus="Field_Changed" TextChanged="NameBox_TextChanged"/>
-                            </StackPanel>
-
-                            <StackPanel x:Name="CommandRow" Spacing="4">
-                                <TextBlock Text="Command" Foreground="{ThemeResource AppTextMuted}" FontSize="12"/>
-                                <TextBox x:Name="CommandBox" FontFamily="Cascadia Code, Consolas, Courier New" LostFocus="Field_Changed"/>
-                            </StackPanel>
-
-                            <Grid x:Name="WorkRunRow" ColumnSpacing="10">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0" Spacing="4">
-                                    <TextBlock Text="Working dir" Foreground="{ThemeResource AppTextMuted}" FontSize="12"/>
-                                    <TextBox x:Name="WorkingDirBox" FontFamily="Cascadia Code, Consolas, Courier New" LostFocus="Field_Changed"/>
-                                </StackPanel>
-                                <StackPanel Grid.Column="1" Spacing="4">
-                                    <TextBlock Text="Run mode" Foreground="{ThemeResource AppTextMuted}" FontSize="12"/>
-                                    <ComboBox x:Name="RunModeBox" HorizontalAlignment="Stretch" SelectionChanged="RunMode_SelectionChanged"/>
-                                </StackPanel>
-                            </Grid>
-
-                            <!-- Terminal — which terminal a visible-terminal entry opens in.
-                                 Shown only when the entry actually pops a console. -->
-                            <StackPanel x:Name="TerminalRow" Spacing="4">
-                                <TextBlock>
-                                    <Run Text="Terminal"/><Run Text="  (which terminal this opens in)" Foreground="{ThemeResource AppTextDim}" FontSize="11"/>
-                                </TextBlock>
-                                <ComboBox x:Name="TerminalBox" HorizontalAlignment="Stretch"
-                                          DisplayMemberPath="Display"
-                                          SelectionChanged="Terminal_SelectionChanged"/>
-                                <TextBox x:Name="TerminalCustomBox" Visibility="Collapsed"
-                                         PlaceholderText="Path to a terminal .exe…"
-                                         FontFamily="Cascadia Code, Consolas, Courier New"
-                                         LostFocus="Field_Changed"/>
-                            </StackPanel>
-
-                            <StackPanel x:Name="ScopeRow" Spacing="4">
-                                <TextBlock>
-                                    <Run Text="Scope"/><Run Text="  (where the entry appears)" Foreground="{ThemeResource AppTextDim}" FontSize="11"/>
-                                </TextBlock>
-                                <ComboBox x:Name="ScopeBox" HorizontalAlignment="Stretch" SelectionChanged="Field_SelectionChanged"/>
-                            </StackPanel>
-
-                            <StackPanel x:Name="FileTypesRow" Spacing="4">
-                                <TextBlock>
-                                    <Run Text="File types"/><Run Text="  (comma-separated, when Scope = File)" Foreground="{ThemeResource AppTextDim}" FontSize="11"/>
-                                </TextBlock>
-                                <TextBox x:Name="FileTypesBox" FontFamily="Cascadia Code, Consolas, Courier New" LostFocus="Field_Changed"/>
                             </StackPanel>
 
                             <StackPanel x:Name="FolderRow" Spacing="4">
