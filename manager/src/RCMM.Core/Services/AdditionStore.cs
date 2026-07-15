@@ -61,9 +61,10 @@ public sealed class AdditionStore
     /// <summary>
     /// Migrate older schemas to the current one. v1 → v2 sets
     /// <see cref="AdditionFolder.ParentFolderId"/> = null and
-    /// <see cref="AdditionFolder.Scope"/> = FolderBackground on every folder
-    /// (both fields ship as defaults from the record, but we bump the version
-    /// explicitly so a subsequent save records v2 in the file). No data loss.
+    /// <see cref="AdditionFolder.Scope"/> = FolderBackground on every folder.
+    /// v2 → v3 back-fills template-update tracking (see inline comment).
+    /// v4 → v5 drops hand-authored entries — the one deliberately lossy step,
+    /// per the templates-only design (2026-07-15 spec).
     /// </summary>
     public static AdditionState MigrateIfNeeded(AdditionState state)
     {
@@ -109,6 +110,22 @@ public sealed class AdditionStore
                 }
             }
             state = state with { Entries = migrated };
+        }
+
+        // v4 → v5: templates-only Add page. Hand-authored entries can no longer be
+        // created or edited, so drop them here rather than carrying dead weight the
+        // UI can't manage. Must run AFTER the v3 stamping pass — v3 is what decides
+        // which pre-v3 entries count as template-derived and therefore survive.
+        // Registry cleanup is free: the next Apply purges every RCMM.-prefixed key
+        // and rewrites from this store.
+        if (state.SchemaVersion < 5)
+        {
+            var kept = new List<AdditionEntry>(state.Entries.Count);
+            foreach (var e in state.Entries)
+                if (e.SourceTemplateId != null) kept.Add(e);
+            if (kept.Count != state.Entries.Count)
+                Log.Info(Cat, $"v5: dropped {state.Entries.Count - kept.Count} hand-authored entries");
+            state = state with { Entries = kept };
         }
 
         return state with { SchemaVersion = AdditionState.CurrentSchemaVersion };
