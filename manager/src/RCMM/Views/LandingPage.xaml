@@ -137,7 +137,7 @@
                     <TextBlock Grid.Row="1" Text="Add to menu" FontSize="22" FontWeight="Medium"
                                Foreground="{ThemeResource AppText}"/>
                     <TextBlock Grid.Row="2" TextWrapping="Wrap"
-                               Text="Create new entries, run a custom command, open a path, or launch a script."
+                               Text="Add entries from the template catalogue: group into submenus, reorder, rename, and pick icons."
                                Foreground="{ThemeResource AppTextMuted}" FontSize="13"/>
                     <Border Grid.Row="3" BorderBrush="{ThemeResource AppBorder}" BorderThickness="0,1,0,0"
                             Padding="0,14,0,0" Margin="0,14,0,0">
