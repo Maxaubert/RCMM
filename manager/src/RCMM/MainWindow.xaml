@@ -47,10 +47,14 @@
 
             <!-- Drag area (rest of bar) + Settings on the right -->
             <Grid Grid.Column="3" Background="Transparent">
+                <!-- Bottom margin lifts the visual center ~4px: the Tall caption
+                     strip's glyphs sit slightly above the row's geometric center,
+                     so a centered gear reads a few pixels low next to them. -->
                 <Button x:Name="SettingsButton" Click="Settings_Click"
                         Style="{StaticResource TitleBarIconButton}"
                         ToolTipService.ToolTip="Settings"
-                        HorizontalAlignment="Right" VerticalAlignment="Center">
+                        HorizontalAlignment="Right" VerticalAlignment="Center"
+                        Margin="0,0,0,8">
                     <FontIcon Glyph="&#xE713;" FontSize="15"/>
                 </Button>
             </Grid>

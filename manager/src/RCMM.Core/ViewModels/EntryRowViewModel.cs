@@ -20,6 +20,9 @@ public sealed class EntryRowViewModel : ObservableObject
     public string DisplayName => Entry.DisplayName;
     public string Source => string.IsNullOrEmpty(Entry.Source) ? "Unknown" : Entry.Source!;
     public string KindLabel => Entry.IsSubmenu ? "Submenu" : "Item";
+    /// <summary>Tooltip line for the square tiles, which are too small to
+    /// carry the publisher/kind text on their face.</summary>
+    public string Detail => $"{Source} · {KindLabel}";
     public bool IsBuiltIn => Entry.IsBuiltIn;
     public bool CanHide => Entry.CanHide;
     public byte[]? IconBytes => Entry.IconBytes;
