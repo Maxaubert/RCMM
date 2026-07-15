@@ -109,7 +109,7 @@ public class TemplateUpdateServiceTests
                        scope: cf.Scope, mode: cf.RunMode, wd: cf.WorkingDir, fts: cf.FileTypes!.ToArray());
         // Name collides but the structure differs. Could be a drifted legacy entry OR a
         // hand-authored one that merely shares the name; we can't tell, so treat it as
-        // hand-authored and DON'T stamp it — the safe choice.
+        // hand-authored and DON'T stamp it — the safe choice. Gets dropped by v5.
         var collision = Ent(id: "b", name: "Change format", cmd: "C:\\app\\rcmm-convert.ps1",
                             scope: cf.Scope, mode: cf.RunMode, wd: cf.WorkingDir, fts: new[] { "png" });
         var hand = Ent(id: "c", name: "totally custom", cmd: "foo");
@@ -118,11 +118,16 @@ public class TemplateUpdateServiceTests
             new AdditionState { SchemaVersion = 2, Entries = new[] { sync, collision, hand } });
 
         Assert.Equal(AdditionState.CurrentSchemaVersion, migrated.SchemaVersion);
+        // v5 drops the hand-authored entries (b and c), so only a survives
         var a = migrated.Entries.Single(e => e.Id == "a");
         Assert.Equal("Change format", a.SourceTemplateId);
         Assert.Equal(TemplateUpdateService.Hash(cf), a.AppliedTemplateHash);      // in sync
-        Assert.Null(migrated.Entries.Single(e => e.Id == "b").SourceTemplateId);  // name-only collision -> hand-authored
-        Assert.Null(migrated.Entries.Single(e => e.Id == "c").SourceTemplateId);  // not a template name
+
+        // v5 drops unstamped entries, so absence is the proof v3 left these
+        // unstamped: a wrongly-stamped "b" or "c" would survive the drop and
+        // fail these assertions (regression guard for the name-collision bug).
+        Assert.DoesNotContain(migrated.Entries, e => e.Id == "b");
+        Assert.DoesNotContain(migrated.Entries, e => e.Id == "c");
 
         // Nothing surfaces as an update: only the in-sync entry is stamped, and it matches.
         Assert.Empty(new TemplateUpdateService().FindUpdates(migrated));
@@ -134,6 +139,7 @@ public class TemplateUpdateServiceTests
         // The bug: a user's own entry named exactly like a built-in template used to be
         // stamped as template-derived, after which a template change would offer an
         // "update" that overwrites the user's command. It must stay hand-authored.
+        // v3 correctly does not stamp it; v5 drops it because it has no sourceTemplateId.
         var cmd = AdditionTemplates.All.First(x => x.Name == "Command Prompt here");
         var mine = Ent(id: "mine", name: "Command Prompt here", cmd: "my-own-launcher.exe %V",
                        scope: AdditionScope.File, mode: RunMode.Background, wd: "%1", fts: new[] { "txt" });
@@ -141,9 +147,9 @@ public class TemplateUpdateServiceTests
         var migrated = AdditionStore.MigrateIfNeeded(
             new AdditionState { SchemaVersion = 2, Entries = new[] { mine } });
 
-        var m = migrated.Entries.Single();
-        Assert.Null(m.SourceTemplateId);
-        Assert.Equal("my-own-launcher.exe %V", m.Command);
+        // v5 drops the hand-authored entry: emptiness proves it was not stamped
+        // (a stamped entry would survive and fail this assertion — regression guard).
+        Assert.Empty(migrated.Entries);
         Assert.Empty(new TemplateUpdateService().FindUpdates(migrated));
     }
 }

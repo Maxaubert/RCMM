@@ -30,12 +30,18 @@ public sealed class AddPageViewModel : ObservableObject
 
     public void Load()
     {
-        var state = _store.Load();
+        var state = _store.Load(out var dropped);
         Entries.Clear();
         Folders.Clear();
         foreach (var e in state.Entries) Entries.Add(e);
         foreach (var f in state.Folders) Folders.Add(f);
-        HasPendingChanges = false;
+        // Dropping hand-authored entries at load (v4 → v5 migration) leaves their
+        // registry keys orphaned until an Apply rewrites from this store. Lighting
+        // up HasPendingChanges here is what makes that cleanup reachable: without
+        // it, a user whose additions were ALL hand-authored never triggers the
+        // additions-apply branch, and MainViewModel's empty-state re-assert path
+        // also skips (it only fires when entries/folders remain).
+        HasPendingChanges = dropped;
     }
 
     public void AddEntry(AdditionEntry entry)

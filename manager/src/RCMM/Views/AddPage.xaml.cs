@@ -64,10 +64,6 @@ public sealed partial class AddPage : Page
               ?? throw new InvalidOperationException("AddPageViewModel not initialised on MainViewModel");
         Log.Info(Cat, $"OnNavigatedTo: vm has {_vm.Entries.Count} entries, {_vm.Folders.Count} folders");
 
-        // Static combo sources
-        ScopeBox.ItemsSource    = Enum.GetValues<AdditionScope>().Cast<object>().ToList();
-        RunModeBox.ItemsSource  = Enum.GetValues<RunMode>().Cast<object>().ToList();
-
         LeftList.ItemsSource = _leftRows;
         MiddleList.ItemsSource = _middleRows;
 
@@ -526,26 +522,6 @@ public sealed partial class AddPage : Page
     // TOOLBAR
     // -------------------------------------------------------------------------
 
-    private void NewEntry_Click(object sender, RoutedEventArgs e)
-    {
-        // Seed the configured default terminal (a new entry is VisibleTerminal, so it
-        // always opens a terminal). null = never chosen → preferred default (Windows
-        // Terminal if installed). Empty = Command Prompt, stored as null on the entry.
-        var def = new SettingsStore().Load().DefaultTerminal ?? TerminalCatalog.DefaultPreferred(BinaryResolver.Find);
-        var entry = new AdditionEntry
-        {
-            Id = Guid.NewGuid().ToString("N"),
-            Name = "New entry",
-            Command = "",
-            WorkingDir = "%V",
-            Scope = AdditionScope.FolderBackground,
-            RunMode = RunMode.VisibleTerminal,
-            Terminal = string.IsNullOrWhiteSpace(def) ? null : def,
-        };
-        _vm.AddEntry(entry);
-        SelectAndEdit("entry", entry.Id);
-    }
-
     private void NewFolder_Click(object sender, RoutedEventArgs e)
     {
         var folder = new AdditionFolder { Id = Guid.NewGuid().ToString("N"), Name = "New folder" };
@@ -605,12 +581,6 @@ public sealed partial class AddPage : Page
         try
         {
             NameBox.Text = entry.Name;
-            CommandBox.Text = entry.Command;
-            WorkingDirBox.Text = entry.WorkingDir;
-            FileTypesBox.Text = entry.FileTypes is { Count: > 0 } ? string.Join(", ", entry.FileTypes) : "";
-            ScopeBox.SelectedItem = entry.Scope;
-            RunModeBox.SelectedItem = entry.RunMode;
-            SetupTerminalRow(entry.RunMode, entry.Command, entry.Terminal);
 
             var folderOptions = new List<object> { TopLevelLabel };
             foreach (var f in _vm.Folders) folderOptions.Add(f);
@@ -630,15 +600,12 @@ public sealed partial class AddPage : Page
         EditorPanel.Visibility = Visibility.Visible;
         EditorTitle.Text = "Edit folder";
         SetEntryFieldsVisibility(false);
-        ParentFolderRow.Visibility = Visibility.Visible;
-        ScopeRow.Visibility = Visibility.Visible;
         FolderInfoRow.Visibility = Visibility.Visible;
 
         _suppressFieldChange = true;
         try
         {
             NameBox.Text = folder.Name;
-            ScopeBox.SelectedItem = folder.Scope;
 
             // Parent folder dropdown — exclude self + descendants
             var parentOptions = new List<object> { TopLevelLabel };
@@ -674,22 +641,13 @@ public sealed partial class AddPage : Page
 
     private void SetEntryFieldsVisibility(bool showEntryFields)
     {
-        var vis = showEntryFields ? Visibility.Visible : Visibility.Collapsed;
-        CommandRow.Visibility = vis;
-        WorkRunRow.Visibility = vis;
-        FileTypesRow.Visibility = vis;
-        FolderRow.Visibility = vis;
+        FolderRow.Visibility = showEntryFields ? Visibility.Visible : Visibility.Collapsed;
         ParentFolderRow.Visibility = showEntryFields ? Visibility.Collapsed : Visibility.Visible;
-        // The Terminal row is only meaningful for entries that open a console;
-        // SetupTerminalRow (called per entry) decides whether to show it. Folders
-        // never have one.
-        if (!showEntryFields) TerminalRow.Visibility = Visibility.Collapsed;
     }
 
     private void RenderIconPicker(string? iconValue)
     {
         IconPreviewCell.Children.Clear();
-        IconCustomBox.Text = "";
         if (IconLibrary.IsLibraryName(iconValue))
         {
             // Build a fresh Path (with its own Geometry) — sharing a cached
@@ -709,7 +667,6 @@ public sealed partial class AddPage : Page
             IconLabelText.Text = iconValue;
             IconSubText.Text = "custom path";
             IconPickButton.Content = "Change icon";
-            IconCustomBox.Text = iconValue;
         }
         else
         {
@@ -724,67 +681,6 @@ public sealed partial class AddPage : Page
     private void Field_Changed(object sender, RoutedEventArgs e) => SaveCurrent();
     private void Field_SelectionChanged(object sender, SelectionChangedEventArgs e) => SaveCurrent();
 
-    /// <summary>Populate + select the Terminal dropdown for an entry, and show it
-    /// only when the entry opens a visible terminal. Caller suppresses field-change
-    /// events around this (it mutates the ComboBox).</summary>
-    private void SetupTerminalRow(RunMode mode, string command, string? terminal)
-    {
-        bool opens = TerminalCatalog.OpensVisibleTerminal(mode, command);
-        TerminalRow.Visibility = opens ? Visibility.Visible : Visibility.Collapsed;
-        if (!opens) { TerminalCustomBox.Visibility = Visibility.Collapsed; return; }
-
-        var opts = TerminalCatalog.OptionsFor(mode, BinaryResolver.Find);
-        TerminalBox.ItemsSource = opts;
-
-        var stored = string.IsNullOrWhiteSpace(terminal) ? "" : terminal!.Trim();
-        var match = opts.FirstOrDefault(o => o.Value == stored);
-        if (match != null)
-        {
-            TerminalBox.SelectedItem = match;
-            TerminalCustomBox.Text = "";
-            TerminalCustomBox.Visibility = Visibility.Collapsed;
-        }
-        else
-        {
-            // A custom path (or a key not available on this PC) → Custom + textbox.
-            TerminalBox.SelectedItem = opts.FirstOrDefault(o => o.Value == TerminalCatalog.Custom);
-            TerminalCustomBox.Text = stored;
-            TerminalCustomBox.Visibility = Visibility.Visible;
-        }
-    }
-
-    private void Terminal_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_suppressFieldChange) return;
-        bool custom = (TerminalBox.SelectedItem as TerminalCatalog.Option)?.Value == TerminalCatalog.Custom;
-        TerminalCustomBox.Visibility = custom ? Visibility.Visible : Visibility.Collapsed;
-        SaveCurrent();
-    }
-
-    private void RunMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_suppressFieldChange) return;
-        SaveCurrent();
-        // Run mode flips which terminals are valid (shells vs host-only) and
-        // whether the row shows at all — refresh it against the saved entry.
-        if (_selectedKind == "entry" && _vm.Entries.FirstOrDefault(x => x.Id == _selectedId) is { } entry)
-        {
-            _suppressFieldChange = true;
-            try { SetupTerminalRow(entry.RunMode, entry.Command, entry.Terminal); }
-            finally { _suppressFieldChange = false; }
-        }
-    }
-
-    /// <summary>Current Terminal value from the editor, or the entry's existing
-    /// value when the row isn't shown.</summary>
-    private string? ReadTerminal(string? fallback)
-    {
-        if (TerminalRow.Visibility != Visibility.Visible) return fallback;
-        if (TerminalBox.SelectedItem is not TerminalCatalog.Option opt) return fallback;
-        if (opt.Value == TerminalCatalog.Custom)
-            return string.IsNullOrWhiteSpace(TerminalCustomBox.Text) ? null : TerminalCustomBox.Text.Trim();
-        return string.IsNullOrEmpty(opt.Value) ? null : opt.Value;
-    }
     private void NameBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         // Live-update label as the user types. WinUI 3's TextChanged event for
@@ -823,17 +719,9 @@ public sealed partial class AddPage : Page
             var updated = entry with
             {
                 Name = NameBox.Text,
-                Command = CommandBox.Text,
-                WorkingDir = WorkingDirBox.Text,
-                Scope = ScopeBox.SelectedItem is AdditionScope s ? s : AdditionScope.FolderBackground,
-                RunMode = RunModeBox.SelectedItem is RunMode r ? r : RunMode.VisibleTerminal,
-                FileTypes = string.IsNullOrWhiteSpace(FileTypesBox.Text)
-                    ? null
-                    : FileTypesBox.Text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
                 FolderId = newFolderId,
-                Terminal = ReadTerminal(entry.Terminal),
             };
-            if (RecordsEffectivelyEqual(entry, updated)) return;
+            if (entry == updated) return;
             _vm.ReplaceEntry(updated);
             if ((entry.FolderId ?? null) != (newFolderId ?? null))
                 _vm.MoveEntry(entry.Id, newFolderId);
@@ -844,11 +732,7 @@ public sealed partial class AddPage : Page
             if (fid != null && _vm.Folders.FirstOrDefault(f => f.Id == fid) is { } folder)
             {
                 var newParent = ParentFolderBox.SelectedItem is AdditionFolder p ? p.Id : null;
-                var updated = folder with
-                {
-                    Name = NameBox.Text,
-                    Scope = ScopeBox.SelectedItem is AdditionScope s ? s : AdditionScope.FolderBackground,
-                };
+                var updated = folder with { Name = NameBox.Text };
                 if (folder == updated && (folder.ParentFolderId ?? null) == (newParent ?? null)) return;
                 if (folder != updated) _vm.ReplaceFolder(updated);
                 if ((folder.ParentFolderId ?? null) != (newParent ?? null))
@@ -863,28 +747,6 @@ public sealed partial class AddPage : Page
                 }
             }
         }
-    }
-
-    /// <summary>
-    /// Record-equality check that also normalises <see cref="AdditionEntry.FileTypes"/>
-    /// (record equality on IReadOnlyList compares references, so a freshly-parsed
-    /// list would never match an existing-but-identical list).
-    /// </summary>
-    private static bool RecordsEffectivelyEqual(AdditionEntry a, AdditionEntry b)
-    {
-        if (a.Name != b.Name) return false;
-        if (a.Command != b.Command) return false;
-        if (a.WorkingDir != b.WorkingDir) return false;
-        if (a.Scope != b.Scope) return false;
-        if (a.RunMode != b.RunMode) return false;
-        if ((a.Terminal ?? "") != (b.Terminal ?? "")) return false;
-        if ((a.Icon ?? "") != (b.Icon ?? "")) return false;
-        if ((a.FolderId ?? "") != (b.FolderId ?? "")) return false;
-        var fa = a.FileTypes ?? Array.Empty<string>();
-        var fb = b.FileTypes ?? Array.Empty<string>();
-        if (fa.Count != fb.Count) return false;
-        for (int i = 0; i < fa.Count; i++) if (fa[i] != fb[i]) return false;
-        return true;
     }
 
     private void Delete_Click(object sender, RoutedEventArgs e)
@@ -947,22 +809,6 @@ public sealed partial class AddPage : Page
     }
 
     private void IconClear_Click(object sender, RoutedEventArgs e) => SetCurrentIcon(null);
-
-    private void IconCustom_LostFocus(object sender, RoutedEventArgs e)
-    {
-        if (_suppressFieldChange) return;
-        var v = IconCustomBox.Text?.Trim();
-        if (string.IsNullOrEmpty(v))
-        {
-            // Clear only if current was a custom path (don't wipe a library pick).
-            if (CurrentIconValue() is { } cur && !IconLibrary.IsLibraryName(cur))
-                SetCurrentIcon(null);
-        }
-        else if (!IconLibrary.IsLibraryName(v))
-        {
-            SetCurrentIcon(v);
-        }
-    }
 
     private string? CurrentIconValue()
     {

@@ -31,8 +31,17 @@ public sealed class AdditionStore
     public static string DefaultPath()
         => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RCMM", "additions.json");
 
-    public AdditionState Load()
+    public AdditionState Load() => Load(out _);
+
+    /// <summary>
+    /// Same as <see cref="Load()"/>, plus <paramref name="droppedHandAuthored"/>: true iff
+    /// the v4 → v5 migration dropped one or more hand-authored entries from this file.
+    /// Callers use this to re-arm HasPendingChanges so the drop's registry cleanup
+    /// (purge + rewrite on the next Apply) is actually reachable — see AddPageViewModel.Load.
+    /// </summary>
+    public AdditionState Load(out bool droppedHandAuthored)
     {
+        droppedHandAuthored = false;
         if (!File.Exists(_path))
         {
             Log.Info(Cat, $"file missing — returning empty state ({_path})");
@@ -47,7 +56,7 @@ public sealed class AdditionStore
                 Log.Warn(Cat, "deserialize returned null — returning empty state");
                 return new AdditionState();
             }
-            state = MigrateIfNeeded(state);
+            state = MigrateIfNeeded(state, out droppedHandAuthored);
             Log.Info(Cat, $"loaded entries={state.Entries.Count} folders={state.Folders.Count} schema=v{state.SchemaVersion}");
             return state;
         }
@@ -61,12 +70,20 @@ public sealed class AdditionStore
     /// <summary>
     /// Migrate older schemas to the current one. v1 → v2 sets
     /// <see cref="AdditionFolder.ParentFolderId"/> = null and
-    /// <see cref="AdditionFolder.Scope"/> = FolderBackground on every folder
-    /// (both fields ship as defaults from the record, but we bump the version
-    /// explicitly so a subsequent save records v2 in the file). No data loss.
+    /// <see cref="AdditionFolder.Scope"/> = FolderBackground on every folder.
+    /// v2 → v3 back-fills template-update tracking (see inline comment).
+    /// v4 → v5 drops hand-authored entries — the one deliberately lossy step,
+    /// per the templates-only design (2026-07-15 spec).
     /// </summary>
-    public static AdditionState MigrateIfNeeded(AdditionState state)
+    public static AdditionState MigrateIfNeeded(AdditionState state) => MigrateIfNeeded(state, out _);
+
+    /// <summary>
+    /// Same as <see cref="MigrateIfNeeded(AdditionState)"/>, plus <paramref name="droppedHandAuthored"/>:
+    /// true iff the v4 → v5 step below dropped one or more hand-authored entries.
+    /// </summary>
+    public static AdditionState MigrateIfNeeded(AdditionState state, out bool droppedHandAuthored)
     {
+        droppedHandAuthored = false;
         if (state.SchemaVersion >= AdditionState.CurrentSchemaVersion) return state;
         Log.Info(Cat, $"migrating schema v{state.SchemaVersion} → v{AdditionState.CurrentSchemaVersion}");
 
@@ -109,6 +126,30 @@ public sealed class AdditionStore
                 }
             }
             state = state with { Entries = migrated };
+        }
+
+        // v4 → v5: templates-only Add page. Hand-authored entries can no longer be
+        // created or edited, so drop them here rather than carrying dead weight the
+        // UI can't manage. Must run AFTER the v3 stamping pass — v3 is what decides
+        // which pre-v3 entries count as template-derived and therefore survive.
+        // Registry cleanup is NOT automatic: standard-scope roots are purged and
+        // rewritten from the surviving state on the next Apply (droppedHandAuthored
+        // below is what makes that Apply reachable when everything was dropped — see
+        // AddPageViewModel.Load), but AdditionApplier derives per-extension purge
+        // roots from the SURVIVOR list, so a dropped File-scope entry whose extensions
+        // no survivor uses leaks its SystemFileAssociations\<ext>\shell\RCMM.* keys
+        // until issue #23 is fixed.
+        if (state.SchemaVersion < 5)
+        {
+            var kept = new List<AdditionEntry>(state.Entries.Count);
+            foreach (var e in state.Entries)
+                if (e.SourceTemplateId != null) kept.Add(e);
+            if (kept.Count != state.Entries.Count)
+            {
+                Log.Info(Cat, $"v5: dropped {state.Entries.Count - kept.Count} hand-authored entries");
+                droppedHandAuthored = true;
+            }
+            state = state with { Entries = kept };
         }
 
         return state with { SchemaVersion = AdditionState.CurrentSchemaVersion };

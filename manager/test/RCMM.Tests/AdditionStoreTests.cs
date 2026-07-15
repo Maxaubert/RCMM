@@ -119,4 +119,115 @@ public class AdditionStoreTests
         }
         finally { if (File.Exists(path)) File.Delete(path); }
     }
+
+    [Fact]
+    public void Load_migrates_v4_to_v5_dropping_hand_authored_entries()
+    {
+        // e1 has no sourceTemplateId (hand-authored, pre-trim) -> dropped.
+        // e2 is template-derived -> survives with hidden/folder/order intact.
+        var path = TempFile();
+        try
+        {
+            File.WriteAllText(path,
+                @"{""schemaVersion"":4,
+                   ""folders"":[{""id"":""f1"",""name"":""Dev tools""}],
+                   ""entries"":[
+                     {""id"":""e1"",""name"":""My own thing"",""command"":""calc.exe"",""workingDir"":""%V"",""scope"":""folderBackground"",""runMode"":""background""},
+                     {""id"":""e2"",""name"":""git pull"",""command"":""git pull"",""workingDir"":""%V"",""scope"":""folderBackground"",""runMode"":""visibleTerminal"",""sourceTemplateId"":""git pull"",""appliedTemplateHash"":""x"",""hidden"":true,""folderId"":""f1""}]}");
+            var state = new AdditionStore(path).Load();
+
+            Assert.Equal(5, state.SchemaVersion);
+            var survivor = Assert.Single(state.Entries);
+            Assert.Equal("e2", survivor.Id);
+            Assert.True(survivor.Hidden);
+            Assert.Equal("f1", survivor.FolderId);
+            Assert.Single(state.Folders);
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_migrates_v1_all_the_way_to_v5()
+    {
+        // v3 stamps "npm run dev" (name + structural match against the built-in
+        // template) as template-derived, so v5 keeps it; "My own thing" matches
+        // nothing and is dropped. Folders always survive.
+        var path = TempFile();
+        try
+        {
+            File.WriteAllText(path,
+                @"{""schemaVersion"":1,
+                   ""folders"":[{""id"":""f1"",""name"":""Dev tools""}],
+                   ""entries"":[
+                     {""id"":""e1"",""name"":""npm run dev"",""command"":""npm run dev"",""workingDir"":""%V"",""scope"":""folderBackground"",""runMode"":""visibleTerminal""},
+                     {""id"":""e2"",""name"":""My own thing"",""command"":""calc.exe"",""workingDir"":""%V"",""scope"":""folderBackground"",""runMode"":""background""}]}");
+            var state = new AdditionStore(path).Load();
+
+            Assert.Equal(5, state.SchemaVersion);
+            var survivor = Assert.Single(state.Entries);
+            Assert.Equal("e1", survivor.Id);
+            Assert.Equal("npm run dev", survivor.SourceTemplateId);
+            Assert.Single(state.Folders);
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_out_dropped_true_when_v4_has_only_hand_authored_entries()
+    {
+        var path = TempFile();
+        try
+        {
+            File.WriteAllText(path,
+                @"{""schemaVersion"":4,
+                   ""entries"":[
+                     {""id"":""e1"",""name"":""My own thing"",""command"":""calc.exe"",""workingDir"":""%V"",""scope"":""folderBackground"",""runMode"":""background""}]}");
+            var state = new AdditionStore(path).Load(out var dropped);
+
+            Assert.True(dropped);
+            Assert.Empty(state.Entries);
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_out_dropped_false_when_v4_entry_is_template_derived()
+    {
+        var path = TempFile();
+        try
+        {
+            File.WriteAllText(path,
+                @"{""schemaVersion"":4,
+                   ""entries"":[
+                     {""id"":""e2"",""name"":""git pull"",""command"":""git pull"",""workingDir"":""%V"",""scope"":""folderBackground"",""runMode"":""visibleTerminal"",""sourceTemplateId"":""git pull"",""appliedTemplateHash"":""x""}]}");
+            var state = new AdditionStore(path).Load(out var dropped);
+
+            Assert.False(dropped);
+            Assert.Single(state.Entries);
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_out_dropped_false_when_file_missing()
+    {
+        var path = TempFile();
+        var state = new AdditionStore(path).Load(out var dropped);
+        Assert.False(dropped);
+        Assert.Empty(state.Entries);
+    }
+
+    [Fact]
+    public void Load_out_dropped_false_when_json_corrupt()
+    {
+        var path = TempFile();
+        try
+        {
+            File.WriteAllText(path, "{not valid json");
+            var state = new AdditionStore(path).Load(out var dropped);
+            Assert.False(dropped);
+            Assert.Empty(state.Entries);
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
 }

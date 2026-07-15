@@ -21,10 +21,10 @@ Modern dark utility: flat, compact, dark-only, no system chrome. Donut chart on 
 - Discover every entry in the Windows Explorer right-click menu — classic verbs, packaged COM extensions, modern CommandStore verbs.
 - Hide / unhide individual entries.
 - Apply changes via registry; optionally restart Explorer when a change can only take effect that way.
+- Add entries to the menu from the built-in template catalogue and structure them: drag order, folders (rendered as submenus, max 3 levels), name, and icon. Templates-only by design; there is no ad-hoc "write your own command" editor.
 
 **In scope, planned** (not yet built):
 
-- **Add to RCM** — let users add their own entries to the right-click menu: run a script (ad-hoc or from a predefined list), launch a program, etc.
 - **Manage New >** — let users manage the "New >" submenu (new folder, .txt, .py, …) and register new file-type templates (e.g. `.md`).
 
 Detailed plans, the "Browse templates" backlog, and audit follow-ups live in [`ROADMAP.md`](ROADMAP.md). Keep it current as work is planned and shipped.
