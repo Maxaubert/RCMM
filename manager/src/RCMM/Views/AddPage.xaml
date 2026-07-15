@@ -382,12 +382,6 @@
                                         </StackPanel>
                                     </Grid>
                                 </Border>
-                                <StackPanel Spacing="2" Margin="0,4,0,0">
-                                    <TextBlock>
-                                        <Run Text="Custom path"/><Run Text="  (advanced — Windows DLL or .ico)" Foreground="{ThemeResource AppTextDim}" FontSize="11"/>
-                                    </TextBlock>
-                                    <TextBox x:Name="IconCustomBox" FontFamily="Cascadia Code, Consolas, Courier New" LostFocus="IconCustom_LostFocus"/>
-                                </StackPanel>
                             </StackPanel>
 
                             <StackPanel x:Name="FolderInfoRow" Spacing="2" Visibility="Collapsed">

@@ -34,9 +34,12 @@ The ad-hoc "create your own entry" path is removed entirely.
   folders that render as submenus. Drag to reorder, or drop onto a folder to
   move into it."
 - Entry editor pane trims to: **Name**, **Folder** (parent submenu),
-  **Icon** (existing picker: library icons, Choose/Clear, plus the advanced
-  custom-path box), and **Delete**. The Command, Working dir, Run mode,
-  Terminal, Scope, and File types rows are removed from XAML and code-behind.
+  **Icon** (existing picker: library icons, Choose/Clear), and **Delete**.
+  The Command, Working dir, Run mode, Terminal, Scope, and File types rows
+  are removed from XAML and code-behind. *(Amended during testing: the
+  advanced custom-path icon box is removed too — icon choice is the library
+  picker only. Entries whose icon is already a file path, e.g. template
+  binary icons, still display it read-only.)*
 - Folder editor stays as-is (Name, Parent folder, Icon, Delete).
 - Left/middle panes, drag-reorder, 3-level nesting cap, and the Browse
   Templates page are unchanged.

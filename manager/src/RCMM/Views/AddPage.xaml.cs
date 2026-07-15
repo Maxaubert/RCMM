@@ -648,7 +648,6 @@ public sealed partial class AddPage : Page
     private void RenderIconPicker(string? iconValue)
     {
         IconPreviewCell.Children.Clear();
-        IconCustomBox.Text = "";
         if (IconLibrary.IsLibraryName(iconValue))
         {
             // Build a fresh Path (with its own Geometry) — sharing a cached
@@ -668,7 +667,6 @@ public sealed partial class AddPage : Page
             IconLabelText.Text = iconValue;
             IconSubText.Text = "custom path";
             IconPickButton.Content = "Change icon";
-            IconCustomBox.Text = iconValue;
         }
         else
         {
@@ -811,22 +809,6 @@ public sealed partial class AddPage : Page
     }
 
     private void IconClear_Click(object sender, RoutedEventArgs e) => SetCurrentIcon(null);
-
-    private void IconCustom_LostFocus(object sender, RoutedEventArgs e)
-    {
-        if (_suppressFieldChange) return;
-        var v = IconCustomBox.Text?.Trim();
-        if (string.IsNullOrEmpty(v))
-        {
-            // Clear only if current was a custom path (don't wipe a library pick).
-            if (CurrentIconValue() is { } cur && !IconLibrary.IsLibraryName(cur))
-                SetCurrentIcon(null);
-        }
-        else if (!IconLibrary.IsLibraryName(v))
-        {
-            SetCurrentIcon(v);
-        }
-    }
 
     private string? CurrentIconValue()
     {
