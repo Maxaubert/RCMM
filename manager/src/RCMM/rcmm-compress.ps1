@@ -41,6 +41,55 @@ function PauseExit([string]$openPath = $null) {
     exit
 }
 
+# --- Display-width helpers (shared TUI box drawing) ----------------------------
+# East-Asian wide / fullwidth glyphs occupy two terminal cells but count as one
+# UTF-16 unit, so String.Length misaligns the box border for such names. Measure
+# real cell width, and pad/truncate by it, so the box stays square and (critically)
+# never exceeds the console width and wraps.
+function Get-DisplayWidth([string]$s) {
+    if (-not $s) { return 0 }
+    $w = 0
+    foreach ($ch in $s.ToCharArray()) {
+        $c = [int]$ch
+        if (($c -ge 0x1100 -and $c -le 0x115F) -or ($c -ge 0x2E80 -and $c -le 0xA4CF) -or
+            ($c -ge 0xAC00 -and $c -le 0xD7A3) -or ($c -ge 0xF900 -and $c -le 0xFAFF) -or
+            ($c -ge 0xFE30 -and $c -le 0xFE4F) -or ($c -ge 0xFF00 -and $c -le 0xFF60) -or
+            ($c -ge 0xFFE0 -and $c -le 0xFFE6)) { $w += 2 } else { $w += 1 }
+    }
+    return $w
+}
+
+# Pad or ellipsize $s to exactly $width display cells.
+function Fit-Display([string]$s, [int]$width) {
+    if ($width -lt 1) { return '' }
+    if ((Get-DisplayWidth $s) -gt $width) {
+        $budget = $width - 1  # room for the ellipsis
+        $out = ''; $w = 0
+        foreach ($ch in $s.ToCharArray()) {
+            $cw = if ((Get-DisplayWidth ([string]$ch)) -eq 2) { 2 } else { 1 }
+            if ($w + $cw -gt $budget) { break }
+            $out += $ch; $w += $cw
+        }
+        $s = $out + ([char]0x2026)
+    }
+    $pad = $width - (Get-DisplayWidth $s)
+    if ($pad -gt 0) { return $s + (' ' * $pad) }
+    return $s
+}
+
+# Widest inner content we can draw without the box wrapping the console.
+function Get-MaxBoxWidth {
+    $cw = 76
+    try {
+        $ww = [Console]::WindowWidth
+        $bw = [Console]::BufferWidth
+        $c = if ($bw -gt 0 -and $bw -lt $ww) { $bw } else { $ww }
+        if ($c -gt 10) { $cw = $c - 4 }
+    } catch {}
+    if ($cw -gt 100) { $cw = 100 }
+    return $cw
+}
+
 # Boxed, arrow-key navigable column menu. Rows are '|'-delimited strings (one
 # cell per column) — a flat string[] sidesteps PowerShell's array-of-arrays
 # flattening. Returns the chosen row index, or -1 on Esc. The header row is
@@ -69,12 +118,14 @@ function Show-ColumnMenu {
     $ncol = $hdr.Count
 
     # Column widths = max of header (unless hidden) and every cell in that column.
+    # Measured in display cells (Get-DisplayWidth), not .Length, so CJK/emoji cells
+    # (from a user's file name) still line up column-to-column.
     $cw = New-Object 'int[]' $ncol
-    for ($c = 0; $c -lt $ncol; $c++) { $cw[$c] = if ($HideHeader) { 0 } else { $hdr[$c].Length } }
+    for ($c = 0; $c -lt $ncol; $c++) { $cw[$c] = if ($HideHeader) { 0 } else { Get-DisplayWidth $hdr[$c] } }
     foreach ($r in $Rows) {
         $cells = $r -split '\|'
         for ($c = 0; $c -lt $ncol; $c++) {
-            $l = ([string]$cells[$c]).Length
+            $l = Get-DisplayWidth ([string]$cells[$c])
             if ($l -gt $cw[$c]) { $cw[$c] = $l }
         }
     }
@@ -86,10 +137,13 @@ function Show-ColumnMenu {
     $rowLineLen = 3 + $colsLen
 
     $width = 30
-    $statusLen = if ($Status) { $Status.Length } else { 0 }
-    foreach ($len in @((1 + $Title.Length), (1 + $statusLen), $rowLineLen)) {
+    $statusLen = if ($Status) { Get-DisplayWidth $Status } else { 0 }
+    foreach ($len in @((1 + (Get-DisplayWidth $Title)), (1 + $statusLen), $rowLineLen)) {
         if (($len + 1) -gt $width) { $width = $len + 1 }
     }
+    # Clamp to the console so a long file/title name can't wrap the box.
+    $maxWidth = Get-MaxBoxWidth
+    if ($width -gt $maxWidth) { $width = $maxWidth }
     $H = ([string][char]0x2500) * $width
 
     # Format one row's plain (uncolored) text given its 3-char prefix.
@@ -98,7 +152,7 @@ function Show-ColumnMenu {
         [void]$sb.Append($prefix)
         for ($c = 0; $c -lt $ncol; $c++) {
             if ($c -gt 0) { [void]$sb.Append('  ') }
-            [void]$sb.Append(([string]$cells[$c]).PadRight($cw[$c]))
+            [void]$sb.Append((Fit-Display ([string]$cells[$c]) $cw[$c]))
         }
         return $sb.ToString()
     }
@@ -111,21 +165,21 @@ function Show-ColumnMenu {
             try { [Console]::SetCursorPosition(0, $start) } catch {}
             $lines = New-Object System.Collections.Generic.List[string]
             $lines.Add("  " + $TL + $H + $TR)
-            $lines.Add("  " + $V + $text + (" " + $Title).PadRight($width) + $reset + $V)
+            $lines.Add("  " + $V + $text + (Fit-Display (" " + $Title) $width) + $reset + $V)
             if ($Status) {
-                $lines.Add("  " + $V + $dim + (" " + $Status).PadRight($width) + $reset + $V)
+                $lines.Add("  " + $V + $dim + (Fit-Display (" " + $Status) $width) + $reset + $V)
             }
             $lines.Add("  " + $VL + $H + $VR)
             if (-not $HideHeader) {
                 $plain = Format-Row "   " $hdr
-                $lines.Add("  " + $V + $dim + $plain.PadRight($width) + $reset + $V)
+                $lines.Add("  " + $V + $dim + (Fit-Display $plain $width) + $reset + $V)
             }
             for ($i = 0; $i -lt $Rows.Count; $i++) {
                 $cells  = $Rows[$i] -split '\|'
                 $prefix = if ($i -eq $sel) { " " + $arrow + " " } else { "   " }
                 $plain  = Format-Row $prefix $cells
                 $color  = if ($i -eq $sel) { $lime } else { $text }
-                $lines.Add("  " + $V + $color + $plain.PadRight($width) + $reset + $V)
+                $lines.Add("  " + $V + $color + (Fit-Display $plain $width) + $reset + $V)
             }
             $lines.Add("  " + $BL + $H + $BR)
             [Console]::Out.Write(($lines -join [Environment]::NewLine) + [Environment]::NewLine)
@@ -249,17 +303,32 @@ function Invoke-ImageCompress([string]$in, [string]$ext) {
     }
     if ($mSel -eq 0) { $caeArgs += '-e' }   # keep EXIF (Caesium strips by default)
     $dir = [System.IO.Path]::GetDirectoryName($in)
-    $caeArgs += @('--suffix', ' (compressed)', '-o', $dir, $in)
-
     $outExt = if ($fmt -eq 'webp') { '.webp' } else { $ext }
-    $out = Join-Path $dir ([System.IO.Path]::GetFileNameWithoutExtension($in) + ' (compressed)' + $outExt)
+    $name = [System.IO.Path]::GetFileNameWithoutExtension($in)
+
+    # Collision-free output name (mirrors the video branch's Build-OutPath):
+    # a fixed " (compressed)" suffix would silently overwrite a prior run's
+    # output, so probe for an unused name and pass THAT exact suffix through
+    # to CaesiumCLT via --suffix, keeping $out and the file it actually writes
+    # in sync.
+    $suffix = ' (compressed)'
+    $out = Join-Path $dir ($name + $suffix + $outExt)
+    $n = 2
+    while (Test-Path -LiteralPath $out) {
+        $suffix = ' (compressed ' + $n + ')'
+        $out = Join-Path $dir ($name + $suffix + $outExt)
+        $n++
+    }
+    $caeArgs += @('--suffix', $suffix, '-o', $dir, $in)
 
     Write-Host ''
     Write-Host ("Compressing -> {0} ..." -f [System.IO.Path]::GetFileName($out))
     Write-Host ''
     & $cae @caeArgs
 
-    if (Test-Path -LiteralPath $out) {
+    # Gate success on exit code too — a stale "(compressed)" file could make a
+    # Test-Path-only check report success even when CaesiumCLT itself failed.
+    if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $out)) {
         $inSize = (Get-Item -LiteralPath $in).Length
         $outSize = (Get-Item -LiteralPath $out).Length
         $pct = if ($inSize -gt 0) { [int](100 - ($outSize / $inSize * 100)) } else { 0 }
@@ -269,7 +338,7 @@ function Invoke-ImageCompress([string]$in, [string]$ext) {
         PauseExit $out
     }
     Write-Host ''
-    Write-Host 'Image compression failed.'
+    Write-Host ("Image compression failed (exit {0})." -f $LASTEXITCODE)
     PauseExit
 }
 
@@ -307,8 +376,9 @@ function Calc-Dim([int]$v, [double]$f) { [int]([math]::Truncate($v * $f / 2.0)) 
 function Format-Duration($seconds) {
     if (-not $seconds) { return $null }
     $ts = [TimeSpan]::FromSeconds([double]$seconds)
-    if ($ts.TotalHours -ge 1) { return ('{0}:{1:00}:{2:00}' -f [int]$ts.TotalHours, $ts.Minutes, $ts.Seconds) }
-    return ('{0}:{1:00}' -f [int]$ts.TotalMinutes, $ts.Seconds)
+    # [int] casts ROUND (2m50s -> "3:50"); floor to truncate instead.
+    if ($ts.TotalHours -ge 1) { return ('{0}:{1:00}:{2:00}' -f [int][Math]::Floor($ts.TotalHours), $ts.Minutes, $ts.Seconds) }
+    return ('{0}:{1:00}' -f [int][Math]::Floor($ts.TotalMinutes), $ts.Seconds)
 }
 
 # Per-encoder CRF for the High / Balanced / Low quality tiers. Same visual
@@ -379,7 +449,17 @@ if (-not $ffprobe) {
 }
 
 # 2. Probe the source: one ffprobe JSON call for streams + format.
-$probeJson = & $ffprobe -v error -show_entries 'stream=codec_type,codec_name,width,height,bit_rate:format=duration,bit_rate' -of json "$Path" 2>$null | Out-String
+# A corrupt/non-video file makes ffprobe write to stderr; under EAP=Stop that
+# native-command stderr becomes a terminating error even though it's piped to
+# $null, crashing the whole script instead of reaching the friendly "couldn't
+# read a video stream" message below. Relax EAP just for this call.
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    $probeJson = & $ffprobe -v error -show_entries 'stream=codec_type,codec_name,width,height,bit_rate:format=duration,bit_rate' -of json "$Path" 2>$null | Out-String
+}
+catch { $probeJson = $null }
+finally { $ErrorActionPreference = $prevEAP }
 try { $probe = $probeJson | ConvertFrom-Json } catch { $probe = $null }
 $vstream = $null; $astream = $null
 if ($probe -and $probe.streams) {

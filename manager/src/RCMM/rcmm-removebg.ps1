@@ -31,6 +31,55 @@ function PauseExit([string]$openPath = $null) {
     exit
 }
 
+# --- Display-width helpers (shared TUI box drawing) ----------------------------
+# East-Asian wide / fullwidth glyphs occupy two terminal cells but count as one
+# UTF-16 unit, so String.Length misaligns the box border for such names. Measure
+# real cell width, and pad/truncate by it, so the box stays square and (critically)
+# never exceeds the console width and wraps.
+function Get-DisplayWidth([string]$s) {
+    if (-not $s) { return 0 }
+    $w = 0
+    foreach ($ch in $s.ToCharArray()) {
+        $c = [int]$ch
+        if (($c -ge 0x1100 -and $c -le 0x115F) -or ($c -ge 0x2E80 -and $c -le 0xA4CF) -or
+            ($c -ge 0xAC00 -and $c -le 0xD7A3) -or ($c -ge 0xF900 -and $c -le 0xFAFF) -or
+            ($c -ge 0xFE30 -and $c -le 0xFE4F) -or ($c -ge 0xFF00 -and $c -le 0xFF60) -or
+            ($c -ge 0xFFE0 -and $c -le 0xFFE6)) { $w += 2 } else { $w += 1 }
+    }
+    return $w
+}
+
+# Pad or ellipsize $s to exactly $width display cells.
+function Fit-Display([string]$s, [int]$width) {
+    if ($width -lt 1) { return '' }
+    if ((Get-DisplayWidth $s) -gt $width) {
+        $budget = $width - 1  # room for the ellipsis
+        $out = ''; $w = 0
+        foreach ($ch in $s.ToCharArray()) {
+            $cw = if ((Get-DisplayWidth ([string]$ch)) -eq 2) { 2 } else { 1 }
+            if ($w + $cw -gt $budget) { break }
+            $out += $ch; $w += $cw
+        }
+        $s = $out + ([char]0x2026)
+    }
+    $pad = $width - (Get-DisplayWidth $s)
+    if ($pad -gt 0) { return $s + (' ' * $pad) }
+    return $s
+}
+
+# Widest inner content we can draw without the box wrapping the console.
+function Get-MaxBoxWidth {
+    $cw = 76
+    try {
+        $ww = [Console]::WindowWidth
+        $bw = [Console]::BufferWidth
+        $c = if ($bw -gt 0 -and $bw -lt $ww) { $bw } else { $ww }
+        if ($c -gt 10) { $cw = $c - 4 }
+    } catch {}
+    if ($cw -gt 100) { $cw = 100 }
+    return $cw
+}
+
 # Boxed, arrow-key navigable single-label menu. Returns the chosen index or -1.
 function Show-BoxMenu {
     param([string]$Title, [string]$Status, [string[]]$Items)
@@ -47,8 +96,11 @@ function Show-BoxMenu {
 
     $width = 30
     foreach ($s in (@($Title, $Status) + $Items)) {
-        if ($s -and ($s.Length + 5) -gt $width) { $width = $s.Length + 5 }
+        $dw = (Get-DisplayWidth $s) + 5
+        if ($dw -gt $width) { $width = $dw }
     }
+    $max = Get-MaxBoxWidth
+    if ($width -gt $max) { $width = $max }  # clamp so a long name can't wrap the box
     $H = ([string][char]0x2500) * $width
 
     $sel = 0
@@ -59,18 +111,18 @@ function Show-BoxMenu {
             try { [Console]::SetCursorPosition(0, $start) } catch {}
             $lines = New-Object System.Collections.Generic.List[string]
             $lines.Add("  " + $TL + $H + $TR)
-            $lines.Add("  " + $V + $text + (" " + $Title).PadRight($width) + $reset + $V)
+            $lines.Add("  " + $V + $text + (Fit-Display (" " + $Title) $width) + $reset + $V)
             if ($Status) {
-                $lines.Add("  " + $V + $dim + (" " + $Status).PadRight($width) + $reset + $V)
+                $lines.Add("  " + $V + $dim + (Fit-Display (" " + $Status) $width) + $reset + $V)
             }
             $lines.Add("  " + $VL + $H + $VR)
             for ($i = 0; $i -lt $Items.Count; $i++) {
                 if ($i -eq $sel) {
-                    $inner = (" " + $arrow + " " + $Items[$i]).PadRight($width)
+                    $inner = Fit-Display (" " + $arrow + " " + $Items[$i]) $width
                     $lines.Add("  " + $V + $lime + $inner + $reset + $V)
                 }
                 else {
-                    $inner = ("   " + $Items[$i]).PadRight($width)
+                    $inner = Fit-Display ("   " + $Items[$i]) $width
                     $lines.Add("  " + $V + $dim + $inner + $reset + $V)
                 }
             }
@@ -107,12 +159,18 @@ function Install-Winget([string]$id, [string]$name, [string[]]$fallbacks) {
         return $null
     }
     winget install --id $id -e --accept-source-agreements --accept-package-agreements
+    if ($LASTEXITCODE -ne 0) {
+        # A failed/declined install must not fall through to a generic follow-up message.
+        Write-Host ("winget install failed (exit {0})." -f $LASTEXITCODE)
+        return $null
+    }
     $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
     return (Resolve-Tool ($name) $fallbacks)
 }
 
 function Get-OutPath([string]$in, [string]$suffix, [string]$ext) {
     $dir  = [System.IO.Path]::GetDirectoryName($in)
+    if (-not $dir) { $dir = '.' }  # bare name with no directory component
     $name = [System.IO.Path]::GetFileNameWithoutExtension($in)
     $cand = Join-Path $dir ("{0} ({1}){2}" -f $name, $suffix, $ext)
     $n = 2
@@ -123,11 +181,21 @@ function Get-OutPath([string]$in, [string]$suffix, [string]$ext) {
 function Get-OutDir([string]$in, [string]$suffix) {
     $trimmed = $in.TrimEnd('\')
     $parent  = [System.IO.Path]::GetDirectoryName($trimmed)
+    if (-not $parent) { $parent = '.' }  # bare name with no directory component
     $name    = [System.IO.Path]::GetFileName($trimmed)
     $cand = Join-Path $parent ("{0} ({1})" -f $name, $suffix)
     $n = 2
     while (Test-Path -LiteralPath $cand) { $cand = Join-Path $parent ("{0} ({1}) ({2})" -f $name, $suffix, $n); $n++ }
     return $cand
+}
+
+# Top-level safety net: under EAP=Stop, an unexpected terminating error anywhere
+# below would otherwise close the verb-spawned console before its message could
+# be read. PauseExit is already defined above by the time this can fire.
+trap {
+    Write-Host ''
+    Write-Host ("Unexpected error: " + $_.Exception.Message)
+    PauseExit
 }
 
 if (-not (Test-Path -LiteralPath $Path)) {
@@ -181,7 +249,13 @@ else { Write-Host 'ok.' }
 # without the cpu/gpu extra, so install "rembg[cli,cpu]" — cli + CPU onnxruntime.)
 Write-Host 'Checking for rembg... ' -NoNewline
 $rembgList = ''
+# Under EAP=Stop, uv's own stderr chatter (redirected to $null) can still be
+# promoted to a terminating error in PS 5.1 and mislabel rembg as missing, so
+# relax EAP for just this probe.
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 try { $rembgList = (& $uv tool list 2>$null | Out-String) } catch {}
+$ErrorActionPreference = $prevEap
 if ($rembgList -notmatch 'rembg') {
     Write-Host 'not installed.'
     $ans = Read-Host 'Install the background remover (rembg) via uv? (downloads rembg + a Python) [Y/N]'
@@ -242,25 +316,39 @@ Write-Host ''
 if ($isFolder) {
     $out = Get-OutDir $Path 'no bg'
     New-Item -ItemType Directory -Force -Path $out | Out-Null
-    Write-Host ("Removing background from {0} image(s) -> {1} ..." -f $imgs.Count, [System.IO.Path]::GetFileName($out))
+    # rembg processes the folder itself; the announced count is what actually
+    # came out ($made), not the pre-scan count, so wording here stays generic.
+    Write-Host ("Removing background from images -> {0} ..." -f [System.IO.Path]::GetFileName($out))
     & $uv tool run rembg p @rembgOpts "$Path" "$out"
+    if ($LASTEXITCODE -ne 0) { Write-Host ''; Write-Host ("rembg failed (exit {0})." -f $LASTEXITCODE); PauseExit }
     $made = @(Get-ChildItem -LiteralPath $out -File -ErrorAction SilentlyContinue)
     if ($made.Count -eq 0) { Write-Host ''; Write-Host "Failed - no output produced."; PauseExit }
+    $failed = @()
     if ($bgColor) {
         Write-Host ("Compositing onto {0} ..." -f $bgColor)
-        foreach ($f in $made) { & $magick $f.FullName -background $bgColor -flatten $f.FullName }
+        foreach ($f in $made) {
+            & $magick $f.FullName -background $bgColor -flatten $f.FullName
+            if ($LASTEXITCODE -ne 0) { $failed += $f.Name }
+        }
     }
     Write-Host ''
-    Write-Host ("Done -> {0}  ({1} image(s))" -f $out, $made.Count)
+    if ($failed.Count -gt 0) {
+        Write-Host ("Done with errors -> {0}  ({1} ok, {2} failed to composite: {3})" -f $out, ($made.Count - $failed.Count), $failed.Count, ($failed -join ', '))
+    }
+    else {
+        Write-Host ("Done -> {0}  ({1} image(s))" -f $out, $made.Count)
+    }
 }
 else {
     $out = Get-OutPath $Path 'no bg' '.png'
     Write-Host ("Removing background -> {0} ..." -f [System.IO.Path]::GetFileName($out))
     & $uv tool run rembg i @rembgOpts "$Path" "$out"
+    if ($LASTEXITCODE -ne 0) { Write-Host ''; Write-Host ("rembg failed (exit {0})." -f $LASTEXITCODE); PauseExit }
     if (-not (Test-Path -LiteralPath $out)) { Write-Host ''; Write-Host "Failed (rembg produced no output)."; PauseExit }
     if ($bgColor) {
         Write-Host ("Compositing onto {0} ..." -f $bgColor)
         & $magick "$out" -background $bgColor -flatten "$out"
+        if ($LASTEXITCODE -ne 0) { Write-Host ''; Write-Host ("ImageMagick composite failed (exit {0})." -f $LASTEXITCODE); PauseExit $out }
     }
     Write-Host ''
     Write-Host ("Done -> " + $out)

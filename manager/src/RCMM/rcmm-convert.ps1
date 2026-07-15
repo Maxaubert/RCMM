@@ -72,9 +72,18 @@ function Fit-Display([string]$s, [int]$width) {
 }
 
 # Widest inner content we can draw without the box wrapping the console.
+# Lines wrap at the BUFFER width (not the window width), so clamp to the smaller
+# of the two; and cap at a comfortable reading width so a giant window doesn't
+# stretch the box across the whole screen (a long title just ellipsizes instead).
 function Get-MaxBoxWidth {
     $cw = 76
-    try { $c = [Console]::WindowWidth; if ($c -gt 10) { $cw = $c - 4 } } catch {}
+    try {
+        $ww = [Console]::WindowWidth
+        $bw = [Console]::BufferWidth
+        $c = if ($bw -gt 0 -and $bw -lt $ww) { $bw } else { $ww }
+        if ($c -gt 10) { $cw = $c - 4 }
+    } catch {}
+    if ($cw -gt 100) { $cw = 100 }
     return $cw
 }
 
