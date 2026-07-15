@@ -25,7 +25,9 @@ function PauseExit([string]$openPath = $null) {
     Write-Host ''
     $canOpen = $openPath -and (Test-Path -LiteralPath $openPath)
     $prompt  = if ($canOpen) { 'Press Enter to open the result and close' } else { 'Press Enter to close' }
-    Read-Host $prompt | Out-Null
+    # Guard the prompt: if Read-Host ever throws (no interactive console), the
+    # top-level trap would otherwise re-enter PauseExit and recurse to a crash.
+    try { Read-Host $prompt | Out-Null } catch { exit 1 }
     # On success, open the output (file -> default app, folder -> Explorer) and exit.
     if ($canOpen) { try { Start-Process $openPath } catch {} }
     exit

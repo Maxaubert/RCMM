@@ -217,15 +217,16 @@ function Install-Upscaler {
     }
     if (-not $asset) { Write-Host 'No Windows ncnn-vulkan build found in releases.'; return $false }
 
-    New-Item -ItemType Directory -Force -Path $ToolDir | Out-Null
-    # Wipe any stale/partial prior install (e.g. a code-only zip without models).
-    Get-ChildItem $ToolDir -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     $zip = Join-Path $env:TEMP $asset.name
     Write-Host ("Downloading {0} ({1:0} MB) ..." -f $asset.name, ($asset.size / 1MB))
-    # Download + extract must both be guarded: under EAP=Stop a dropped connection,
-    # a 5xx, or a corrupt zip would otherwise throw unhandled and close the window
-    # with no readable error, leaving a partial zip in %TEMP%.
+    # The whole install (dir prep + download + extract) is guarded: under EAP=Stop a
+    # failed New-Item (ACL/path), dropped connection, 5xx, or corrupt zip would
+    # otherwise throw unhandled and close the window with no readable error, leaving
+    # a partial zip in %TEMP%.
     try {
+        New-Item -ItemType Directory -Force -Path $ToolDir | Out-Null
+        # Wipe any stale/partial prior install (e.g. a code-only zip without models).
+        Get-ChildItem $ToolDir -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
         $oldProgress = $ProgressPreference
         $ProgressPreference = 'SilentlyContinue'   # IWR's progress bar makes 5.1 downloads crawl
         try { Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -Headers $headers }
