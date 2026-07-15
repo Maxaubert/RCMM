@@ -23,6 +23,34 @@ $ErrorActionPreference = 'Stop'
 
 try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}
 
+# Best-effort enable ANSI/VT escapes on stdout. Windows Terminal / Win11 conhost
+# already has this on; plain Windows 10 conhost (a supported OS) doesn't, and
+# without it Show-BoxMenu's color codes render as literal escape bytes. Fall
+# back to no color (see Show-BoxMenu) rather than a garbled box.
+$script:UseColor = $false
+try {
+    Add-Type -Namespace RCMM -Name Vt -MemberDefinition @'
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool GetConsoleMode(System.IntPtr hConsoleHandle, out uint lpMode);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool SetConsoleMode(System.IntPtr hConsoleHandle, uint dwMode);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern System.IntPtr GetStdHandle(int nStdHandle);
+'@ -ErrorAction Stop
+    $STD_OUTPUT_HANDLE = -11
+    $ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+    $h = [RCMM.Vt]::GetStdHandle($STD_OUTPUT_HANDLE)
+    $mode = 0
+    if ([RCMM.Vt]::GetConsoleMode($h, [ref]$mode)) {
+        if (($mode -band $ENABLE_VIRTUAL_TERMINAL_PROCESSING) -ne 0) {
+            $script:UseColor = $true   # already on
+        }
+        elseif ([RCMM.Vt]::SetConsoleMode($h, $mode -bor $ENABLE_VIRTUAL_TERMINAL_PROCESSING)) {
+            $script:UseColor = $true
+        }
+    }
+} catch { $script:UseColor = $false }
+
 # The self-contained Windows zip (exe + bundled models) is a release ASSET on
 # the main repo — the dedicated -ncnn-vulkan repo's zip ships code only, no
 # models. The asset lives on an older tagged release, so we scan all releases
@@ -42,16 +70,71 @@ function PauseExit([string]$openPath = $null) {
     exit
 }
 
+# --- Display-width helpers (shared TUI box drawing) ----------------------------
+# East-Asian wide / fullwidth glyphs occupy two terminal cells but count as one
+# UTF-16 unit, so String.Length misaligns the box border for such names. Measure
+# real cell width, and pad/truncate by it, so the box stays square and (critically)
+# never exceeds the console width and wraps.
+function Get-DisplayWidth([string]$s) {
+    if (-not $s) { return 0 }
+    $w = 0
+    foreach ($ch in $s.ToCharArray()) {
+        $c = [int]$ch
+        if (($c -ge 0x1100 -and $c -le 0x115F) -or ($c -ge 0x2E80 -and $c -le 0xA4CF) -or
+            ($c -ge 0xAC00 -and $c -le 0xD7A3) -or ($c -ge 0xF900 -and $c -le 0xFAFF) -or
+            ($c -ge 0xFE30 -and $c -le 0xFE4F) -or ($c -ge 0xFF00 -and $c -le 0xFF60) -or
+            ($c -ge 0xFFE0 -and $c -le 0xFFE6)) { $w += 2 } else { $w += 1 }
+    }
+    return $w
+}
+
+# Pad or ellipsize $s to exactly $width display cells.
+function Fit-Display([string]$s, [int]$width) {
+    if ($width -lt 1) { return '' }
+    if ((Get-DisplayWidth $s) -gt $width) {
+        $budget = $width - 1  # room for the ellipsis
+        $out = ''; $w = 0
+        foreach ($ch in $s.ToCharArray()) {
+            $cw = if ((Get-DisplayWidth ([string]$ch)) -eq 2) { 2 } else { 1 }
+            if ($w + $cw -gt $budget) { break }
+            $out += $ch; $w += $cw
+        }
+        $s = $out + ([char]0x2026)
+    }
+    $pad = $width - (Get-DisplayWidth $s)
+    if ($pad -gt 0) { return $s + (' ' * $pad) }
+    return $s
+}
+
+# Widest inner content we can draw without the box wrapping the console.
+function Get-MaxBoxWidth {
+    $cw = 76
+    try {
+        $ww = [Console]::WindowWidth
+        $bw = [Console]::BufferWidth
+        $c = if ($bw -gt 0 -and $bw -lt $ww) { $bw } else { $ww }
+        if ($c -gt 10) { $cw = $c - 4 }
+    } catch {}
+    if ($cw -gt 100) { $cw = 100 }
+    return $cw
+}
+
 # Boxed, arrow-key navigable single-label menu. Returns the chosen index, or -1
 # on Esc. (Same look as the Convert/Compress menus.)
 function Show-BoxMenu {
     param([string]$Title, [string]$Status, [string[]]$Items)
 
     $E     = [char]27
-    $lime  = $E + '[38;2;212;255;58m'
-    $dim   = $E + '[38;2;138;138;147m'
-    $text  = $E + '[38;2;241;241;243m'
-    $reset = $E + '[0m'
+    if ($script:UseColor) {
+        $lime  = $E + '[38;2;212;255;58m'
+        $dim   = $E + '[38;2;138;138;147m'
+        $text  = $E + '[38;2;241;241;243m'
+        $reset = $E + '[0m'
+    } else {
+        # VT couldn't be enabled (plain Win10 conhost) - stay plain rather than
+        # print literal escape bytes.
+        $lime = ''; $dim = ''; $text = ''; $reset = ''
+    }
 
     $TL = [char]0x250C; $TR = [char]0x2510; $BL = [char]0x2514; $BR = [char]0x2518
     $VL = [char]0x251C; $VR = [char]0x2524; $V = [char]0x2502
@@ -59,8 +142,11 @@ function Show-BoxMenu {
 
     $width = 30
     foreach ($s in (@($Title, $Status) + $Items)) {
-        if ($s -and ($s.Length + 5) -gt $width) { $width = $s.Length + 5 }
+        $dw = (Get-DisplayWidth $s) + 5
+        if ($dw -gt $width) { $width = $dw }
     }
+    $max = Get-MaxBoxWidth
+    if ($width -gt $max) { $width = $max }
     $H = ([string][char]0x2500) * $width
 
     $sel = 0
@@ -71,18 +157,18 @@ function Show-BoxMenu {
             try { [Console]::SetCursorPosition(0, $start) } catch {}
             $lines = New-Object System.Collections.Generic.List[string]
             $lines.Add("  " + $TL + $H + $TR)
-            $lines.Add("  " + $V + $text + (" " + $Title).PadRight($width) + $reset + $V)
+            $lines.Add("  " + $V + $text + (Fit-Display (" " + $Title) $width) + $reset + $V)
             if ($Status) {
-                $lines.Add("  " + $V + $dim + (" " + $Status).PadRight($width) + $reset + $V)
+                $lines.Add("  " + $V + $dim + (Fit-Display (" " + $Status) $width) + $reset + $V)
             }
             $lines.Add("  " + $VL + $H + $VR)
             for ($i = 0; $i -lt $Items.Count; $i++) {
                 if ($i -eq $sel) {
-                    $inner = (" " + $arrow + " " + $Items[$i]).PadRight($width)
+                    $inner = Fit-Display (" " + $arrow + " " + $Items[$i]) $width
                     $lines.Add("  " + $V + $lime + $inner + $reset + $V)
                 }
                 else {
-                    $inner = ("   " + $Items[$i]).PadRight($width)
+                    $inner = Fit-Display ("   " + $Items[$i]) $width
                     $lines.Add("  " + $V + $dim + $inner + $reset + $V)
                 }
             }
@@ -131,19 +217,31 @@ function Install-Upscaler {
     }
     if (-not $asset) { Write-Host 'No Windows ncnn-vulkan build found in releases.'; return $false }
 
-    New-Item -ItemType Directory -Force -Path $ToolDir | Out-Null
-    # Wipe any stale/partial prior install (e.g. a code-only zip without models).
-    Get-ChildItem $ToolDir -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     $zip = Join-Path $env:TEMP $asset.name
     Write-Host ("Downloading {0} ({1:0} MB) ..." -f $asset.name, ($asset.size / 1MB))
-    $oldProgress = $ProgressPreference
-    $ProgressPreference = 'SilentlyContinue'   # IWR's progress bar makes 5.1 downloads crawl
-    try { Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -Headers $headers }
-    finally { $ProgressPreference = $oldProgress }
-    Write-Host 'Extracting ...'
-    Expand-Archive -Path $zip -DestinationPath $ToolDir -Force
-    Remove-Item $zip -ErrorAction SilentlyContinue
-    return $true
+    # The whole install (dir prep + download + extract) is guarded: under EAP=Stop a
+    # failed New-Item (ACL/path), dropped connection, 5xx, or corrupt zip would
+    # otherwise throw unhandled and close the window with no readable error, leaving
+    # a partial zip in %TEMP%.
+    try {
+        New-Item -ItemType Directory -Force -Path $ToolDir | Out-Null
+        # Wipe any stale/partial prior install (e.g. a code-only zip without models).
+        Get-ChildItem $ToolDir -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        $oldProgress = $ProgressPreference
+        $ProgressPreference = 'SilentlyContinue'   # IWR's progress bar makes 5.1 downloads crawl
+        try { Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -Headers $headers }
+        finally { $ProgressPreference = $oldProgress }
+        Write-Host 'Extracting ...'
+        Expand-Archive -Path $zip -DestinationPath $ToolDir -Force
+        return $true
+    }
+    catch {
+        Write-Host "Download/extract failed: $($_.Exception.Message)"
+        return $false
+    }
+    finally {
+        Remove-Item $zip -ErrorAction SilentlyContinue   # never leave a partial zip behind
+    }
 }
 
 # Output PNG next to the source; never overwrites.
@@ -190,6 +288,14 @@ if ($isFolder) {
         Write-Host "No images to upscale in this folder (png / jpg / jpeg / webp / bmp)."
         PauseExit
     }
+    # Directory mode writes <basename>.png for every input, so files that share a
+    # basename but differ only by extension (photo.jpg + photo.png) collide on
+    # output and one silently overwrites the other. Warn up front.
+    $dupes = $imgs | Group-Object { $_.BaseName.ToLowerInvariant() } | Where-Object { $_.Count -gt 1 }
+    if ($dupes) {
+        $names = ($dupes | ForEach-Object { $_.Group[0].BaseName }) -join ', '
+        Write-Host "Warning: these files share a name and differ only by extension - one will overwrite the other in the output: $names"
+    }
 }
 else {
     $ext = [System.IO.Path]::GetExtension($Path).ToLowerInvariant()
@@ -216,7 +322,7 @@ $exe = Resolve-Upscaler
 if (-not $exe) {
     Write-Host 'not installed.'
     Write-Host 'Real-ESRGAN is a ~50 MB download and needs a Vulkan-capable GPU.'
-    $ans = Read-Host 'Download it now from GitHub? [Y/N]'
+    $ans = Read-Host 'Download it now from GitHub? [Y/n]'
     if ($ans -eq '' -or $ans -match '^[Yy]') {
         if (-not (Install-Upscaler)) { PauseExit }
         $exe = Resolve-Upscaler
@@ -288,6 +394,10 @@ if ($isFolder) {
     }
     else {
         Write-Host "Upscale failed (exit $LASTEXITCODE). No Vulkan GPU? Real-ESRGAN can't run."
+        # Don't leave the pre-created (empty) output folder behind on total failure.
+        if ((Test-Path -LiteralPath $out) -and -not (Get-ChildItem -LiteralPath $out -Force -ErrorAction SilentlyContinue)) {
+            Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 elseif ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $out)) {
