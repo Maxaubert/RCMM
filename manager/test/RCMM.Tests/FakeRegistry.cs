@@ -50,7 +50,8 @@ public sealed class FakeRegistry : IRegistry
     public IReadOnlyList<string> GetSubKeyNames(RegistryHive hive, string path)
     {
         path = Normalize(path);
-        var prefix = path + "\\";
+        // Empty path = enumerate the hive root (Win32Registry opens the root key).
+        var prefix = path.Length == 0 ? "" : path + "\\";
         return _keys.Keys
             .Where(k => k.Hive == hive && k.Path.StartsWith(prefix))
             .Select(k => k.Path[prefix.Length..])

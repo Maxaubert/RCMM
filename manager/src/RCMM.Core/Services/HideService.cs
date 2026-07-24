@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using RCMM.Core.Diagnostics;
 using RCMM.Core.Models;
 
 namespace RCMM.Core.Services;
@@ -27,35 +29,6 @@ public sealed class HideService
     private readonly IRegistry _reg;
 
     public HideService(IRegistry reg) { _reg = reg; }
-
-    public void Hide(ContextMenuEntry entry)
-    {
-        switch (entry.Kind)
-        {
-            case EntryKind.ShellVerb:
-                _reg.SetValue(RegistryHive.ClassesRoot, entry.RegistryPath, "LegacyDisable", "");
-                break;
-            case EntryKind.ShellExtension:
-                _reg.CreateKey(RegistryHive.CurrentUser, MaskPath(entry));
-                _reg.SetValue(RegistryHive.CurrentUser, MaskPath(entry), "", "");
-                break;
-        }
-    }
-
-    public void Unhide(ContextMenuEntry entry)
-    {
-        switch (entry.Kind)
-        {
-            case EntryKind.ShellVerb:
-                _reg.DeleteValue(RegistryHive.ClassesRoot, entry.RegistryPath, "LegacyDisable");
-                break;
-            case EntryKind.ShellExtension:
-                _reg.DeleteKey(RegistryHive.CurrentUser, MaskPath(entry));
-                break;
-        }
-    }
-
-    public static bool RequiresExplorerRestart(EntryKind kind) => kind == EntryKind.ShellExtension;
 
     public void Hide(IReadOnlyList<HideTarget> targets)
     {
@@ -101,7 +74,30 @@ public sealed class HideService
             switch (t.Kind)
             {
                 case HideKind.LegacyDisable:
-                    _reg.DeleteValue(t.Hive, t.Path, t.ValueName ?? "LegacyDisable");
+                    var valueName = t.ValueName ?? "LegacyDisable";
+                    _reg.DeleteValue(t.Hive, t.Path, valueName);
+                    // A LegacyDisable can also live in HKLM (an early RCMM build wrote
+                    // HKCR directly, which lands in HKLM when elevated; admins and other
+                    // tools write there too). Detection reads the merged HKCR view, so an
+                    // HKLM survivor keeps the entry stuck "hidden" while the per-user
+                    // delete above silently changes nothing. Clear it when we can; without
+                    // admin rights the delete is denied and we log instead of failing the
+                    // whole un-hide batch.
+                    if (t.Hive == RegistryHive.CurrentUser
+                        && t.Path.StartsWith(@"Software\Classes\", StringComparison.OrdinalIgnoreCase)
+                        && _reg.GetValue(RegistryHive.LocalMachine, t.Path, valueName) != null)
+                    {
+                        try
+                        {
+                            _reg.DeleteValue(RegistryHive.LocalMachine, t.Path, valueName);
+                            Log.Info("hide", $"removed stale HKLM marker '{valueName}' at '{t.Path}'");
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Warn("hide", $"cannot remove HKLM marker '{valueName}' at '{t.Path}' " +
+                                $"({ex.GetType().Name}); un-hide will not take effect until it is removed elevated");
+                        }
+                    }
                     break;
                 case HideKind.HkcuMask:
                     // Mirror of Hide. If we stashed a real per-user registration, restore
@@ -133,8 +129,4 @@ public sealed class HideService
             if (t.Kind == HideKind.HkcuMask || t.Kind == HideKind.BlockedShellExt) return true;
         return false;
     }
-
-    private static string MaskPath(ContextMenuEntry entry)
-        => @"Software\Classes\" + entry.Scope.ToRegistryRoot()
-           + @"\shellex\ContextMenuHandlers\" + entry.OriginalKeyName;
 }

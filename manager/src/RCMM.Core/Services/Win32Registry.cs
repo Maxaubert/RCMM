@@ -60,6 +60,9 @@ public sealed class Win32Registry : IRegistry
         _ => throw new ArgumentOutOfRangeException(nameof(hive))
     };
 
+    // Empty path = the hive root itself (used to enumerate HKCR's top level).
+    // Disposing a system root key is a documented no-op, so the callers' `using`
+    // blocks are safe on the returned root.
     private static Win32.RegistryKey? OpenSubKey(RegistryHive hive, string path, bool writable)
-        => Root(hive).OpenSubKey(path, writable);
+        => path.Length == 0 ? Root(hive) : Root(hive).OpenSubKey(path, writable);
 }

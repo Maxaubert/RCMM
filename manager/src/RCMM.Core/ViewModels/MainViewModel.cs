@@ -194,6 +194,9 @@ public sealed class MainViewModel : ObservableObject
     private void RescanCore()
     {
         Log.Info("rescan", "begin");
+        // The mapper caches its file-association verb index; rebuild per rescan so
+        // apps installed since the last scan (or association changes) are seen.
+        _mapper.InvalidateAssociationCache();
         var targets = _targets.GetTargets();
         Log.Debug("rescan", $"targets={targets.Count}");
         var allItems = new List<CapturedItem>();
