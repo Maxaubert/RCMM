@@ -273,6 +273,62 @@ public class AdditionApplierTests
     }
 
     // ---------- helper ----------
+    // ---------- Purge must cover extension roots no longer referenced (#23) ----------
+    // Purge roots used to be derived from the CURRENT state's entries, so deleting
+    // the last File-scope entry for an extension left its RCMM.* verbs orphaned in
+    // the registry — the menu kept showing entries the UI no longer managed.
+
+    [Fact]
+    public void Apply_empty_state_purges_previously_written_extension_verbs()
+    {
+        var reg = new FakeRegistry();
+        var sut = new AdditionApplier(reg);
+        var entry = Entry("img", "fileinfo %1", AdditionScope.File) with { FileTypes = new[] { ".png" } };
+        sut.Apply(new AdditionState { Entries = new[] { entry } });
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\SystemFileAssociations\\.png\\shell\\RCMM.001.img"));
+
+        sut.Apply(new AdditionState());
+
+        Assert.False(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\SystemFileAssociations\\.png\\shell\\RCMM.001.img"));
+    }
+
+    [Fact]
+    public void Apply_purges_extension_roots_dropped_from_an_entry()
+    {
+        var reg = new FakeRegistry();
+        var sut = new AdditionApplier(reg);
+        var entry = Entry("img", "fileinfo %1", AdditionScope.File) with { FileTypes = new[] { ".png", ".jpg" } };
+        sut.Apply(new AdditionState { Entries = new[] { entry } });
+
+        sut.Apply(new AdditionState { Entries = new[] { entry with { FileTypes = new[] { ".png" } } } });
+
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\SystemFileAssociations\\.png\\shell\\RCMM.001.img"));
+        Assert.False(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\SystemFileAssociations\\.jpg\\shell\\RCMM.001.img"));
+    }
+
+    [Fact]
+    public void Apply_purges_legacy_bare_extension_leftovers()
+    {
+        var reg = new FakeRegistry();
+        // An earlier build wrote verbs under the bare <.ext>\shell location.
+        reg.SetValue(RegistryHive.CurrentUser, "Software\\Classes\\.png\\shell\\RCMM.001.old", "", "Old");
+
+        new AdditionApplier(reg).Apply(new AdditionState());
+
+        Assert.False(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\.png\\shell\\RCMM.001.old"));
+    }
+
+    [Fact]
+    public void Apply_leaves_foreign_verbs_under_extension_roots_untouched()
+    {
+        var reg = new FakeRegistry();
+        reg.SetValue(RegistryHive.CurrentUser, "Software\\Classes\\SystemFileAssociations\\.png\\shell\\ShareXImageEditor", "", "Edit with ShareX");
+
+        new AdditionApplier(reg).Apply(new AdditionState());
+
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, "Software\\Classes\\SystemFileAssociations\\.png\\shell\\ShareXImageEditor"));
+    }
+
     private static AdditionEntry Entry(string id, string command, AdditionScope scope)
         => new AdditionEntry
         {
