@@ -16,6 +16,13 @@ public sealed class VerbToRegistryMapper
 
     public VerbToRegistryMapper(IRegistry reg) { _reg = reg; }
 
+    /// <summary>Lazily built verb → association buckets index (see
+    /// <see cref="BuildAssociationVerbIndex"/>). Rebuilt on the next MapVerb after
+    /// <see cref="InvalidateAssociationCache"/> so a rescan sees newly installed apps.</summary>
+    private Dictionary<string, List<string>>? _assocVerbIndex;
+
+    public void InvalidateAssociationCache() => _assocVerbIndex = null;
+
     public IEnumerable<HideTarget> MapVerb(string verb)
     {
         // We READ from HKCR (the merged view) to find verb registrations that exist
@@ -31,6 +38,26 @@ public sealed class VerbToRegistryMapper
                 RegistryHive.CurrentUser,
                 @"Software\Classes\" + hkcrPath,
                 "LegacyDisable");
+        }
+
+        // File-association progids (VLC.mp4, txtfile, …) register per-file-type verbs
+        // at <progid>\shell\<verb> — this is where most media/document app entries
+        // actually live, and the association array Explorer builds for a file draws
+        // from them. They are NOT under any scope root or SystemFileAssociations, so
+        // without this branch RCMM can neither detect nor hide them: the classic
+        // failure was VLC's PlayWithVLC, whose only mapped target was the folder-scope
+        // Directory\shell key while the visible .mp4 menu item came from VLC.mp4.
+        _assocVerbIndex ??= BuildAssociationVerbIndex();
+        if (_assocVerbIndex.TryGetValue(verb, out var buckets))
+        {
+            foreach (var bucket in buckets)
+            {
+                yield return new HideTarget(
+                    HideKind.LegacyDisable,
+                    RegistryHive.CurrentUser,
+                    @"Software\Classes\" + bucket + @"\shell\" + verb,
+                    "LegacyDisable");
+            }
         }
 
         // SystemFileAssociations\<ext-or-type>\shell\<verb> registers verbs that only
@@ -52,6 +79,51 @@ public sealed class VerbToRegistryMapper
                     "LegacyDisable");
             }
         }
+    }
+
+    /// <summary>
+    /// Builds the verb → association-bucket index. A "bucket" is any HKCR key whose
+    /// shell\* verbs can surface in a file's context menu via the association array:
+    /// the extension key itself (.mp4) plus every progid an extension references —
+    /// its default value, its OpenWithProgids value names, and the per-user
+    /// Explorer FileExts\*\UserChoice ProgId (which overrides the default and is
+    /// exactly how "VLC is my .mp4 player" gets wired up). Buckets referenced by any
+    /// extension are included even when not currently the default: hiding a verb
+    /// should survive the user switching default apps between that vendor's progids.
+    /// </summary>
+    private Dictionary<string, List<string>> BuildAssociationVerbIndex()
+    {
+        var buckets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var name in _reg.GetSubKeyNames(RegistryHive.ClassesRoot, ""))
+        {
+            if (name.Length < 2 || name[0] != '.') continue;
+            if (_reg.KeyExists(RegistryHive.ClassesRoot, name + @"\shell"))
+                buckets.Add(name);
+            if (_reg.GetValue(RegistryHive.ClassesRoot, name, "") is string progid
+                && progid.Length > 0 && !progid.Contains('\\'))
+                buckets.Add(progid);
+            foreach (var p in _reg.GetValueNames(RegistryHive.ClassesRoot, name + @"\OpenWithProgids"))
+                if (p.Length > 0 && !p.Contains('\\'))
+                    buckets.Add(p);
+        }
+
+        const string fileExts = @"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts";
+        foreach (var ext in _reg.GetSubKeyNames(RegistryHive.CurrentUser, fileExts))
+            if (_reg.GetValue(RegistryHive.CurrentUser, fileExts + "\\" + ext + @"\UserChoice", "ProgId") is string chosen
+                && chosen.Length > 0 && !chosen.Contains('\\'))
+                buckets.Add(chosen);
+
+        var index = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var bucket in buckets)
+        {
+            foreach (var verb in _reg.GetSubKeyNames(RegistryHive.ClassesRoot, bucket + @"\shell"))
+            {
+                if (!index.TryGetValue(verb, out var list))
+                    index[verb] = list = new List<string>();
+                list.Add(bucket);
+            }
+        }
+        return index;
     }
 
     public IEnumerable<HideTarget> MapClsid(string clsid)

@@ -79,6 +79,97 @@ public class VerbToRegistryMapperTests
     }
 
     [Fact]
+    public void Map_verb_finds_progid_registration_via_extension_default()
+    {
+        var reg = new FakeRegistry();
+        reg.SetValue(RegistryHive.ClassesRoot, ".mp4", "", "VLC.mp4");
+        reg.SetValue(RegistryHive.ClassesRoot, @"VLC.mp4\shell\PlayWithVLC", "", "Play with VLC media player");
+        var sut = new VerbToRegistryMapper(reg);
+
+        var targets = sut.MapVerb("PlayWithVLC").ToList();
+
+        var t = Assert.Single(targets);
+        Assert.Equal(HideKind.LegacyDisable, t.Kind);
+        Assert.Equal(RegistryHive.CurrentUser, t.Hive);
+        Assert.Equal(@"Software\Classes\VLC.mp4\shell\PlayWithVLC", t.Path);
+        Assert.Equal("LegacyDisable", t.ValueName);
+    }
+
+    [Fact]
+    public void Map_verb_finds_progid_registration_via_OpenWithProgids()
+    {
+        var reg = new FakeRegistry();
+        reg.SetValue(RegistryHive.ClassesRoot, @".mkv\OpenWithProgids", "VLC.mkv", "");
+        reg.SetValue(RegistryHive.ClassesRoot, @"VLC.mkv\shell\PlayWithVLC", "", "Play with VLC media player");
+        var sut = new VerbToRegistryMapper(reg);
+
+        var targets = sut.MapVerb("PlayWithVLC").ToList();
+
+        var t = Assert.Single(targets);
+        Assert.Equal(@"Software\Classes\VLC.mkv\shell\PlayWithVLC", t.Path);
+    }
+
+    [Fact]
+    public void Map_verb_finds_progid_registration_via_UserChoice()
+    {
+        var reg = new FakeRegistry();
+        reg.SetValue(RegistryHive.CurrentUser,
+            @"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.mp4\UserChoice", "ProgId", "VLC.mp4");
+        reg.SetValue(RegistryHive.ClassesRoot, @"VLC.mp4\shell\PlayWithVLC", "", "Play with VLC media player");
+        var sut = new VerbToRegistryMapper(reg);
+
+        var targets = sut.MapVerb("PlayWithVLC").ToList();
+
+        var t = Assert.Single(targets);
+        Assert.Equal(@"Software\Classes\VLC.mp4\shell\PlayWithVLC", t.Path);
+    }
+
+    [Fact]
+    public void Map_verb_finds_verb_registered_directly_on_extension_key()
+    {
+        var reg = new FakeRegistry();
+        reg.SetValue(RegistryHive.ClassesRoot, @".mp4\shell\grabframe", "", "Grab frame");
+        var sut = new VerbToRegistryMapper(reg);
+
+        var targets = sut.MapVerb("grabframe").ToList();
+
+        var t = Assert.Single(targets);
+        Assert.Equal(@"Software\Classes\.mp4\shell\grabframe", t.Path);
+    }
+
+    [Fact]
+    public void Map_verb_does_not_duplicate_progid_shared_by_multiple_extensions()
+    {
+        var reg = new FakeRegistry();
+        reg.SetValue(RegistryHive.ClassesRoot, ".mp4", "", "VLC.mp4");
+        reg.SetValue(RegistryHive.CurrentUser,
+            @"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.mp4\UserChoice", "ProgId", "VLC.mp4");
+        reg.SetValue(RegistryHive.ClassesRoot, @".m4v\OpenWithProgids", "VLC.mp4", "");
+        reg.SetValue(RegistryHive.ClassesRoot, @"VLC.mp4\shell\PlayWithVLC", "", "Play with VLC media player");
+        var sut = new VerbToRegistryMapper(reg);
+
+        var targets = sut.MapVerb("PlayWithVLC").ToList();
+
+        Assert.Single(targets);
+    }
+
+    [Fact]
+    public void Map_verb_association_index_rebuilds_after_invalidate()
+    {
+        var reg = new FakeRegistry();
+        reg.SetValue(RegistryHive.ClassesRoot, ".mp4", "", "VLC.mp4");
+        reg.SetValue(RegistryHive.ClassesRoot, @"VLC.mp4\shell\PlayWithVLC", "", "Play");
+        var sut = new VerbToRegistryMapper(reg);
+        Assert.Single(sut.MapVerb("PlayWithVLC"));
+
+        reg.SetValue(RegistryHive.ClassesRoot, ".avi", "", "VLC.avi");
+        reg.SetValue(RegistryHive.ClassesRoot, @"VLC.avi\shell\PlayWithVLC", "", "Play");
+        sut.InvalidateAssociationCache();
+
+        Assert.Equal(2, sut.MapVerb("PlayWithVLC").Count());
+    }
+
+    [Fact]
     public void Map_clsid_finds_shellex_handler_locations_via_default_or_keyname_match()
     {
         var reg = new FakeRegistry();
