@@ -8,15 +8,46 @@ using RCMM.Core.Services;
 namespace RCMM.Tests;
 
 /// <summary>
-/// End-to-end smoke test against the real Win32Registry. Writes RCMM.&lt;ord&gt;.IT_*
-/// keys into HKCU and verifies them, then tears them down. The Dispose pass is
-/// belt-and-braces — Apply with an empty state already purges, but the explicit
-/// scan-for-our-tag protects against a mid-test crash leaving residue.
+/// End-to-end smoke test against the real Win32Registry — but remapped into a
+/// throwaway sandbox subtree (Software\RCMMTests\&lt;tag&gt;\…) so Apply's purge can
+/// never touch the machine's real Software\Classes. Apply purges every RCMM.*
+/// key under every scope root it knows (including, since #23, all extension
+/// roots it can enumerate), so running it against the real Classes tree would
+/// delete the developer's live RCMM additions. Dispose removes the whole
+/// sandbox subtree.
 /// </summary>
 public sealed class AdditionApplierIntegrationTests : IDisposable
 {
-    private readonly Win32Registry _reg = new();
     private readonly string _testTag = "IT_" + Guid.NewGuid().ToString("N").Substring(0, 8);
+    private readonly string _sandbox;
+    private readonly Win32Registry _real = new();
+    private readonly IRegistry _reg;
+
+    public AdditionApplierIntegrationTests()
+    {
+        _sandbox = "Software\\RCMMTests\\" + _testTag;
+        _reg = new SandboxedRegistry(_real, _sandbox);
+    }
+
+    /// <summary>Prefixes every HKCU path with the sandbox root before delegating
+    /// to the real Win32Registry. Non-HKCU hives pass through untouched (the
+    /// applier only writes HKCU; reads of HKCR/HKLM are not part of these tests).</summary>
+    private sealed class SandboxedRegistry : IRegistry
+    {
+        private readonly Win32Registry _inner;
+        private readonly string _root;
+        public SandboxedRegistry(Win32Registry inner, string root) { _inner = inner; _root = root; }
+        private string Map(RegistryHive hive, string path)
+            => hive == RegistryHive.CurrentUser ? (path.Length == 0 ? _root : _root + "\\" + path) : path;
+        public bool KeyExists(RegistryHive hive, string path) => _inner.KeyExists(hive, Map(hive, path));
+        public void CreateKey(RegistryHive hive, string path) => _inner.CreateKey(hive, Map(hive, path));
+        public void DeleteKey(RegistryHive hive, string path) => _inner.DeleteKey(hive, Map(hive, path));
+        public void DeleteValue(RegistryHive hive, string path, string name) => _inner.DeleteValue(hive, Map(hive, path), name);
+        public object? GetValue(RegistryHive hive, string path, string name) => _inner.GetValue(hive, Map(hive, path), name);
+        public void SetValue(RegistryHive hive, string path, string name, object value) => _inner.SetValue(hive, Map(hive, path), name, value);
+        public System.Collections.Generic.IReadOnlyList<string> GetSubKeyNames(RegistryHive hive, string path) => _inner.GetSubKeyNames(hive, Map(hive, path));
+        public System.Collections.Generic.IReadOnlyList<string> GetValueNames(RegistryHive hive, string path) => _inner.GetValueNames(hive, Map(hive, path));
+    }
 
     [Fact]
     public void Apply_writes_and_reads_back_a_real_entry()
@@ -95,31 +126,12 @@ public sealed class AdditionApplierIntegrationTests : IDisposable
         Assert.True(_reg.KeyExists(RegistryHive.CurrentUser, childPath));
     }
 
-    /// <summary>
-    /// Belt-and-braces cleanup. Scans every direct child of the relevant scope
-    /// subtree for an "RCMM." prefix and our test tag (anywhere in the name —
-    /// the ordinal prefix sits between "RCMM." and the tag, so a simple
-    /// StartsWith on the tag won't match).
-    /// </summary>
+    /// <summary>Deletes the shared sandbox root in one recursive sweep — this also
+    /// clears residue from earlier crashed runs. Instances of a single xUnit test
+    /// class never run concurrently, so removing the shared root is race-free.</summary>
     public void Dispose()
     {
-        foreach (var scopeRoot in new[]
-                 {
-                     "Software\\Classes\\Directory\\Background\\shell",
-                     "Software\\Classes\\Directory\\Background\\ContextMenus",
-                 })
-        {
-            try
-            {
-                if (!_reg.KeyExists(RegistryHive.CurrentUser, scopeRoot)) continue;
-                foreach (var name in _reg.GetSubKeyNames(RegistryHive.CurrentUser, scopeRoot))
-                {
-                    if (!name.StartsWith("RCMM.", StringComparison.Ordinal)) continue;
-                    if (!name.Contains(_testTag, StringComparison.Ordinal)) continue;
-                    _reg.DeleteKey(RegistryHive.CurrentUser, scopeRoot + "\\" + name);
-                }
-            }
-            catch { /* best-effort cleanup */ }
-        }
+        try { _real.DeleteKey(RegistryHive.CurrentUser, "Software\\RCMMTests"); }
+        catch { /* best-effort cleanup */ }
     }
 }
