@@ -322,14 +322,8 @@ private void LoadIconsForAllEntries()
             {
                 DispatcherQueue.TryEnqueue(async () =>
                 {
-                    try
-                    {
-                        using var ms = new System.IO.MemoryStream(bytes);
-                        var bmp = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage();
-                        await bmp.SetSourceAsync(ms.AsRandomAccessStream());
-                        rowRef.Icon = bmp;
-                    }
-                    catch { }
+                    var bmp = await IconPainter.DecodeAsync(bytes);
+                    if (bmp != null) rowRef.Icon = bmp;
                 });
                 continue;
             }
@@ -341,20 +335,11 @@ private void LoadIconsForAllEntries()
                 var pngBytes = await IconHelper.LoadIconBytesAsync(path);
                 if (pngBytes == null) return;
                 // BitmapImage is COM-tied to the dispatcher that created it; build
-                // it on the UI thread to avoid silent cross-thread marshalling errors.
+                // it on the UI thread (IconPainter logs decode failures).
                 DispatcherQueue.TryEnqueue(async () =>
                 {
-                    try
-                    {
-                        using var ms = new System.IO.MemoryStream(pngBytes);
-                        var bmp = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage();
-                        await bmp.SetSourceAsync(ms.AsRandomAccessStream());
-                        rowRef.Icon = bmp;
-                    }
-                    catch (Exception ex)
-                    {
-                        Log.Debug("ui", $"icon load failed for {rowRef.Entry.DisplayName}: {ex.Message}");
-                    }
+                    var bmp = await IconPainter.DecodeAsync(pngBytes);
+                    if (bmp != null) rowRef.Icon = bmp;
                 });
             });
         }

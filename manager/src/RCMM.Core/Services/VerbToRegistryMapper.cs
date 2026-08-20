@@ -6,11 +6,7 @@ namespace RCMM.Core.Services;
 
 public sealed class VerbToRegistryMapper
 {
-    private static readonly Scope[] AllScopes =
-    {
-        Scope.Files, Scope.Folders, Scope.Drives, Scope.Background,
-        Scope.AllObjects, Scope.Folder
-    };
+    private static readonly Scope[] AllScopes = ShellexHandlerWalk.StandardScopes;
 
     private readonly IRegistry _reg;
 
@@ -153,36 +149,25 @@ public sealed class VerbToRegistryMapper
         foreach (var scope in AllScopes)
         {
             var handlersRoot = scope.ToRegistryRoot() + @"\shellex\ContextMenuHandlers";
-            if (!_reg.KeyExists(RegistryHive.ClassesRoot, handlersRoot)) continue;
-            foreach (var name in _reg.GetSubKeyNames(RegistryHive.ClassesRoot, handlersRoot))
+            // recoverMaskedDefault: once the user has hidden a shellex, the HKCU
+            // shadow key we wrote has an empty default value, which wins in
+            // HKCR's merged view. The classic CLSID lookup then fails and
+            // ResolveHideTargets falls back to BlockedShellExt — but the
+            // *original* hide was HkcuMask, so on un-hide we'd leave the
+            // HkcuMask keys orphaned. The walk recovers the original CLSID
+            // through the user's own mask (RCMM.SavedDefault stash first, then
+            // HKLM) — without it a hidden per-user handler is unrecoverable
+            // after a rescan. See ShellexHandlerWalk.
+            foreach (var r in ShellexHandlerWalk.EnumerateHandlers(_reg, handlersRoot, recoverMaskedDefault: true))
             {
-                var defaultVal = _reg.GetValue(RegistryHive.ClassesRoot, handlersRoot + "\\" + name, "") as string;
-                // HKCU mask path: once the user has hidden a shellex, the HKCU
-                // shadow key we wrote has an empty default value, which wins
-                // in HKCR's merged view. The classic CLSID lookup then fails
-                // and ResolveHideTargets falls back to BlockedShellExt — but
-                // the *original* hide was HkcuMask, so on un-hide we'd leave
-                // the HkcuMask keys orphaned. Recover the original CLSID
-                // through the user's own mask: first from the RCMM.SavedDefault
-                // stash Hide wrote into the masked key (the ONLY copy for a
-                // handler whose real registration was per-user, with no HKLM
-                // twin — without it a hidden per-user handler is unrecoverable
-                // after a rescan), then from HKLM.
-                if (string.IsNullOrEmpty(defaultVal))
-                    defaultVal = _reg.GetValue(RegistryHive.CurrentUser,
-                        "Software\\Classes\\" + handlersRoot + "\\" + name,
-                        HideService.SavedDefaultValueName) as string;
-                if (string.IsNullOrEmpty(defaultVal))
-                    defaultVal = _reg.GetValue(RegistryHive.LocalMachine,
-                        "Software\\Classes\\" + handlersRoot + "\\" + name, "") as string;
-                var match = (defaultVal != null && string.Equals(defaultVal, clsid, StringComparison.OrdinalIgnoreCase))
-                            || string.Equals(name, clsid, StringComparison.OrdinalIgnoreCase);
+                var match = (r.RawDefault != null && string.Equals(r.RawDefault, clsid, StringComparison.OrdinalIgnoreCase))
+                            || string.Equals(r.KeyName, clsid, StringComparison.OrdinalIgnoreCase);
                 if (match)
                 {
                     yield return new HideTarget(
                         HideKind.HkcuMask,
                         RegistryHive.CurrentUser,
-                        @"Software\Classes\" + scope.ToRegistryRoot() + @"\shellex\ContextMenuHandlers\" + name,
+                        @"Software\Classes\" + scope.ToRegistryRoot() + @"\shellex\ContextMenuHandlers\" + r.KeyName,
                         null);
                 }
             }

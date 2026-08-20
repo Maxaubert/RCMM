@@ -120,7 +120,7 @@ public static class TemplateUpdatesDialog
             if (chosen.Count == 0) return;
             foreach (var u in chosen)
             {
-                var (command, _) = TemplatesPage.ExpandTemplate(u.Template);   // re-resolve %selfdir% / %bin%
+                var (command, _) = TemplateExpansion.Expand(u.Template);   // re-resolve %selfdir% / %bin%
                 vm.AddPage.ReplaceEntry(TemplateUpdateService.Merge(u.Entry, u.Template, command));
             }
             Log.Info("tplupd", $"updating {chosen.Count} entr(y/ies)");

@@ -321,8 +321,7 @@ public sealed class ShellexInvoker : IShellexInvoker
         var defaultTarget = folderTarget ?? fileTarget ?? driveTarget ?? targets[0];
 
         // Standard six scopes.
-        foreach (var scope in new[] { Scope.Files, Scope.Folders, Scope.Drives,
-                                       Scope.Background, Scope.AllObjects, Scope.Folder })
+        foreach (var scope in ShellexHandlerWalk.StandardScopes)
         {
             var handlersRoot = scope.ToRegistryRoot() + @"\shellex\ContextMenuHandlers";
             var picked = TargetForScope(scope, fileTarget, pngTarget, folderTarget, driveTarget) ?? defaultTarget;
@@ -369,15 +368,16 @@ public sealed class ShellexInvoker : IShellexInvoker
     private void EnumerateHandlersUnder(string handlersRoot, string targetPath,
                                         HashSet<string> seen, List<(string, string)> result)
     {
-        if (!_reg.KeyExists(RegistryHive.ClassesRoot, handlersRoot)) return;
-        foreach (var name in _reg.GetSubKeyNames(RegistryHive.ClassesRoot, handlersRoot))
+        // recoverMaskedDefault deliberately FALSE: the probe set is for
+        // handlers the shell can currently load; a handler masked by RCMM's
+        // HkcuMask still gets probed anyway because MainViewModel registers
+        // every registry-scan-recovered CLSID via RegisterExtraClsid before
+        // BuildDisplayNameToClsidMap runs.
+        foreach (var r in ShellexHandlerWalk.EnumerateHandlers(_reg, handlersRoot, recoverMaskedDefault: false))
         {
-            var defaultVal = _reg.GetValue(RegistryHive.ClassesRoot, handlersRoot + "\\" + name, "") as string;
-            var clsid = LooksLikeClsid(defaultVal) ? defaultVal! :
-                        LooksLikeClsid(name) ? name : null;
-            if (clsid == null) continue;
-            if (!seen.Add(clsid)) continue;
-            result.Add((clsid, targetPath));
+            if (r.Clsid == null) continue;
+            if (!seen.Add(r.Clsid)) continue;
+            result.Add((r.Clsid, targetPath));
         }
     }
 
@@ -496,9 +496,6 @@ public sealed class ShellexInvoker : IShellexInvoker
         if (string.IsNullOrEmpty(s)) return null;
         try { return new Guid(s); } catch { return null; }
     }
-
-    private static bool LooksLikeClsid(string? s)
-        => !string.IsNullOrEmpty(s) && s.StartsWith('{') && s.EndsWith('}');
 
     private static string StripAccelerator(string s)
         => s.Replace("&&", "￾").Replace("&", "").Replace("￾", "&");

@@ -290,9 +290,12 @@ public class MainViewModelTests : System.IDisposable
     [Fact]
     public void Shellex_item_without_Verb_is_hideable_when_DisplayName_matches_a_registered_handler()
     {
+        // Full-length CLSID: the name index only admits real CLSID-shaped
+        // registrations (strict shared LooksLikeClsid, review b10).
+        var clsid = "{AABBCCDD-1111-2222-3333-444455556666}";
         var (vm, reg, cap) = BuildSut();
-        reg.SetValue(RegistryHive.ClassesRoot, @"*\shellex\ContextMenuHandlers\WinRAR", "", "{ABC}");
-        reg.SetValue(RegistryHive.ClassesRoot, @"CLSID\{ABC}", "", "WinRAR Shell");
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shellex\ContextMenuHandlers\WinRAR", "", clsid);
+        reg.SetValue(RegistryHive.ClassesRoot, $@"CLSID\{clsid}", "", "WinRAR Shell");
 
         var target = FirstFileTarget();
         cap.Map[target] = new List<CapturedItem>

@@ -32,9 +32,11 @@ public sealed class CascadeProtectionService
     /// the modern-menu IExplorerCommand enumeration), so protection
     /// installation is skipped — adding the verbs anyway would just
     /// clutter the user's classic menu with raw packaged-COM placeholders.
+    /// Defined once by <see cref="ContextMenuModeService.InprocKey"/> — the
+    /// Settings toggle and this skip-check must always agree on what
+    /// "classic mode" means, so the path is never duplicated.
     /// </summary>
-    public const string LegacyMenuHackKey =
-        "Software\\Classes\\CLSID\\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\\InprocServer32";
+    public const string LegacyMenuHackKey = ContextMenuModeService.InprocKey;
     private const string Cat = "cascade";
 
     private readonly IRegistry _reg;

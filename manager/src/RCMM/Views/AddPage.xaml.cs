@@ -15,7 +15,6 @@ using RCMM.Core.ViewModels;
 using RCMM.Util;
 using System.Threading.Tasks;
 using Windows.ApplicationModel.DataTransfer;
-using Windows.Storage.Streams;
 
 namespace RCMM.Views;
 
@@ -377,37 +376,8 @@ public sealed partial class AddPage : Page
             if (p != null) { host.Child = p; host.Visibility = Visibility.Visible; }
             return;
         }
-        _ = LoadPathIconAsync(g, r, hostName, value!, size);
-    }
-
-    /// <summary>Extract an icon from a file/exe/dll/.ico path off the UI thread and
-    /// paint it into the row's host. Guards on the container's DataContext at each
-    /// await so a row recycled to a different entry mid-load isn't painted with a
-    /// stale icon (same recycle hazard handled in the left-pane visual painter).</summary>
-    private static async Task LoadPathIconAsync(Grid g, AddRow r, string hostName, string value, double size)
-    {
-        var bytes = await IconHelper.LoadIconBytesAsync(value);
-        if (bytes == null || bytes.Length == 0) return;
-        if (!ReferenceEquals(g.DataContext, r)) return;
-        if (g.FindName(hostName) is not Border host) return;
-        try
-        {
-            using var stream = new InMemoryRandomAccessStream();
-            using (var dw = new DataWriter(stream))
-            {
-                dw.WriteBytes(bytes);
-                await dw.StoreAsync();
-                await dw.FlushAsync();
-                dw.DetachStream();
-            }
-            stream.Seek(0);
-            var bmp = new BitmapImage();
-            await bmp.SetSourceAsync(stream);
-            if (!ReferenceEquals(g.DataContext, r)) return;
-            host.Child = new Image { Source = bmp, Width = size, Height = size };
-            host.Visibility = Visibility.Visible;
-        }
-        catch { }
+        // Shared painter: recycle-guarded load + decode (see IconPainter).
+        _ = IconPainter.PaintIntoHostAsync(g, r, hostName, value!, size);
     }
 
     // -------------------------------------------------------------------------
