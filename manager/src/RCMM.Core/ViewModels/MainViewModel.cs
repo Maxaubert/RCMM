@@ -1156,20 +1156,39 @@ public sealed class MainViewModel : ObservableObject
         // cascade" for the underlying Windows behaviour we're guarding against.
         if (_cascadeProtector != null && _backgroundExtsByClsid.Count > 0)
         {
+            // Collect every Background packaged CLSID this batch adds to Blocked
+            // FIRST, then plan once for the whole set. Planning per-CLSID (the
+            // original shape) excluded only the one CLSID being iterated, so
+            // hiding two Background extensions in one batch installed a
+            // resurrection verb for each from the other's pass.
+            var bgClsidsBeingHidden = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var targets in pendingHide.Values)
-            {
                 foreach (var t in targets)
+                    if (t.Kind == HideKind.BlockedShellExt
+                        && !string.IsNullOrEmpty(t.ValueName)
+                        && _backgroundExtsByClsid.ContainsKey(t.ValueName!))
+                        bgClsidsBeingHidden.Add(t.ValueName!);
+
+            if (bgClsidsBeingHidden.Count > 0)
+            {
+                // A CLSID being hidden now may still own a protection verb from an
+                // earlier Apply (installed back when a DIFFERENT extension was the
+                // one being hidden). That verb is a real rendered menu row, so left
+                // in place it would keep the newly-hidden extension visible.
+                try
                 {
-                    if (t.Kind != HideKind.BlockedShellExt) continue;
-                    if (string.IsNullOrEmpty(t.ValueName)) continue;
-                    if (!_backgroundExtsByClsid.ContainsKey(t.ValueName!)) continue;
-                    var plans = _cascadeProtector.PlanProtections(t.ValueName!, _backgroundExtsByClsid.Values);
-                    if (plans.Count > 0)
-                    {
-                        Log.Info("apply", $"cascade-protection: installing {plans.Count} classic-verb fallbacks for hide of {t.ValueName}");
-                        try { _cascadeProtector.Install(plans); }
-                        catch (Exception ex) { Log.Error("apply", $"cascade-protection install failed for {t.ValueName}", ex); }
-                    }
+                    var stale = _cascadeProtector.RemoveProtectionsFor(bgClsidsBeingHidden);
+                    if (stale > 0)
+                        Log.Info("apply", $"cascade-protection: removed {stale} protection verbs for extensions being hidden in this batch");
+                }
+                catch (Exception ex) { Log.Error("apply", "cascade-protection stale-verb removal failed", ex); }
+
+                var plans = _cascadeProtector.PlanProtections(bgClsidsBeingHidden, _backgroundExtsByClsid.Values);
+                if (plans.Count > 0)
+                {
+                    Log.Info("apply", $"cascade-protection: installing {plans.Count} classic-verb fallbacks for hide of [{string.Join(", ", bgClsidsBeingHidden)}]");
+                    try { _cascadeProtector.Install(plans); }
+                    catch (Exception ex) { Log.Error("apply", "cascade-protection install failed", ex); }
                 }
             }
         }

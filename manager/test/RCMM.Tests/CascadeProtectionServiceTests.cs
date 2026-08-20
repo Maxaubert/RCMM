@@ -214,6 +214,62 @@ public class CascadeProtectionServiceTests
     }
 
     [Fact]
+    public void PlanProtections_skips_extensions_already_in_the_blocked_list()
+    {
+        var reg = new FakeRegistry();
+        var sut = new CascadeProtectionService(reg);
+        var amd = BackgroundExt("{6767B3BC-8FF7-11EC-B909-0242AC120002}", "Amd_pubhash!App", "AMD");
+        var term = BackgroundExt("{9F156763-7844-4DC4-B2B1-901F640F5155}", "Microsoft.WindowsTerminal_8wekyb3d8bbwe!App", "Terminal");
+        // Terminal was hidden by an earlier Apply — its CLSID sits in HKCU Blocked.
+        reg.SetValue(RegistryHive.CurrentUser, HideService.BlockedListPath, term.Clsid, "");
+
+        var plans = sut.PlanProtections(amd.Clsid, new[] { amd, term });
+
+        // Planning a fallback verb for Terminal would resurrect an entry the
+        // user explicitly hid.
+        Assert.Empty(plans);
+    }
+
+    [Fact]
+    public void PlanProtections_batch_overload_excludes_every_clsid_hidden_in_the_batch()
+    {
+        var reg = new FakeRegistry();
+        var sut = new CascadeProtectionService(reg);
+        var amd = BackgroundExt("{6767B3BC-8FF7-11EC-B909-0242AC120002}", "Amd_pubhash!App", "AMD");
+        var term = BackgroundExt("{9F156763-7844-4DC4-B2B1-901F640F5155}", "Microsoft.WindowsTerminal_8wekyb3d8bbwe!App", "Terminal");
+        var code = BackgroundExt("{33333333-3333-3333-3333-333333333333}", "Code_pubhash!App", "Code");
+
+        var plans = sut.PlanProtections(new[] { amd.Clsid, term.Clsid }, new[] { amd, term, code });
+
+        // Both batch members excluded; only the untouched third extension is protected.
+        Assert.Single(plans);
+        Assert.Equal(code.Clsid, plans[0].SourceClsid);
+    }
+
+    [Fact]
+    public void RemoveProtectionsFor_removes_only_the_named_clsids_verbs()
+    {
+        var reg = new FakeRegistry();
+        var sut = new CascadeProtectionService(reg);
+        var amd = BackgroundExt("{6767B3BC-8FF7-11EC-B909-0242AC120002}", "Amd_pubhash!App", "AMD");
+        var term = BackgroundExt("{9F156763-7844-4DC4-B2B1-901F640F5155}", "Microsoft.WindowsTerminal_8wekyb3d8bbwe!App", "Terminal");
+        var code = BackgroundExt("{33333333-3333-3333-3333-333333333333}", "Code_pubhash!App", "Code");
+        // Hiding AMD installed verbs for Terminal and Code.
+        sut.Install(sut.PlanProtections(amd.Clsid, new[] { amd, term, code }));
+        var termVerb = "Software\\Classes\\Directory\\Background\\shell\\RcmmProtect_9F156763-7844-4DC4-B2B1-901F640F5155";
+        var codeVerb = "Software\\Classes\\Directory\\Background\\shell\\RcmmProtect_33333333-3333-3333-3333-333333333333";
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, termVerb));
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, codeVerb));
+
+        // Terminal is now being hidden itself — only its verb must go.
+        var removed = sut.RemoveProtectionsFor(new[] { term.Clsid });
+
+        Assert.Equal(1, removed);
+        Assert.False(reg.KeyExists(RegistryHive.CurrentUser, termVerb));
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, codeVerb));
+    }
+
+    [Fact]
     public void UninstallAll_removes_only_RcmmProtect_prefixed_verbs()
     {
         var reg = new FakeRegistry();

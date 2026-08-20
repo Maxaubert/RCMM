@@ -51,27 +51,48 @@ public sealed class CascadeProtectionService
         => _reg.KeyExists(RegistryHive.CurrentUser, LegacyMenuHackKey);
 
     /// <summary>
-    /// For a given CLSID being hidden, enumerate the OTHER Background-scope
-    /// packaged-COM extensions that should get classic-verb fallbacks so the
-    /// cascade can't make them invisible. Returns the protection plans the
-    /// caller should apply via Install. Idempotent against an existing
-    /// protection: rows whose protection verb already exists in HKCU are
-    /// skipped. Returns empty when the legacy menu hack is active (the
-    /// cascade can't trigger in classic-menu mode).
+    /// Single-CLSID convenience over the batch overload below.
     /// </summary>
     public IReadOnlyList<ProtectionPlan> PlanProtections(
         string clsidBeingHidden,
         IEnumerable<PackagedShellExt> allExtensions)
+        => PlanProtections(
+            string.IsNullOrWhiteSpace(clsidBeingHidden) ? Array.Empty<string>() : new[] { clsidBeingHidden },
+            allExtensions);
+
+    /// <summary>
+    /// For the CLSIDs being hidden in one Apply batch, enumerate the OTHER
+    /// Background-scope packaged-COM extensions that should get classic-verb
+    /// fallbacks so the cascade can't make them invisible. Returns the
+    /// protection plans the caller should apply via Install. Idempotent
+    /// against an existing protection: rows whose protection verb already
+    /// exists in HKCU are skipped. Returns empty when the legacy menu hack
+    /// is active (the cascade can't trigger in classic-menu mode).
+    /// </summary>
+    public IReadOnlyList<ProtectionPlan> PlanProtections(
+        IReadOnlyCollection<string> clsidsBeingHidden,
+        IEnumerable<PackagedShellExt> allExtensions)
     {
         var plans = new List<ProtectionPlan>();
-        var byClsidHidden = clsidBeingHidden?.Trim();
-        if (string.IsNullOrEmpty(byClsidHidden)) return plans;
+        var hiddenSet = new HashSet<string>(
+            clsidsBeingHidden.Where(c => !string.IsNullOrWhiteSpace(c)).Select(c => c.Trim()),
+            StringComparer.OrdinalIgnoreCase);
+        if (hiddenSet.Count == 0) return plans;
         if (IsLegacyMenuModeActive()) return plans;
 
         foreach (var ext in allExtensions)
         {
             if (!ext.IsBackgroundExtension) continue;
-            if (string.Equals(ext.Clsid, byClsidHidden, StringComparison.OrdinalIgnoreCase)) continue;
+            // Never plan a fallback for an extension the user is hiding in this
+            // same Apply batch — hiding two Background extensions at once must
+            // not install a resurrection verb for either of them.
+            if (hiddenSet.Contains(ext.Clsid)) continue;
+            // Nor for an extension already sitting in the user's HKCU Blocked
+            // list: it was hidden by an earlier Apply (when it was itself the
+            // excluded clsidBeingHidden, so no verb was written for it then).
+            // Installing a rendered classic verb for it now would silently
+            // resurrect an entry the user explicitly hid.
+            if (_reg.GetValue(RegistryHive.CurrentUser, HideService.BlockedListPath, ext.Clsid) != null) continue;
             if (string.IsNullOrEmpty(ext.Aumid)) continue;
 
             // Prefer the package's PublisherDisplayName ("AMD Software",
@@ -146,6 +167,34 @@ public sealed class CascadeProtectionService
         int removed = 0;
         foreach (var scope in new[] { "Directory\\Background", "Directory" })
             removed += PurgeProtectionsIn(scope);
+        return removed;
+    }
+
+    /// <summary>
+    /// Remove the RcmmProtect_ verbs belonging to specific CLSIDs. Called when
+    /// those extensions are themselves being hidden: a protection verb written
+    /// for extension B while A was hidden becomes a stale resurrection vector
+    /// the moment the user hides B too — the verb is a real rendered menu row
+    /// and UninstallAll won't sweep it while any Background CLSID stays
+    /// blocked. Scoped to the RCMM namespace prefix, so user-authored verbs
+    /// are never touched.
+    /// </summary>
+    public int RemoveProtectionsFor(IEnumerable<string> clsids)
+    {
+        int removed = 0;
+        foreach (var clsid in clsids)
+        {
+            if (string.IsNullOrWhiteSpace(clsid)) continue;
+            var verbName = VerbPrefix + StripBraces(clsid.Trim());
+            foreach (var scope in new[] { "Directory\\Background", "Directory" })
+            {
+                var verbPath = $"Software\\Classes\\{scope}\\shell\\{verbName}";
+                if (!_reg.KeyExists(RegistryHive.CurrentUser, verbPath)) continue;
+                Log.Info(Cat, $"removing stale protection verb={verbPath} (its extension is being hidden)");
+                _reg.DeleteKey(RegistryHive.CurrentUser, verbPath);
+                removed++;
+            }
+        }
         return removed;
     }
 
