@@ -40,14 +40,36 @@ function Test-Admin {
 # Quote one argument for a Windows command line (CommandLineToArgvW rules) so a
 # folder name with spaces, ';', '&' etc. arrives as a SINGLE token and cannot
 # inject extra arguments — critical here because the target shells run ELEVATED.
-# Windows filenames can't contain '"', so the only real hazard is a run of
-# trailing backslashes (e.g. a drive root "C:\") escaping the closing quote;
-# double those. Empty string quotes to "".
+# Only a conservative allow-list of characters may skip quoting: wt.exe splits
+# subcommands on ';' even WITHOUT surrounding whitespace, and cmd / PowerShell
+# assign meaning to '&|<>(),$' and backtick — so "no whitespace" is NOT a safe
+# fast-path test. Windows filenames can't contain '"', so the only real hazard
+# once we do wrap is a run of trailing backslashes (e.g. a drive root "C:\")
+# escaping the closing quote; double those. Empty string quotes to "".
 function Quote-Arg([string]$s) {
-    if ($s -ne '' -and $s -notmatch '[\s"]') { return $s }
+    if ($s -match '^[A-Za-z0-9_\-.:\\/]+$') { return $s }
     $s = $s -replace '(\\*)"', '$1$1\"'   # escape any embedded quote (defensive)
     $s = $s -replace '(\\+)$', '$1$1'     # double trailing backslashes
     return '"' + $s + '"'
+}
+
+# The takeown verb re-launches THIS script elevated. That is only safe while
+# the script's folder rejects standard-user writes (the shipped install under
+# Program Files does): from a user-writable location — a portable copy, a dev
+# bin folder — same-integrity malware could rewrite the script between the
+# user's click and their UAC consent, turning that consent into elevation of
+# attacker content. A live write probe answers the exact question ("can code
+# running as this user modify the script?") with none of the locale / ACL-
+# inheritance pitfalls of parsing permissions. $Dir is a parameter only so
+# tests can aim the probe at a sandbox directory.
+function Test-ScriptDirUserWritable([string]$Dir = (Split-Path -Parent $PSCommandPath)) {
+    $probe = Join-Path $Dir ('.rcmm-elev-probe-' + [Guid]::NewGuid().ToString('N'))
+    try {
+        [System.IO.File]::Open($probe, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write).Dispose()
+        Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+        return $true
+    }
+    catch { return $false }
 }
 
 # Well-known SID for the local Administrators group — locale-independent, unlike
@@ -72,6 +94,10 @@ try {
         }
         'takeown' {
             if (-not (Test-Admin)) {
+                if (Test-ScriptDirUserWritable) {
+                    Notify ("Take ownership was blocked: this RCMM script sits in a user-writable folder, so elevating it would be unsafe. Reinstall RCMM under Program Files.")
+                    exit 1
+                }
                 # Re-launch this same script elevated (UAC), then exit the non-admin copy.
                 Start-Process powershell -Verb RunAs -WindowStyle Hidden -ArgumentList @(
                     '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
