@@ -15,8 +15,16 @@ namespace RCMM.Tests;
 /// startup path fires RescanAsync and can trigger ApplyPending from the template-update
 /// dialog before that scan finishes. They must be serialized. See the startup-race finding.
 /// </summary>
-public class MainViewModelSerializationTests
+public class MainViewModelSerializationTests : IDisposable
 {
+    private readonly string _tempDir =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"rcmm-ser-{Guid.NewGuid():N}");
+
+    public void Dispose()
+    {
+        try { System.IO.Directory.Delete(_tempDir, recursive: true); } catch { }
+    }
+
     [Fact]
     public void ApplyPending_waits_for_an_in_flight_Rescan_instead_of_running_concurrently()
     {
@@ -52,7 +60,7 @@ public class MainViewModelSerializationTests
         }
     }
 
-    private static MainViewModel Build(IContextMenuCaptureService capture)
+    private MainViewModel Build(IContextMenuCaptureService capture)
     {
         var reg = new FakeRegistry();
         var files = new FakeFileVersionReader();
@@ -60,6 +68,8 @@ public class MainViewModelSerializationTests
         var shellexIndex = new ShellexNameIndex(reg, resolver, files);
         return new MainViewModel(
             capture, new TargetProvider(), new VerbToRegistryMapper(reg),
-            new HideService(reg), reg, files, shellexIndex);
+            new HideService(reg), reg, files, shellexIndex,
+            knownStore: new KnownEntriesStore(
+                System.IO.Path.Combine(_tempDir, "known-entries.json")));
     }
 }

@@ -22,7 +22,10 @@ public class ContextMenuCaptureServiceTests : System.IDisposable
         try { File.Delete(_tempFile); } catch { }
     }
 
-    [Fact(Skip = "COM shell context-menu capture returns empty inside the dotnet test host (no Explorer STA message pump / reduced-privilege sandbox). Passes when run interactively as a full Windows process.")]
+    // Not a permanent [Fact(Skip=...)]: gated so the one test that exercises the
+    // real IContextMenu capture path (step 1 of the rescan pipeline) stays
+    // runnable on demand instead of being dead code forever.
+    [IntegrationFact("COM shell context-menu capture returns empty inside the plain dotnet test host (no Explorer STA message pump / reduced-privilege sandbox); run from an interactive full Windows process.")]
     public void CaptureAll_returns_items_for_a_temp_text_file()
     {
         var sut = new ContextMenuCaptureService();

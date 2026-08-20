@@ -33,9 +33,14 @@ public class MainViewModelTests : System.IDisposable
         var files = new FakeFileVersionReader();
         var resolver = new ClsidResolver(reg);
         var shellexIndex = new ShellexNameIndex(reg, resolver, files);
-        var vm = new MainViewModel(cap, _targets, mapper, hide, reg, files, shellexIndex);
+        // Temp-backed store: Rescan persists known entries unconditionally, and the
+        // default path is the developer's real %LOCALAPPDATA%\RCMM\known-entries.json.
+        var vm = new MainViewModel(cap, _targets, mapper, hide, reg, files, shellexIndex,
+            knownStore: new KnownEntriesStore(KnownStorePath()));
         return (vm, reg, cap);
     }
+
+    private string KnownStorePath() => Path.Combine(_tempRoot, "known-entries.json");
 
     private string FirstFileTarget() => _targets.GetTargets().First(p => p.EndsWith(".txt"));
 
@@ -56,6 +61,26 @@ public class MainViewModelTests : System.IDisposable
         Assert.Single(vm.AllEntries);
         Assert.Equal("Open Git Bash here", vm.AllEntries[0].DisplayName);
         Assert.True(vm.AllEntries[0].CanHide);
+    }
+
+    [Fact]
+    public void Rescan_persists_known_entries_to_the_injected_store_path()
+    {
+        // Regression guard for the test-isolation fix: MainViewModel used to
+        // hard-wire KnownEntriesStore.DefaultPath(), so every test Rescan()
+        // overwrote the developer's real known-entries.json with fake rows.
+        var (vm, reg, cap) = BuildSut();
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\git_shell", "", "Open Git Bash here");
+        var target = FirstFileTarget();
+        cap.Map[target] = new List<CapturedItem>
+        {
+            new() { TargetPath = target, Position = 0, DisplayName = "Open Git Bash here", Verb = "git_shell" }
+        };
+
+        vm.Rescan();
+
+        Assert.True(File.Exists(KnownStorePath()), "Rescan should save through the injected store");
+        Assert.Contains("Open Git Bash here", File.ReadAllText(KnownStorePath()));
     }
 
     [Fact]

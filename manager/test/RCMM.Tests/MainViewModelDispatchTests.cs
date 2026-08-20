@@ -45,7 +45,9 @@ public class MainViewModelDispatchTests : IDisposable
             new() { TargetPath = target, Position = 0, DisplayName = "Open Git Bash here", Verb = "git_shell" }
         };
 
-        return new MainViewModel(cap, _targets, mapper, hide, reg, files, shellexIndex, postToUi: postToUi);
+        return new MainViewModel(cap, _targets, mapper, hide, reg, files, shellexIndex,
+            knownStore: new KnownEntriesStore(Path.Combine(_tempRoot, "known-entries.json")),
+            postToUi: postToUi);
     }
 
     [Fact]

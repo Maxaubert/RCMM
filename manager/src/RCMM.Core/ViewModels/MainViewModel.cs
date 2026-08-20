@@ -104,7 +104,11 @@ public sealed class MainViewModel : ObservableObject
 
     private readonly AddPageViewModel? _addPage;
     private readonly AdditionApplier? _additionApplier;
-    private readonly KnownEntriesStore _knownStore = new(KnownEntriesStore.DefaultPath());
+    // Injectable so tests never write to the real %LOCALAPPDATA%\RCMM\
+    // known-entries.json — RescanCore unconditionally saves through this store,
+    // and overwriting the real file with test rows destroys the only recovery
+    // record for hidden CommandStore-only verbs (see KnownEntriesStore).
+    private readonly KnownEntriesStore _knownStore;
 
     /// <summary>View-model backing the Add page (templates / custom entries / folders).</summary>
     public AddPageViewModel? AddPage => _addPage;
@@ -133,6 +137,7 @@ public sealed class MainViewModel : ObservableObject
         AddPageViewModel? addPage = null,
         AdditionApplier? additionApplier = null,
         CascadeProtectionService? cascadeProtector = null,
+        KnownEntriesStore? knownStore = null,
         Action<Action>? postToUi = null)
     {
         _capture = capture;
@@ -150,6 +155,7 @@ public sealed class MainViewModel : ObservableObject
         _addPage = addPage;
         _additionApplier = additionApplier;
         _cascadeProtector = cascadeProtector;
+        _knownStore = knownStore ?? new KnownEntriesStore(KnownEntriesStore.DefaultPath());
         _post = postToUi ?? (a => a());
     }
 
