@@ -40,6 +40,13 @@ public sealed class MainViewModel : ObservableObject
         new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _observedClsids =
         new(StringComparer.OrdinalIgnoreCase);
+    // Which sample-file extensions each live-captured verb was observed on.
+    // MapVerb uses this to scope file-association hide targets to the
+    // registrations that actually produced the visible row — hiding a "Print"
+    // row captured on the .txt sample must not fan out to every progid on the
+    // machine that happens to carry a shell\print key. Rebuilt per rescan.
+    private readonly Dictionary<string, HashSet<string>> _verbSourceExtensions =
+        new(StringComparer.OrdinalIgnoreCase);
     // CLSIDs whose technical DisplayName the rename pass successfully replaced
     // with a friendly one. Treated like "observed" by FilterIntoAllEntries so
     // the unrelated unobserved-CLSID filter doesn't immediately re-hide the
@@ -209,6 +216,20 @@ public sealed class MainViewModel : ObservableObject
         allItems.AddRange(_capture.CaptureAll(targets));
         int liveCount = allItems.Count;
 
+        // Attribute each live-captured verb to the sample-file extensions it was
+        // seen on (container targets and registry-derived rows have none — their
+        // verbs live under scope roots, which MapVerb always checks).
+        _verbSourceExtensions.Clear();
+        foreach (var item in allItems)
+        {
+            if (string.IsNullOrEmpty(item.Verb) || item.TargetPath.StartsWith("<")) continue;
+            var ext = System.IO.Path.GetExtension(item.TargetPath);
+            if (string.IsNullOrEmpty(ext)) continue;
+            if (!_verbSourceExtensions.TryGetValue(item.Verb!, out var exts))
+                _verbSourceExtensions[item.Verb!] = exts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            exts.Add(ext);
+        }
+
         _packagedClsids.Clear();
         _packagedPublishers.Clear();
         _packagedDllByClsid.Clear();
@@ -247,7 +268,7 @@ public sealed class MainViewModel : ObservableObject
             foreach (var captured in allItems)
             {
                 if (string.IsNullOrEmpty(captured.Verb)) continue;
-                foreach (var t in _mapper.MapVerb(captured.Verb!))
+                foreach (var t in _mapper.MapVerb(captured.Verb!, SourceExtensionsFor(captured.Verb!)))
                 {
                     var hkcrPath = HkcrPathFor(t) ?? t.Path;
                     foreach (var field in new[] { "ExplorerCommandHandler", "VerbHandler", "CommandStateHandler", "CanonicalName" })
@@ -491,13 +512,28 @@ public sealed class MainViewModel : ObservableObject
         "App Resolver",
     };
 
-    // Verbs that must never be offered for hiding because disabling them breaks
-    // core navigation. "open" is the double-click / Enter action for folders,
-    // drives and files — hiding it would make the user unable to open anything,
-    // so it has no business being a toggle. Ids are "verb:" + lowercased verb.
+    // Verbs that must never be offered for hiding. "open" is the double-click /
+    // Enter action for files, folders and drives — hiding it would make the user
+    // unable to open anything. The rest are Windows' other canonical generic
+    // verbs (per the shell's verb documentation): they are registered under scope
+    // roots and shared by many unrelated progids, so a LegacyDisable on any of
+    // them reaches far past the single menu row shown here and also breaks apps
+    // that invoke the verb programmatically via ShellExecute (printing being the
+    // classic case). None of them has any business being a toggle. Ids are
+    // "verb:" + lowercased verb.
     private static readonly string[] _suppressedEntryIds =
     {
         "verb:open",
+        "verb:opennew",
+        "verb:openas",
+        "verb:edit",
+        "verb:explore",
+        "verb:find",
+        "verb:print",
+        "verb:printto",
+        "verb:properties",
+        "verb:runas",
+        "verb:runasuser",
     };
 
     private void FilterIntoAllEntries()
@@ -739,12 +775,15 @@ public sealed class MainViewModel : ObservableObject
 
     private static string ComputeId(CapturedItem item) => MergeKey(item);
 
+    private IReadOnlyCollection<string>? SourceExtensionsFor(string verb)
+        => _verbSourceExtensions.TryGetValue(verb, out var exts) ? exts : null;
+
     private IReadOnlyList<HideTarget> ResolveHideTargets(CapturedItem item)
     {
         var result = new List<HideTarget>();
         if (!string.IsNullOrEmpty(item.Verb))
         {
-            result.AddRange(_mapper.MapVerb(item.Verb!));
+            result.AddRange(_mapper.MapVerb(item.Verb!, SourceExtensionsFor(item.Verb!)));
 
             // Windows' built-in verbs (Share, Open with, Copy as path, …) live in
             // CommandStore — they don't have a per-scope <scope>\shell\<verb> key so
@@ -961,7 +1000,15 @@ public sealed class MainViewModel : ObservableObject
                     if (_reg.GetValue(t.Hive, t.Path, t.ValueName ?? "LegacyDisable") == null) return false;
                     break;
                 case HideKind.HkcuMask:
+                    // Hidden means the mask is IN EFFECT: the HKCU key exists AND its
+                    // default value is empty — that's what suppresses the handler. A
+                    // per-user-installed handler's real registration lives at exactly
+                    // this key with its CLSID as the default: it is active, not hidden.
+                    // Treating mere key-existence as hidden mislabeled such handlers
+                    // and made both toggles dead (hide looked like a no-change; unhide
+                    // was a no-op). Mirrors ClassicShellexScanner / HideService.
                     if (!_reg.KeyExists(t.Hive, t.Path)) return false;
+                    if (!string.IsNullOrEmpty(_reg.GetValue(t.Hive, t.Path, "") as string)) return false;
                     break;
                 case HideKind.BlockedShellExt:
                     if (_reg.GetValue(t.Hive, t.Path, t.ValueName!) == null) return false;

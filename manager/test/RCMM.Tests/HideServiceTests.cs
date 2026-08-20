@@ -176,6 +176,72 @@ public class HideServiceTests
         Assert.True(HideService.RequiresExplorerRestart(new[] { blocked }));
     }
 
+    // --- Un-hide must prune the empty HKCU key chain Hide implicitly created ---
+    // Hide's SetValue creates HKCU\Software\Classes\<progid>\shell\<verb> (and its
+    // parents) when the verb's real registration lives only in HKLM. Deleting just
+    // the value would leave empty shadow keys under progids RCMM does not own,
+    // which outlive the app's uninstall and can resurface as ghost menu items.
+
+    [Fact]
+    public void Unhide_LegacyDisable_prunes_the_empty_key_chain_hide_created()
+    {
+        var reg = new FakeRegistry();
+        var sut = new HideService(reg);
+        var target = new HideTarget(HideKind.LegacyDisable, RegistryHive.CurrentUser,
+            @"Software\Classes\VLC.mp4\shell\PlayWithVLC", "LegacyDisable");
+
+        sut.Hide(new[] { target });
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, @"Software\Classes\VLC.mp4\shell\PlayWithVLC"));
+
+        sut.Unhide(new[] { target });
+
+        // The whole implicitly-created chain is gone, up to (but never including)
+        // Software\Classes itself.
+        Assert.False(reg.KeyExists(RegistryHive.CurrentUser, @"Software\Classes\VLC.mp4\shell\PlayWithVLC"));
+        Assert.False(reg.KeyExists(RegistryHive.CurrentUser, @"Software\Classes\VLC.mp4\shell"));
+        Assert.False(reg.KeyExists(RegistryHive.CurrentUser, @"Software\Classes\VLC.mp4"));
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, @"Software\Classes"));
+    }
+
+    [Fact]
+    public void Unhide_LegacyDisable_keeps_keys_that_hold_real_per_user_content()
+    {
+        // The verb's real registration lives in HKCU (per-user installed app):
+        // its command subkey must survive the un-hide untouched.
+        var reg = new FakeRegistry();
+        reg.SetValue(RegistryHive.CurrentUser,
+            @"Software\Classes\VLC.mp4\shell\PlayWithVLC\command", "", "vlc.exe %1");
+        var sut = new HideService(reg);
+        var target = new HideTarget(HideKind.LegacyDisable, RegistryHive.CurrentUser,
+            @"Software\Classes\VLC.mp4\shell\PlayWithVLC", "LegacyDisable");
+
+        sut.Hide(new[] { target });
+        sut.Unhide(new[] { target });
+
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, @"Software\Classes\VLC.mp4\shell\PlayWithVLC\command"));
+        Assert.Equal("vlc.exe %1", reg.GetValue(RegistryHive.CurrentUser,
+            @"Software\Classes\VLC.mp4\shell\PlayWithVLC\command", ""));
+    }
+
+    [Fact]
+    public void Unhide_LegacyDisable_stops_pruning_at_the_first_key_with_other_values()
+    {
+        var reg = new FakeRegistry();
+        // The progid key carries an unrelated per-user value (e.g. an icon).
+        reg.SetValue(RegistryHive.CurrentUser, @"Software\Classes\VLC.mp4", "FriendlyTypeName", "VLC video");
+        var sut = new HideService(reg);
+        var target = new HideTarget(HideKind.LegacyDisable, RegistryHive.CurrentUser,
+            @"Software\Classes\VLC.mp4\shell\PlayWithVLC", "LegacyDisable");
+
+        sut.Hide(new[] { target });
+        sut.Unhide(new[] { target });
+
+        // The empty shell\<verb> chain is pruned; the progid key with content stays.
+        Assert.False(reg.KeyExists(RegistryHive.CurrentUser, @"Software\Classes\VLC.mp4\shell"));
+        Assert.True(reg.KeyExists(RegistryHive.CurrentUser, @"Software\Classes\VLC.mp4"));
+        Assert.Equal("VLC video", reg.GetValue(RegistryHive.CurrentUser, @"Software\Classes\VLC.mp4", "FriendlyTypeName"));
+    }
+
     // --- Un-hide must also clear a LegacyDisable that lives in HKLM ---
     // An early build wrote HKCR directly (lands in HKLM when elevated); admins and
     // other tools can too. Detection reads the merged HKCR view, so an HKLM-only

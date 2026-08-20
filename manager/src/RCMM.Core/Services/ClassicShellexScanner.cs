@@ -27,12 +27,18 @@ public sealed class ClassicShellexScanner
             var path = root + "\\" + name;
             var defaultVal = _reg.GetValue(RegistryHive.ClassesRoot, path, "") as string;
             // HKCU mask hide path: when the user hides a shellex entry, RCMM
-            // writes an empty key at HKCU\Software\Classes\...\<name>. That
-            // HKCU shadow wins in HKCR's merged view, so HKCR returns an empty
-            // default value here even though HKLM still carries the CLSID.
-            // Fall back to HKLM directly so the scanner can recover the CLSID
-            // and the row stays in RCMM's list (as a hidden entry the user
-            // can toggle back) instead of vanishing entirely.
+            // masks it with an empty default at HKCU\Software\Classes\...\<name>.
+            // That HKCU shadow wins in HKCR's merged view, so HKCR returns an
+            // empty default value here even though the real CLSID still exists.
+            // Recover it so the row stays in RCMM's list (as a hidden entry the
+            // user can toggle back) instead of vanishing entirely: first from
+            // the RCMM.SavedDefault stash Hide wrote into the masked key — the
+            // ONLY copy for a handler whose real registration was per-user,
+            // with no HKLM twin — then from HKLM for masked machine-wide
+            // registrations.
+            if (string.IsNullOrEmpty(defaultVal))
+                defaultVal = _reg.GetValue(RegistryHive.CurrentUser,
+                    "Software\\Classes\\" + path, HideService.SavedDefaultValueName) as string;
             if (string.IsNullOrEmpty(defaultVal))
                 defaultVal = _reg.GetValue(RegistryHive.LocalMachine,
                     "Software\\Classes\\" + path, "") as string;
