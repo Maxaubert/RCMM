@@ -27,7 +27,7 @@ namespace RCMM.Core.Services;
 /// Runs on its own STA worker with a per-handler try/catch and a global cap on
 /// the batch. Failures are logged and the handler is just left out of the index.
 /// </summary>
-public sealed class ShellexInvoker
+public sealed class ShellexInvoker : IShellexInvoker
 {
     private const string Cat = "shellexinvoker";
 

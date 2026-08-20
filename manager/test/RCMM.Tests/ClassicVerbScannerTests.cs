@@ -36,14 +36,31 @@ public class ClassicVerbScannerTests
     }
 
     [Fact]
-    public void Scan_drops_verb_when_no_display_name()
+    public void Scan_falls_back_to_key_name_when_no_display_value_at_all()
     {
         var reg = new FakeRegistry();
         reg.CreateKey(RegistryHive.ClassesRoot, @"*\shell\runme");
         var sut = MakeSut(reg);
 
-        // No default value and no MUIVerb => entry is dropped rather than using key name as fallback.
-        Assert.Empty(sut.Scan(Scope.Files));
+        // No default value and no MUIVerb: Explorer renders the key name, so the
+        // scanner must too — dropping the verb made one that was pre-hidden by
+        // another tool unrecoverable from RCMM (review b04, finding 34).
+        var entry = sut.Scan(Scope.Files).Single();
+        Assert.Equal("runme", entry.DisplayName);
+        Assert.Equal(EntryKind.ShellVerb, entry.Kind);
+    }
+
+    [Fact]
+    public void Scan_discovers_pre_hidden_key_name_only_verb_as_hidden()
+    {
+        var reg = new FakeRegistry();
+        // A tweak script wrote LegacyDisable on a verb that has no display value.
+        reg.SetValue(RegistryHive.ClassesRoot, @"Directory\shell\OpenWithVSCode", "LegacyDisable", "");
+        var sut = MakeSut(reg);
+
+        var entry = sut.Scan(Scope.Folders).Single();
+        Assert.Equal("OpenWithVSCode", entry.DisplayName);
+        Assert.True(entry.IsHidden);
     }
 
     [Fact]

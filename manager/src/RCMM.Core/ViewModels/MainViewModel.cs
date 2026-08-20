@@ -22,7 +22,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly PackagedShellExtScanner? _packagedScanner;
     private readonly CommandStoreVerbIndex? _commandStore;
     private readonly ShellexKeyNameIndex? _shellexKey;
-    private readonly ShellexInvoker? _shellexInvoker;
+    private readonly IShellexInvoker? _shellexInvoker;
 
     // Posts an action to the UI thread. Defaults to inline execution so tests
     // and headless callers run synchronously; the app injects a DispatcherQueue
@@ -47,10 +47,17 @@ public sealed class MainViewModel : ObservableObject
     // machine that happens to carry a shell\print key. Rebuilt per rescan.
     private readonly Dictionary<string, HashSet<string>> _verbSourceExtensions =
         new(StringComparer.OrdinalIgnoreCase);
-    // CLSIDs whose technical DisplayName the rename pass successfully replaced
-    // with a friendly one. Treated like "observed" by FilterIntoAllEntries so
+    // CLSIDs whose technical DisplayName the rename pass replaced via a TRUSTED
+    // source — IExplorerCommand::GetTitle, CommandStore derivation, or the
+    // static override table. Treated like "observed" by FilterIntoAllEntries so
     // the unrelated unobserved-CLSID filter doesn't immediately re-hide the
     // row we just made readable (Modern Share, Defender Scan, NVIDIA, ...).
+    // Renames sourced ONLY from probe emissions are deliberately NOT added:
+    // conditional/informational handlers (Work Folders, Launches Sync Center,
+    // …) emit plausible menu text during a probe without ever contributing to
+    // a real menu, and exempting them resurrected exactly the phantom rows the
+    // unobserved-CLSID filter exists to remove — an effect the old
+    // English-literal suppression list could only patch on English Windows.
     private readonly HashSet<string> _renamedClsids =
         new(StringComparer.OrdinalIgnoreCase);
 
@@ -140,7 +147,7 @@ public sealed class MainViewModel : ObservableObject
         PackagedShellExtScanner? packagedScanner = null,
         CommandStoreVerbIndex? commandStore = null,
         ShellexKeyNameIndex? shellexKey = null,
-        ShellexInvoker? shellexInvoker = null,
+        IShellexInvoker? shellexInvoker = null,
         AddPageViewModel? addPage = null,
         AdditionApplier? additionApplier = null,
         CascadeProtectionService? cascadeProtector = null,
@@ -305,7 +312,8 @@ public sealed class MainViewModel : ObservableObject
             //      "WindowsTerminalShellExt").
             //   3. Registry-reported DisplayName as a last resort.
             var liveTitle = _shellexInvoker?.LookupTitle(pkg.Clsid);
-            var display = !string.IsNullOrWhiteSpace(liveTitle) ? liveTitle!
+            bool titleIsMenuText = !string.IsNullOrWhiteSpace(liveTitle);
+            var display = titleIsMenuText ? liveTitle!
                         : LooksTechnical(pkg.DisplayName) ? pkg.PublisherDisplayName
                         : pkg.DisplayName;
 
@@ -314,6 +322,10 @@ public sealed class MainViewModel : ObservableObject
                 TargetPath = $"<packaged:{pkg.PackageFullName}>",
                 Position = pos++,
                 DisplayName = display,
+                // GetTitle is the exact string the shell renders, so the
+                // technical-name filter must not judge it — "PowerRename"
+                // reads like a class identifier but IS the menu entry.
+                DisplayNameIsMenuText = titleIsMenuText,
                 OwnerClsid = pkg.Clsid,
                 IsSeparator = false,
                 IsSubmenu = false
@@ -349,6 +361,14 @@ public sealed class MainViewModel : ObservableObject
         for (int i = 0; i < allItems.Count; i++)
         {
             var item = allItems[i];
+            // A live-captured row's DisplayName is whatever Explorer actually
+            // rendered — real menu text by definition, however identifier-like
+            // it reads ("TeraCopy...", "WinMerge"). Mark the provenance now so
+            // FilterIntoAllEntries never discards it as a technical label.
+            // Registry/packaged placeholder rows ("<registry:..>", "<packaged:..>")
+            // carry fallback names the heuristic is allowed to judge.
+            if (!item.TargetPath.StartsWith("<") && !item.DisplayNameIsMenuText)
+                item = item with { DisplayNameIsMenuText = true };
             if (string.IsNullOrEmpty(item.OwnerClsid))
             {
                 if (nameIndex.TryGetValue(item.DisplayName, out var nameClsid))
@@ -381,28 +401,79 @@ public sealed class MainViewModel : ObservableObject
                 //       (Defender, NVIDIA) that don't probe and have no CommandStore
                 //       entry; their menu text is well-known and stable enough to
                 //       hardcode rather than leave the row hidden.
+                //   (5) Last resort: re-try the emitted-names / GetTitle sources
+                //       accepting a CamelCase result. When a handler's true menu
+                //       title IS a single-token brand name ("TeraCopy...",
+                //       "PowerRename"), every earlier candidate was rejected by
+                //       the camel-case rule even though the text is exactly what
+                //       Explorer renders; only outright class LABELS ("...Shell
+                //       Extension") stay rejected. Skipped for rows already
+                //       carrying live menu text — replacing a captured string
+                //       with a sibling emission would mislabel the row.
+                //
+                // Trust levels: GetTitle / CommandStore / override renames mark
+                // the CLSID as trusted (_renamedClsids); emission-only renames
+                // don't — see the _renamedClsids comment for why. Emitted names
+                // and GetTitle results are real menu text, so they also set the
+                // provenance flag that shields the row from the technical-name
+                // filter.
+                bool renameIsTrusted = false;
+                bool renameIsMenuText = false;
                 string? renamed = _shellexInvoker?.LookupEmittedNames(item.OwnerClsid)
                     .FirstOrDefault(n => !string.IsNullOrWhiteSpace(n) && !LooksTechnical(n));
+                if (!string.IsNullOrWhiteSpace(renamed))
+                    renameIsMenuText = true;
                 if (string.IsNullOrWhiteSpace(renamed))
                 {
                     var title = _shellexInvoker?.LookupTitle(item.OwnerClsid);
                     if (!string.IsNullOrWhiteSpace(title) && !LooksTechnical(title!))
+                    {
                         renamed = title;
+                        renameIsTrusted = true;
+                        renameIsMenuText = true;
+                    }
                 }
                 if (string.IsNullOrWhiteSpace(renamed))
                 {
                     var cs = _commandStore?.FriendlyTitleForClsid(item.OwnerClsid);
                     if (!string.IsNullOrWhiteSpace(cs) && !LooksTechnical(cs!))
+                    {
                         renamed = cs;
+                        renameIsTrusted = true;
+                    }
                 }
                 if (string.IsNullOrWhiteSpace(renamed)
                     && _technicalDisplayNameOverrides.TryGetValue(item.DisplayName, out var hardcoded))
+                {
                     renamed = hardcoded;
+                    renameIsTrusted = true;
+                    renameIsMenuText = true;
+                }
+                if (string.IsNullOrWhiteSpace(renamed) && !item.DisplayNameIsMenuText)
+                {
+                    renamed = _shellexInvoker?.LookupEmittedNames(item.OwnerClsid)
+                        .FirstOrDefault(n => !string.IsNullOrWhiteSpace(n) && !LooksTechnicalLabel(n));
+                    if (string.IsNullOrWhiteSpace(renamed))
+                    {
+                        var title = _shellexInvoker?.LookupTitle(item.OwnerClsid);
+                        if (!string.IsNullOrWhiteSpace(title) && !LooksTechnicalLabel(title!))
+                        {
+                            renamed = title;
+                            renameIsTrusted = true;
+                        }
+                    }
+                    if (!string.IsNullOrWhiteSpace(renamed))
+                        renameIsMenuText = true;
+                }
 
                 if (!string.IsNullOrWhiteSpace(renamed))
                 {
-                    item = item with { DisplayName = renamed! };
-                    _renamedClsids.Add(item.OwnerClsid!);
+                    item = item with
+                    {
+                        DisplayName = renamed!,
+                        DisplayNameIsMenuText = item.DisplayNameIsMenuText || renameIsMenuText
+                    };
+                    if (renameIsTrusted) _renamedClsids.Add(item.OwnerClsid!);
                 }
             }
 
@@ -440,7 +511,11 @@ public sealed class MainViewModel : ObservableObject
             // "Create shortcut" ships in shell32 but its hide-target classification
             // doesn't always resolve to a Windows DLL probe (the verb's CLSID handler
             // may live elsewhere), so force it into the Windows-specific bucket.
-            if (string.Equals(effectiveItem.DisplayName, "Create shortcut", StringComparison.OrdinalIgnoreCase))
+            // Match the canonical verb id ("link") first — the menu text is
+            // localized, so the English literal only fires on English Windows.
+            // A non-match on both is harmless: the row just isn't force-bucketed.
+            if (string.Equals(effectiveItem.Verb, "link", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(effectiveItem.DisplayName, "Create shortcut", StringComparison.OrdinalIgnoreCase))
                 isBuiltIn = true;
             var entry = new MenuEntry
             {
@@ -452,7 +527,8 @@ public sealed class MainViewModel : ObservableObject
                 HideTargets = hideTargets,
                 IsBuiltIn = isBuiltIn,
                 IsHidden = isHidden,
-                IsSubmenu = effectiveItem.IsSubmenu
+                IsSubmenu = effectiveItem.IsSubmenu,
+                DisplayNameIsMenuText = effectiveItem.DisplayNameIsMenuText
             };
             var row = new EntryRowViewModel(entry) { HiddenChanged = OnRowToggled };
             _allRows.Add(row);
@@ -503,6 +579,13 @@ public sealed class MainViewModel : ObservableObject
         });
     }
 
+    // English-literal belt-and-braces for informational rows that reach the
+    // list WITHOUT a CLSID key (live-captured or name-keyed), where the
+    // structural unobserved-CLSID filter below can't act. For CLSID-keyed rows
+    // the structural condition — emission-only rename, never observed live —
+    // is what removes these handlers, and it works in every locale; a
+    // non-match here on non-English Windows is therefore tolerable, not a
+    // phantom-row hole.
     private static readonly string[] _suppressedDisplayNames =
     {
         "File ownership",
@@ -550,7 +633,18 @@ public sealed class MainViewModel : ObservableObject
             // Hide rows whose DisplayName is a technical class label — those are
             // FileDescriptions like "Windows Shell Common Dll" / "Microsoft Security
             // Client Shell Extension" that don't correspond to a real menu option.
-            if (LooksTechnical(row.Entry.DisplayName)) continue;
+            // Two exemptions:
+            //   (a) names with menu-text provenance (live capture, GetTitle,
+            //       probe emissions) — a CamelCase brand name ("TeraCopy...",
+            //       "PowerRename") trips the heuristic but is exactly what the
+            //       user sees in Explorer, and dropping it made the entry
+            //       silently unmanageable;
+            //   (b) currently-hidden rows — this list is the only recovery path
+            //       for a verb hidden before RCMM ever saw it (key-name-only
+            //       verbs disabled by a tweak script), mirroring the IsHidden
+            //       clause in the CLSID branch below.
+            if (!row.Entry.DisplayNameIsMenuText && !row.Entry.IsHidden
+                && LooksTechnical(row.Entry.DisplayName)) continue;
             // Hide CLSID-keyed rows that are neither packaged nor "observed" — i.e.,
             // shellexes whose handler wasn't attached to any live capture AND didn't
             // emit anything during invoker probing. These are conditional handlers
@@ -683,7 +777,10 @@ public sealed class MainViewModel : ObservableObject
     /// Hardcoded display names for CommandStore verbs whose menu text is
     /// localised by Windows and not derivable from the verb key. Keeps the
     /// recovered ghost entry's label close to what the user actually saw in
-    /// their right-click menu before they hid it.
+    /// their right-click menu before they hid it. Keyed by the stable verb
+    /// key, so lookups never depend on locale; on non-English Windows the
+    /// label is merely English (cosmetic) — the ghost row itself still
+    /// appears and its un-hide toggle still works.
     /// </summary>
     private static readonly Dictionary<string, string> _wellKnownVerbDisplayNames
         = new(StringComparer.OrdinalIgnoreCase)
@@ -729,11 +826,16 @@ public sealed class MainViewModel : ObservableObject
             }
 
             // Rebuild the winner's MenuEntry with merged hide targets so the toggle
-            // semantics (CanHide, IsHidden) reflect the combined state.
+            // semantics (CanHide, IsHidden) reflect the combined state. The group
+            // shares one display name, so if ANY member carries menu-text
+            // provenance the merged row does too — otherwise collapsing a
+            // flagged live row into an unflagged registry twin would re-expose
+            // the name to the technical filter.
             var newEntry = winner.Entry with
             {
                 HideTargets = unionTargets,
-                IsHidden = AllTargetsHidden(unionTargets)
+                IsHidden = AllTargetsHidden(unionTargets),
+                DisplayNameIsMenuText = group.Any(r => r.Entry.DisplayNameIsMenuText)
             };
             var idx = _allRows.IndexOf(winner);
             var rebuilt = new EntryRowViewModel(newEntry) { HiddenChanged = OnRowToggled };
@@ -1030,12 +1132,7 @@ public sealed class MainViewModel : ObservableObject
     private static bool LooksTechnical(string s)
     {
         if (string.IsNullOrEmpty(s)) return true;
-        var lower = s.ToLowerInvariant();
-        if (lower.Contains("shell extension") || lower.Contains("shellext")
-            || lower.Contains("shell common dll") || lower.Contains("common dll")
-            || lower.Contains("property page") || lower.Contains("context menu extension")
-            || lower.Contains("verb handler") || lower.Contains("context menu verb handler"))
-            return true;
+        if (LooksTechnicalLabel(s)) return true;
         // CamelCase identifier (one token, mixed case)
         if (!s.Contains(' ') && s.Length >= 8)
         {
@@ -1048,6 +1145,24 @@ public sealed class MainViewModel : ObservableObject
             if (hasLower && hasUpper) return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// The substring half of <see cref="LooksTechnical"/>: unambiguous class
+    /// LABELS ("…Shell Extension", "…Property Page") that no shell menu ever
+    /// renders as an entry. Split out so text with menu provenance (live
+    /// captures, probe emissions, GetTitle results) can be screened against
+    /// only this — the camel-case rule is a guess about identifiers and must
+    /// not veto a brand name the shell demonstrably displays.
+    /// </summary>
+    private static bool LooksTechnicalLabel(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return true;
+        var lower = s.ToLowerInvariant();
+        return lower.Contains("shell extension") || lower.Contains("shellext")
+            || lower.Contains("shell common dll") || lower.Contains("common dll")
+            || lower.Contains("property page") || lower.Contains("context menu extension")
+            || lower.Contains("verb handler") || lower.Contains("context menu verb handler");
     }
 
     /// <summary>

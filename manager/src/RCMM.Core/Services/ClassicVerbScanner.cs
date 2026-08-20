@@ -31,7 +31,22 @@ public sealed class ClassicVerbScanner
 
             var resolved = _mui.Resolve(muiVerb) ?? _mui.Resolve(rawDisplay);
             if (string.IsNullOrWhiteSpace(resolved))
-                continue;  // no friendly display; drop
+            {
+                // A verb with neither a default value nor MUIVerb still renders
+                // in Explorer — as the key name itself (a common hand-written
+                // registry-tweak pattern). Dropping it here made a verb that was
+                // pre-hidden by another tool (LegacyDisable written before RCMM
+                // ever scanned) unrecoverable from the UI: the live capture
+                // can't see a disabled verb, and this scan was its only other
+                // discovery path. Fall back to the key name; the visible-list
+                // filter still applies its normal rules to the result. A verb
+                // whose display value merely failed MUI resolution stays
+                // dropped — the author intended a localized label we can't
+                // reproduce, and guessing the key name would mislabel it.
+                if (!string.IsNullOrWhiteSpace(muiVerb) || !string.IsNullOrWhiteSpace(rawDisplay))
+                    continue;
+                resolved = name;
+            }
 
             var display = StripAccelerator(resolved);
             var hidden = _reg.GetValue(RegistryHive.ClassesRoot, path, "LegacyDisable") != null;
