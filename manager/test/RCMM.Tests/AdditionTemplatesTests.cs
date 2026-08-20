@@ -26,6 +26,18 @@ public class AdditionTemplatesTests
     }
 
     [Fact]
+    public void Template_ids_are_unique_and_slug_shaped()
+    {
+        // Id is the durable key for template-update tracking in additions.json —
+        // a collision would make two templates fight over the same user entries,
+        // and a non-slug shape would mean someone bypassed Template.Slug.
+        var ids = AdditionTemplates.All.Select(t => t.Id).ToList();
+        Assert.Equal(ids.Count, ids.Distinct(System.StringComparer.Ordinal).Count());
+        foreach (var id in ids)
+            Assert.Matches("^[a-z0-9]+(-[a-z0-9]+)*$", id);
+    }
+
+    [Fact]
     public void Commands_are_bare_no_cmd_wrapper()
     {
         foreach (var t in AdditionTemplates.All)

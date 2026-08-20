@@ -201,16 +201,23 @@ public sealed partial class SettingsPage : Page
                 // (double Explorer restart, doubled rescan). Chains queue, so
                 // the settings apply is never silently dropped.
                 bool touched = additionsTouched, restart = restartExplorer;
+                System.Collections.Generic.IReadOnlyList<string> applyErrors = System.Array.Empty<string>();
                 Func<Task> chain = async () =>
                 {
                     if (touched)
-                        await Task.Run(() => _args.ViewModel.ApplyPending());   // writes registry + saves additions.json
+                        applyErrors = await Task.Run(() => _args.ViewModel.ApplyPending());   // writes registry + saves additions.json
                     if (restart)
                         await Task.Run(() => new ExplorerRestart().Restart());
                     if (touched)
                         await _args.ViewModel.RescanAsync();
                 };
-                if (App.MainWindow is MainWindow mw) await mw.RunApplyChainAsync(chain);
+                if (App.MainWindow is MainWindow mw)
+                {
+                    await mw.RunApplyChainAsync(chain);
+                    // A failed registry write must not hide behind the settings page's
+                    // "applied" re-baseline below — tell the user what didn't land.
+                    await mw.ShowApplyErrorsAsync(applyErrors);
+                }
                 else await chain();
             }
 

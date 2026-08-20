@@ -27,12 +27,18 @@ public sealed class SettingsStore
 
     public AppSettings Load()
     {
+        if (!File.Exists(_path)) return new AppSettings();
         try
         {
-            if (File.Exists(_path))
-                return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(_path), _opts) ?? new AppSettings();
+            var loaded = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(_path), _opts);
+            if (loaded != null) return loaded;
+            Log.Warn(Cat, $"deserialize returned null ({_path})");
         }
         catch (Exception ex) { Log.Error(Cat, $"load failed ({_path}): {ex.Message}"); }
+        // Unreadable ≠ absent: keep a copy before the next Save overwrites the
+        // file, so a corrupt-or-locked settings.json can still be hand-recovered.
+        try { File.Copy(_path, _path + ".bad", overwrite: true); Log.Warn(Cat, $"backed up unreadable file to {_path}.bad"); }
+        catch (Exception ex) { Log.Error(Cat, $"backup of unreadable file failed: {ex.Message}"); }
         return new AppSettings();
     }
 
@@ -42,7 +48,14 @@ public sealed class SettingsStore
         {
             var dir = Path.GetDirectoryName(_path);
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-            File.WriteAllText(_path, JsonSerializer.Serialize(settings, _opts));
+            // Atomic write-tmp-then-rename, same as AdditionStore/KnownEntriesStore:
+            // a crash mid-write must not leave settings.json truncated (Load would
+            // then silently revert RestartExplorerOnApply / DefaultTerminal to
+            // defaults with no signal to the user).
+            var tmp = _path + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(settings, _opts));
+            if (File.Exists(_path)) File.Replace(tmp, _path, null);
+            else File.Move(tmp, _path);
             Log.Info(Cat, $"saved (restartExplorerOnApply={settings.RestartExplorerOnApply})");
         }
         catch (Exception ex) { Log.Error(Cat, $"save failed ({_path}): {ex.Message}"); }

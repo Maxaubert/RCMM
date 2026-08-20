@@ -37,14 +37,25 @@ public static class BinaryResolver
     }
 
     private static string? SearchPath(string name)
+        => SearchPath(name, Environment.GetEnvironmentVariable("PATH"));
+
+    // internal (not private) so tests can probe a synthetic %PATH% without
+    // mutating the process environment out from under parallel test classes.
+    internal static string? SearchPath(string name, string? pathEnv)
     {
-        var pathEnv = Environment.GetEnvironmentVariable("PATH");
         if (string.IsNullOrEmpty(pathEnv)) return null;
         foreach (var dir in pathEnv.Split(';', StringSplitOptions.RemoveEmptyEntries))
         {
             try
             {
-                var full = Path.Combine(dir.Trim(), name);
+                // Windows accepts quoted PATH entries ("C:\Program Files\Git\cmd");
+                // cmd.exe and SearchPathW resolve through them, so a user's shell
+                // finds the binary while a naive Path.Combine builds "\"C:\...\"\name"
+                // — a path File.Exists always rejects. Strip the surrounding quotes
+                // before probing so quoted-only locations still resolve.
+                var cleaned = dir.Trim().Trim('"').Trim();
+                if (cleaned.Length == 0) continue;
+                var full = Path.Combine(cleaned, name);
                 if (File.Exists(full)) return full;
             }
             catch { /* malformed path entry → skip */ }

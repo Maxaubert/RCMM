@@ -21,6 +21,30 @@ public static class AdditionTemplates
     public sealed record Template
     {
         public required string Name { get; init; }
+
+        private readonly string? _id;
+        /// <summary>Stable identity used for template-update tracking
+        /// (<see cref="Models.AdditionEntry.SourceTemplateId"/>). Defaults to a slug
+        /// of <see cref="Name"/> so the catalogue needs no boilerplate — but that
+        /// default moves when the Name does. When RENAMING a template, set Id
+        /// explicitly to its previous slug, otherwise every existing user entry
+        /// silently stops receiving that template's updates.</summary>
+        public string Id { get => _id ?? Slug(Name); init => _id = value; }
+
+        /// <summary>"PowerShell here" → "powershell-here": lowercase, runs of
+        /// non-alphanumerics collapse to single dashes.</summary>
+        public static string Slug(string name)
+        {
+            var sb = new System.Text.StringBuilder(name.Length);
+            foreach (var c in name.ToLowerInvariant())
+            {
+                if (char.IsAsciiLetterOrDigit(c)) sb.Append(c);
+                else if (sb.Length > 0 && sb[^1] != '-') sb.Append('-');
+            }
+            while (sb.Length > 0 && sb[^1] == '-') sb.Length--;
+            return sb.ToString();
+        }
+
         public required string Command { get; init; }
         public required string Ecosystem { get; init; }
         public required AdditionScope Scope { get; init; }

@@ -136,18 +136,20 @@ public class AdditionStoreTests
                      {""id"":""e2"",""name"":""git pull"",""command"":""git pull"",""workingDir"":""%V"",""scope"":""folderBackground"",""runMode"":""visibleTerminal"",""sourceTemplateId"":""git pull"",""appliedTemplateHash"":""x"",""hidden"":true,""folderId"":""f1""}]}");
             var state = new AdditionStore(path).Load();
 
-            Assert.Equal(5, state.SchemaVersion);
+            Assert.Equal(AdditionState.CurrentSchemaVersion, state.SchemaVersion);
             var survivor = Assert.Single(state.Entries);
             Assert.Equal("e2", survivor.Id);
             Assert.True(survivor.Hidden);
             Assert.Equal("f1", survivor.FolderId);
+            // v6 re-keys the Name-based source id to the template's stable slug.
+            Assert.Equal("git-pull", survivor.SourceTemplateId);
             Assert.Single(state.Folders);
         }
         finally { if (File.Exists(path)) File.Delete(path); }
     }
 
     [Fact]
-    public void Load_migrates_v1_all_the_way_to_v5()
+    public void Load_migrates_v1_all_the_way_to_current()
     {
         // v3 stamps "npm run dev" (name + structural match against the built-in
         // template) as template-derived, so v5 keeps it; "My own thing" matches
@@ -163,10 +165,11 @@ public class AdditionStoreTests
                      {""id"":""e2"",""name"":""My own thing"",""command"":""calc.exe"",""workingDir"":""%V"",""scope"":""folderBackground"",""runMode"":""background""}]}");
             var state = new AdditionStore(path).Load();
 
-            Assert.Equal(5, state.SchemaVersion);
+            Assert.Equal(AdditionState.CurrentSchemaVersion, state.SchemaVersion);
             var survivor = Assert.Single(state.Entries);
             Assert.Equal("e1", survivor.Id);
-            Assert.Equal("npm run dev", survivor.SourceTemplateId);
+            // v3 stamps the stable slug id directly (v6 scheme).
+            Assert.Equal("npm-run-dev", survivor.SourceTemplateId);
             Assert.Single(state.Folders);
         }
         finally { if (File.Exists(path)) File.Delete(path); }
@@ -227,6 +230,88 @@ public class AdditionStoreTests
             var state = new AdditionStore(path).Load(out var dropped);
             Assert.False(dropped);
             Assert.Empty(state.Entries);
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    // ----- absent-vs-unreadable distinction (data-loss guard) -----
+
+    [Fact]
+    public void Load_flags_failure_and_backs_up_file_when_json_corrupt()
+    {
+        // A file that exists but can't be parsed must (a) be flagged so Apply can
+        // refuse to purge based on the empty stand-in state, and (b) be copied to
+        // .bad before any Save can overwrite the only copy of the user's data.
+        var path = TempFile();
+        try
+        {
+            File.WriteAllText(path, "{not valid json");
+            var state = new AdditionStore(path).Load(out _, out var loadFailed);
+
+            Assert.True(loadFailed);
+            Assert.Empty(state.Entries);
+            Assert.True(File.Exists(path + ".bad"), ".bad backup should exist");
+            Assert.Equal("{not valid json", File.ReadAllText(path + ".bad"));
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+            if (File.Exists(path + ".bad")) File.Delete(path + ".bad");
+        }
+    }
+
+    [Fact]
+    public void Load_does_not_flag_failure_when_file_missing()
+    {
+        var path = TempFile();
+        var state = new AdditionStore(path).Load(out _, out var loadFailed);
+        Assert.False(loadFailed);
+        Assert.Empty(state.Entries);
+        Assert.False(File.Exists(path + ".bad"));
+    }
+
+    // ----- schemaVersion default + v6 identity migration -----
+
+    [Fact]
+    public void Load_treats_missing_schemaVersion_as_oldest_schema_and_runs_migrations()
+    {
+        // Regression: SchemaVersion used to default to CurrentSchemaVersion when
+        // the JSON field was absent (hand-edited file), silently skipping every
+        // migration. The hand-authored entry below is only dropped if the v5
+        // migration actually ran.
+        var path = TempFile();
+        try
+        {
+            File.WriteAllText(path,
+                @"{""entries"":[
+                     {""id"":""e1"",""name"":""My own thing"",""command"":""calc.exe"",""workingDir"":""%V"",""scope"":""folderBackground"",""runMode"":""background""}]}");
+            var state = new AdditionStore(path).Load();
+
+            Assert.Equal(AdditionState.CurrentSchemaVersion, state.SchemaVersion);
+            Assert.Empty(state.Entries);   // proof the v5 drop ran
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
+    public void Load_migrates_v5_name_based_source_ids_to_stable_slugs()
+    {
+        // v5 documents key SourceTemplateId by template display Name; v6 re-keys
+        // to the stable slug Id so renaming a template can't sever tracking.
+        // An id matching no current template (removed template) is left as-is.
+        var path = TempFile();
+        try
+        {
+            File.WriteAllText(path,
+                @"{""schemaVersion"":5,
+                   ""entries"":[
+                     {""id"":""e1"",""name"":""PowerShell here"",""command"":""wt -d x powershell"",""workingDir"":""%V"",""scope"":""folderBackground"",""runMode"":""background"",""sourceTemplateId"":""PowerShell here"",""appliedTemplateHash"":""x""},
+                     {""id"":""e2"",""name"":""Gone"",""command"":""x"",""workingDir"":""%V"",""scope"":""folderBackground"",""runMode"":""background"",""sourceTemplateId"":""Removed template"",""appliedTemplateHash"":""x""}]}");
+            var state = new AdditionStore(path).Load();
+
+            Assert.Equal(AdditionState.CurrentSchemaVersion, state.SchemaVersion);
+            Assert.Equal("powershell-here", System.Linq.Enumerable.Single(state.Entries, e => e.Id == "e1").SourceTemplateId);
+            Assert.Equal("Removed template", System.Linq.Enumerable.Single(state.Entries, e => e.Id == "e2").SourceTemplateId);
         }
         finally { if (File.Exists(path)) File.Delete(path); }
     }

@@ -115,6 +115,33 @@ public sealed partial class MainWindow : Window
         {
             if (_templateUpdatesChecked) return;
             _templateUpdatesChecked = true;
+            // additions.json unreadable at startup: warn before anything else. The
+            // Add page shows a stub, and Apply refuses additions until a restart
+            // reloads the file — the user must hear that from us, not discover it
+            // after their edits appear to vanish.
+            if (ViewModel.AddPage?.LoadFailed == true)
+            {
+                try
+                {
+                    await new ContentDialog
+                    {
+                        Title = "Your added entries could not be loaded",
+                        Content = new TextBlock
+                        {
+                            Text = "additions.json exists but could not be read, so the Add page looks empty. "
+                                 + "Your data is untouched (a backup copy was saved as additions.json.bad), and "
+                                 + "Apply will refuse to write added entries this session to protect it.\n\n"
+                                 + "Restart RCMM to retry loading.",
+                            TextWrapping = TextWrapping.Wrap,
+                        },
+                        CloseButtonText = "OK",
+                        XamlRoot = RootGrid.XamlRoot,
+                        RequestedTheme = ElementTheme.Dark,
+                    }.ShowAsync();
+                }
+                catch (Exception ex) { Log.Error("addstore", "load-failure warning dialog failed", ex); }
+                return;   // skip the template-update offer — its Apply path is refused anyway
+            }
             try { await TemplateUpdatesDialog.RunAsync(ViewModel, RootGrid.XamlRoot, manual: false); }
             catch (Exception ex) { Log.Error("tplupd", "startup template-update check failed", ex); }
         };
@@ -245,9 +272,10 @@ public sealed partial class MainWindow : Window
         if (_busy) return;
         try
         {
+            System.Collections.Generic.IReadOnlyList<string> errors = System.Array.Empty<string>();
             await RunApplyChainAsync(async () =>
             {
-                await Task.Run(() => ViewModel.ApplyPending());
+                errors = await Task.Run(() => ViewModel.ApplyPending());
                 // Honor the "Restart Explorer automatically" setting. Off = write the
                 // registry but leave Explorer alone (some changes then show only after
                 // the user restarts Explorer or signs out).
@@ -255,8 +283,33 @@ public sealed partial class MainWindow : Window
                     await Task.Run(() => new ExplorerRestart().Restart());
                 await ViewModel.RescanAsync();
             });
+            // After the chain (never inside it — the gate must release first):
+            // a failed write used to vanish into rcmm.log while Explorer restarted
+            // and the UI looked freshly applied.
+            await ShowApplyErrorsAsync(errors);
         }
         catch (Exception ex) { Log.Error("apply", "apply/rescan failed", ex); }
+    }
+
+    /// <summary>Tell the user which apply operations failed. No-op on success.</summary>
+    public async Task ShowApplyErrorsAsync(System.Collections.Generic.IReadOnlyList<string> errors)
+    {
+        if (errors.Count == 0) return;
+        try
+        {
+            var dialog = new ContentDialog
+            {
+                Title = "Some changes were not applied",
+                Content = new TextBlock { Text = string.Join("\n\n", errors), TextWrapping = TextWrapping.Wrap },
+                CloseButtonText = "OK",
+                XamlRoot = RootGrid.XamlRoot,
+                RequestedTheme = ElementTheme.Dark,
+            };
+            await dialog.ShowAsync();
+        }
+        // ShowAsync throws COMException when another dialog is already open; the
+        // errors are still in rcmm.log, so degrade to logging rather than crashing.
+        catch (Exception ex) { Log.Error("apply", "apply-error dialog failed", ex); }
     }
 
 private void LoadIconsForAllEntries()

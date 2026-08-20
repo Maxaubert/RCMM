@@ -129,23 +129,30 @@ public static class TemplateUpdatesDialog
             // Routed through MainWindow's apply gate so this multi-second chain
             // can't overlap the footer Apply's (double Explorer restart, doubled
             // rescan).
+            IReadOnlyList<string> errors = Array.Empty<string>();
             Func<Task> chain = async () =>
             {
-                await Task.Run(() => vm.ApplyPending());
+                errors = await Task.Run(() => vm.ApplyPending());
                 await Task.Run(() => new ExplorerRestart().Restart());
                 await vm.RescanAsync();
             };
             if (App.MainWindow is MainWindow mw) await mw.RunApplyChainAsync(chain);
             else await chain();
+            // Surface apply failures — without this the Explorer restart + rescan
+            // above made a failed registry write look like a successful update.
+            if (errors.Count > 0)
+                await InfoAsync(root, "Some updates were not applied", string.Join("\n\n", errors));
         }
         else if (result == ContentDialogResult.Secondary)
         {
-            foreach (var u in updates)
-                vm.AddPage.ReplaceEntry(TemplateUpdateService.MarkSkipped(u.Entry, u.Template));
-            Log.Info("tplupd", $"skipped {updates.Count} update(s)");
-            // Skip only changes tracking metadata — persist, no registry write needed.
-            new AdditionStore(AdditionStore.DefaultPath()).Save(vm.AddPage.Snapshot());
-            vm.AddPage.MarkClean();
+            Log.Info("tplupd", $"skipping {updates.Count} update(s)");
+            // Records skip markers and persists them — but only marks the page
+            // clean when the skips are the sole pending change (see the method:
+            // MarkClean over foreign pending state disarmed the v5 migration's
+            // cleanup re-arm and stranded unapplied user edits). Persisting goes
+            // through the page's injected store, never AdditionStore.DefaultPath()
+            // — see AddPageViewModel.Save's doc comment.
+            vm.AddPage.SkipTemplateUpdates(updates);
         }
         // "Later" (CloseButton): leave everything pending; prompt again next launch.
     }

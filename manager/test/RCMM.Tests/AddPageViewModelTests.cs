@@ -358,6 +358,88 @@ public class AddPageViewModelTests
     }
 
     [Fact]
+    public void Load_sets_LoadFailed_when_store_file_is_unreadable()
+    {
+        var path = TempFile();
+        try
+        {
+            File.WriteAllText(path, "{not valid json");
+            var vm = new AddPageViewModel(new AdditionStore(path));
+            vm.Load();
+
+            Assert.True(vm.LoadFailed);
+            Assert.Empty(vm.Entries);
+            // The failure must not arm an Apply of the stub state.
+            Assert.False(vm.HasPendingChanges);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+            if (File.Exists(path + ".bad")) File.Delete(path + ".bad");
+        }
+    }
+
+    // ----- Skip-all (template updates) -----
+
+    private static (AdditionEntry entry, TemplateUpdateService.Update update) StaleTrackedEntry(string id = "t1")
+    {
+        var t = AdditionTemplates.All.First(x => x.Name == "git pull");
+        var e = new AdditionEntry
+        {
+            Id = id, Name = t.Name, Command = t.Command, WorkingDir = t.WorkingDir,
+            Scope = t.Scope, RunMode = t.RunMode,
+            SourceTemplateId = t.Id, AppliedTemplateHash = "STALE",
+        };
+        return (e, new TemplateUpdateService.Update(e, t, "updated"));
+    }
+
+    [Fact]
+    public void SkipTemplateUpdates_persists_markers_and_marks_clean_when_nothing_else_pending()
+    {
+        var path = TempFile();
+        try
+        {
+            var store = new AdditionStore(path);
+            var vm = new AddPageViewModel(store);
+            var (entry, update) = StaleTrackedEntry();
+            vm.AddEntry(entry);
+            vm.MarkClean();   // baseline: skips are the only pending change
+
+            vm.SkipTemplateUpdates(new[] { update });
+
+            Assert.False(vm.HasPendingChanges);
+            var persisted = store.Load().Entries.Single();
+            Assert.Equal(TemplateUpdateService.Hash(update.Template), persisted.SkippedTemplateHash);
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
+    public void SkipTemplateUpdates_preserves_foreign_pending_state_and_defers_persisting()
+    {
+        // Regression: Skip-all used to Save + MarkClean unconditionally, disarming
+        // the v4 → v5 migration's cleanup re-arm and persisting unapplied edits
+        // straight to JSON while the registry never received them. When something
+        // else is pending, skips must ride along as pending changes instead.
+        var path = TempFile();
+        try
+        {
+            var store = new AdditionStore(path);
+            var vm = new AddPageViewModel(store);
+            var (entry, update) = StaleTrackedEntry();
+            vm.AddEntry(entry);   // unapplied edit → HasPendingChanges = true
+
+            vm.SkipTemplateUpdates(new[] { update });
+
+            Assert.True(vm.HasPendingChanges, "foreign pending state must survive Skip all");
+            Assert.False(File.Exists(path), "unapplied edits must not be persisted by Skip all");
+            // The marker itself is buffered, ready for the next Apply's Save.
+            Assert.Equal(TemplateUpdateService.Hash(update.Template), vm.Entries.Single().SkippedTemplateHash);
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
     public void MarkClean_resets_pending_flag()
     {
         var store = new AdditionStore(TempFile());

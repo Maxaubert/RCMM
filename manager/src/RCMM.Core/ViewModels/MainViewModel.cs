@@ -1274,15 +1274,24 @@ public sealed class MainViewModel : ObservableObject
         Raise(nameof(RequiresExplorerRestart));
     }
 
-    public void ApplyPending()
+    /// <summary>
+    /// Apply all pending changes. Returns user-facing error lines, one per failed
+    /// operation (empty = everything applied). Failures used to die in rcmm.log
+    /// while the UI cleared its pending badges and restarted Explorer as if the
+    /// apply had succeeded — callers must now show these to the user. A failed
+    /// hide/unhide stays queued (badge intact, retried by the next Apply); a
+    /// failed additions apply keeps HasPendingChanges lit.
+    /// </summary>
+    public IReadOnlyList<string> ApplyPending()
     {
         // Serialize against Rescan (see _workGate) so the two never run concurrently.
         lock (_workGate)
-            ApplyPendingCore();
+            return ApplyPendingCore();
     }
 
-    private void ApplyPendingCore()
+    private IReadOnlyList<string> ApplyPendingCore()
     {
+        var errors = new List<string>();
         // Detach the pending sets from the live dictionaries under the lock, then
         // work only on these snapshots. The user can keep toggling rows during the
         // (multi-second, Explorer-restarting) apply without racing our enumeration;
@@ -1357,7 +1366,12 @@ public sealed class MainViewModel : ObservableObject
             foreach (var t in targets)
                 Log.Debug("apply", $"  hide  kind={t.Kind} hive={t.Hive} path='{t.Path}' value='{t.ValueName}'");
             try { _hideService.Hide(targets); }
-            catch (Exception ex) { Log.Error("apply", $"hide id={id} failed", ex); }
+            catch (Exception ex)
+            {
+                Log.Error("apply", $"hide id={id} failed", ex);
+                errors.Add($"Hiding '{id}' failed: {ex.Message}");
+                RequeuePending(_pendingHide, id, targets);
+            }
         }
         foreach (var (id, targets) in pendingUnhide)
         {
@@ -1370,7 +1384,12 @@ public sealed class MainViewModel : ObservableObject
             foreach (var t in targets)
                 Log.Debug("apply", $"  unhide kind={t.Kind} hive={t.Hive} path='{t.Path}' value='{t.ValueName}'");
             try { _hideService.Unhide(targets); }
-            catch (Exception ex) { Log.Error("apply", $"unhide id={id} failed", ex); }
+            catch (Exception ex)
+            {
+                Log.Error("apply", $"unhide id={id} failed", ex);
+                errors.Add($"Un-hiding '{id}' failed: {ex.Message}");
+                RequeuePending(_pendingUnhide, id, targets);
+            }
         }
 
         // Post-unhide cleanup: when no Background-scoped packaged CLSID remains in
@@ -1409,21 +1428,43 @@ public sealed class MainViewModel : ObservableObject
         }
         if (_addPage != null && _additionApplier != null && _addPage.HasPendingChanges)
         {
-            // Snapshot enumerates the UI-bound Entries/Folders collections, and the
-            // user can still drag-reorder on the Add page while this worker runs —
-            // take the snapshot on the UI thread so it can't tear mid-edit.
-            var state = RunOnUi(_addPage.Snapshot);
-            Log.Info("apply", $"additions begin entries={state.Entries.Count} folders={state.Folders.Count}");
-            try
+            if (_addPage.LoadFailed)
             {
-                _additionApplier.Apply(state);
-                // Persist only after registry write succeeds so a failed Apply leaves the JSON on the previous state.
-                _addPage.Save(state);
-                _post(() => _addPage.MarkClean());
+                // additions.json existed but couldn't be read at startup, so the
+                // page buffer is a stub, not the user's data. Applying would purge
+                // every RCMM verb and rewrite registry + JSON from that stub —
+                // permanently destroying the entries the unreadable file (parked
+                // at additions.json.bad) still holds. Refuse; HasPendingChanges
+                // stays lit so the user's edits aren't silently discarded either.
+                Log.Error("apply", "refusing additions apply: additions.json failed to load at startup — applying would purge real entries based on a stub state");
+                errors.Add("Added entries were NOT applied: additions.json could not be read when RCMM started, "
+                         + "so applying now would erase your previously added entries. "
+                         + "A backup was saved as additions.json.bad — restart RCMM to retry loading.");
             }
-            catch (Exception ex) { Log.Error("apply", "additions failed", ex); }
+            else
+            {
+                // Snapshot enumerates the UI-bound Entries/Folders collections, and the
+                // user can still drag-reorder on the Add page while this worker runs —
+                // take the snapshot on the UI thread so it can't tear mid-edit.
+                var state = RunOnUi(_addPage.Snapshot);
+                Log.Info("apply", $"additions begin entries={state.Entries.Count} folders={state.Folders.Count}");
+                try
+                {
+                    _additionApplier.Apply(state);
+                    // Persist only after registry write succeeds so a failed Apply leaves the JSON on the previous state.
+                    _addPage.Save(state);
+                    _post(() => _addPage.MarkClean());
+                }
+                catch (Exception ex)
+                {
+                    Log.Error("apply", "additions failed", ex);
+                    // MarkClean deliberately not reached: the Apply button stays lit.
+                    errors.Add($"Applying your added entries to the registry failed: {ex.Message}");
+                }
+            }
         }
-        else if (_additionApplier != null && (pendingHide.Count > 0 || pendingUnhide.Count > 0))
+        else if (_additionApplier != null && (_addPage == null || !_addPage.LoadFailed)
+                 && (pendingHide.Count > 0 || pendingUnhide.Count > 0))
         {
             // A hide/unhide batch ran with no addition edits of its own. Re-assert
             // the user's existing added entries as part of the same Apply: after a
@@ -1444,7 +1485,11 @@ public sealed class MainViewModel : ObservableObject
                     _additionApplier.Apply(state);
                 }
             }
-            catch (Exception ex) { Log.Error("apply", "additions re-assert failed", ex); }
+            catch (Exception ex)
+            {
+                Log.Error("apply", "additions re-assert failed", ex);
+                errors.Add($"Re-writing your added entries after the hide change failed: {ex.Message}");
+            }
         }
         _post(() =>
         {
@@ -1461,7 +1506,23 @@ public sealed class MainViewModel : ObservableObject
             }
             Raise(nameof(RequiresExplorerRestart));
         });
-        Log.Info("apply", "end");
+        Log.Info("apply", $"end errors={errors.Count}");
+        return errors;
+    }
+
+    /// <summary>
+    /// Put a failed hide/unhide back in its pending queue so its badge survives
+    /// (the un-badge pass above skips ids still present in the dictionaries) and
+    /// the next Apply retries it — unless the user re-toggled the row while this
+    /// apply ran, in which case their newer intent wins.
+    /// </summary>
+    private void RequeuePending(Dictionary<string, IReadOnlyList<HideTarget>> queue, string id, IReadOnlyList<HideTarget> targets)
+    {
+        lock (_pendingLock)
+        {
+            if (!_pendingHide.ContainsKey(id) && !_pendingUnhide.ContainsKey(id))
+                queue[id] = targets;
+        }
     }
 
     private (string? source, bool isBuiltIn) ResolveSourceAndBuiltIn(CapturedItem item, IReadOnlyList<HideTarget> targets, string? iconPath)
