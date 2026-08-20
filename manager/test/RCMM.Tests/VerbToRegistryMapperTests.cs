@@ -21,18 +21,17 @@ public class VerbToRegistryMapperTests
     [Fact]
     public void MapClsid_still_finds_target_when_HKCU_mask_shadows_HKCR()
     {
-        // FakeRegistry models HKCR by reading HKLM\Software\Classes — but to
-        // exercise the HKLM fallback path we set HKLM directly and HKCR
-        // separately to mimic the merged view: HKCR shows the HKCU shadow's
-        // empty default, while the underlying HKLM key still carries the CLSID.
+        // The user's HKCU mask (empty default) wins the merged HKCR view, so
+        // the classic lookup sees an empty default — the HKLM fallback must
+        // still recover the CLSID from the underlying machine registration.
         var reg = new FakeRegistry();
         var clsid = "{F81E9010-6EA4-11CE-A7FF-00AA003CA9F6}";
         // HKLM original registration
         reg.SetValue(RegistryHive.LocalMachine,
             "Software\\Classes\\Directory\\shellex\\ContextMenuHandlers\\Sharing", "", clsid);
-        // HKCR shows the HKCU mask's empty value (simulated)
-        reg.SetValue(RegistryHive.ClassesRoot,
-            "Directory\\shellex\\ContextMenuHandlers\\Sharing", "", "");
+        // The HKCU mask HideService writes: an empty default that shadows HKLM.
+        reg.SetValue(RegistryHive.CurrentUser,
+            "Software\\Classes\\Directory\\shellex\\ContextMenuHandlers\\Sharing", "", "");
 
         var sut = new VerbToRegistryMapper(reg);
         var targets = sut.MapClsid(clsid).ToList();

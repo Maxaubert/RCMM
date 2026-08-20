@@ -24,12 +24,18 @@ public class MainViewModelApplyErrorTests : IDisposable
     {
         private readonly FakeRegistry _inner;
         public Func<string, bool>? FailSetValueWhen { get; set; }
+        public Func<string, bool>? FailDeleteValueWhen { get; set; }
         public ThrowingRegistry(FakeRegistry inner) { _inner = inner; }
 
         public bool KeyExists(RegistryHive hive, string path) => _inner.KeyExists(hive, path);
         public void CreateKey(RegistryHive hive, string path) => _inner.CreateKey(hive, path);
         public void DeleteKey(RegistryHive hive, string path) => _inner.DeleteKey(hive, path);
-        public void DeleteValue(RegistryHive hive, string path, string name) => _inner.DeleteValue(hive, path, name);
+        public void DeleteValue(RegistryHive hive, string path, string name)
+        {
+            if (FailDeleteValueWhen?.Invoke(path) == true)
+                throw new UnauthorizedAccessException($"simulated delete failure at {path}");
+            _inner.DeleteValue(hive, path, name);
+        }
         public object? GetValue(RegistryHive hive, string path, string name) => _inner.GetValue(hive, path, name);
         public void SetValue(RegistryHive hive, string path, string name, object value)
         {
@@ -145,6 +151,84 @@ public class MainViewModelApplyErrorTests : IDisposable
         reg.FailSetValueWhen = null;
         Assert.Empty(vm.ApplyPending());
         Assert.Equal("", fake.GetValue(RegistryHive.CurrentUser,
+            "Software\\Classes\\Directory\\Background\\shell\\Tabby", "LegacyDisable"));
+        Assert.DoesNotContain(row.Entry.Id, vm.PendingChangeIds);
+    }
+
+    [Fact]
+    public void ApplyPending_continues_the_batch_when_one_entry_fails()
+    {
+        // Review b09 #46: entry A failing (key locked, access denied, …) must not
+        // abort the rest of the batch — B still applies, only A stays pending.
+        var (vm, _, fake, reg) = BuildSut();
+        fake.SetValue(RegistryHive.ClassesRoot, "Directory\\Background\\shell\\Alpha", "", "Alpha Tool");
+        fake.SetValue(RegistryHive.ClassesRoot, "Directory\\Background\\shell\\Beta", "", "Beta Tool");
+
+        vm.Rescan();
+        var alpha = vm.AllEntries.Single(r => r.Entry.DisplayName == "Alpha Tool");
+        var beta = vm.AllEntries.Single(r => r.Entry.DisplayName == "Beta Tool");
+        alpha.IsHidden = true;
+        beta.IsHidden = true;
+        reg.FailSetValueWhen = path => path.Contains("Alpha");
+
+        var errors = vm.ApplyPending();
+
+        var error = Assert.Single(errors);
+        Assert.Contains(alpha.Entry.Id, error);
+        // B landed despite A's failure...
+        Assert.Equal("", fake.GetValue(RegistryHive.CurrentUser,
+            "Software\\Classes\\Directory\\Background\\shell\\Beta", "LegacyDisable"));
+        Assert.DoesNotContain(beta.Entry.Id, vm.PendingChangeIds);
+        // ...while A keeps its badge for retry.
+        Assert.Contains(alpha.Entry.Id, vm.PendingChangeIds);
+    }
+
+    [Fact]
+    public void Row_reverts_to_unhidden_on_the_rescan_after_a_failed_hide()
+    {
+        // The row state after a failed apply must reflect registry truth (still
+        // visible), never the user's un-applied intent.
+        var (vm, _, fake, reg) = BuildSut();
+        fake.SetValue(RegistryHive.ClassesRoot, "Directory\\Background\\shell\\Tabby", "", "Open Tabby here");
+
+        vm.Rescan();
+        vm.AllEntries.Single(r => r.Entry.DisplayName == "Open Tabby here").IsHidden = true;
+        reg.FailSetValueWhen = path => path.Contains("Tabby");
+        Assert.NotEmpty(vm.ApplyPending());
+        reg.FailSetValueWhen = null;
+
+        vm.Rescan();
+
+        var row = vm.AllEntries.Single(r => r.Entry.DisplayName == "Open Tabby here");
+        Assert.False(row.Entry.IsHidden);
+        Assert.False(row.IsHidden);
+    }
+
+    [Fact]
+    public void ApplyPending_reports_a_failed_unhide_and_requeues_it_for_retry()
+    {
+        var (vm, _, fake, reg) = BuildSut();
+        fake.SetValue(RegistryHive.ClassesRoot, "Directory\\Background\\shell\\Tabby", "", "Open Tabby here");
+
+        vm.Rescan();
+        vm.AllEntries.Single(r => r.Entry.DisplayName == "Open Tabby here").IsHidden = true;
+        Assert.Empty(vm.ApplyPending());
+
+        // Fresh row (now hidden) after rescan; the un-hide's delete is denied.
+        vm.Rescan();
+        var row = vm.AllEntries.Single(r => r.Entry.DisplayName == "Open Tabby here");
+        Assert.True(row.Entry.IsHidden);
+        row.IsHidden = false;
+        reg.FailDeleteValueWhen = path => path.Contains("Tabby");
+
+        var errors = vm.ApplyPending();
+
+        Assert.NotEmpty(errors);
+        Assert.Contains(row.Entry.Id, vm.PendingChangeIds);
+        // Transient failure clears → the retried Apply lands the un-hide.
+        reg.FailDeleteValueWhen = null;
+        Assert.Empty(vm.ApplyPending());
+        Assert.Null(fake.GetValue(RegistryHive.CurrentUser,
             "Software\\Classes\\Directory\\Background\\shell\\Tabby", "LegacyDisable"));
         Assert.DoesNotContain(row.Entry.Id, vm.PendingChangeIds);
     }
