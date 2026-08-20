@@ -13,6 +13,11 @@
     <EmbeddedResource Include="Resources\lucide-icons.tsv" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Internal test seams (capture/probe timeout injection) — see
+         ContextMenuCaptureService.CaptureAll and ShellexInvoker.ProbeOverride. -->
+    <InternalsVisibleTo Include="RCMM.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" />
     <!-- GDI+ for rendering library SVG icons to .ico files (used by
          IconMaterializer at apply-time so Windows shell can show them). -->

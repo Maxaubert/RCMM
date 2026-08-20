@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Runtime.ExceptionServices;
+using System.Threading;
 using System.Threading.Tasks;
 using RCMM.Core.Diagnostics;
 using RCMM.Core.Models;
@@ -553,11 +555,6 @@ public sealed class MainViewModel : ObservableObject
         // entry vanishes from RCMM and the user can't un-toggle it.
         RestoreGhostEntries();
 
-        lock (_pendingLock)
-        {
-            _pendingHide.Clear();
-            _pendingUnhide.Clear();
-        }
         // Persist the current snapshot so the next rescan can recover ghosts.
         _knownStore.Save(_allRows.ConvertAll(r => r.Entry));
         for (int i = 0; i < _allRows.Count; i++)
@@ -566,13 +563,24 @@ public sealed class MainViewModel : ObservableObject
             var src = string.IsNullOrEmpty(r.Entry.Source) ? "Unknown" : r.Entry.Source;
             Log.Debug("dump", $"#{i:D2} '{r.Entry.DisplayName}' src='{src}' sub={r.Entry.IsSubmenu} hideTargets={r.Entry.HideTargets.Count} icon='{r.Entry.IconPath ?? ""}'");
         }
-        // UI tail: FilterIntoAllEntries (mutates AllEntries), PendingChangeIds.Clear,
+        // UI tail: FilterIntoAllEntries (mutates AllEntries), the pending clears,
         // and the PropertyChanged raises are all bound-collection / UI-thread ops, so
         // they run together as the single UI-thread hand-off for a completed rescan.
         _post(() =>
         {
             FilterIntoAllEntries();
-            PendingChangeIds.Clear();
+            // The pending dictionaries and the PendingChangeIds badge list must be
+            // cleared in ONE block under the pending lock. Clearing the dictionaries
+            // earlier on the worker (the old shape) left a window where a UI-thread
+            // toggle landed after the worker's clear but before this posted clear:
+            // the badge got wiped while the dictionary entry survived, producing an
+            // invisible pending change silently applied by whatever Apply ran next.
+            lock (_pendingLock)
+            {
+                _pendingHide.Clear();
+                _pendingUnhide.Clear();
+                PendingChangeIds.Clear();
+            }
             Raise(nameof(RequiresExplorerRestart));
             RescanComplete?.Invoke();
             Log.Info("rescan", $"end rows={_allRows.Count} withHideTargets={rowsWithHide} builtIn={rowsBuiltIn} visible={AllEntries.Count}");
@@ -1188,6 +1196,36 @@ public sealed class MainViewModel : ObservableObject
     /// reproduce it. Returns false for foreign verbs (Tabby, WinRAR, Defender…),
     /// which take the normal HideService path unchanged. See issue #10.
     /// </summary>
+    /// <summary>
+    /// Runs <paramref name="func"/> through the injected UI dispatcher and blocks
+    /// until it completes, returning its result. ApplyPendingCore needs this for
+    /// the Add-page operations (SetEntryHidden, Snapshot): they mutate/enumerate
+    /// the page's UI-bound ObservableCollections, which per the threading design
+    /// must only ever be touched on the UI thread — but their result decides what
+    /// the apply worker does next, so fire-and-forget _post isn't enough. Safe
+    /// against deadlock because every ApplyPending call site invokes it via
+    /// Task.Run, never on the UI thread itself (and the inline default _post used
+    /// by tests runs synchronously). The bounded wait means a dead dispatcher
+    /// (app teardown) aborts the apply with a logged error instead of hanging
+    /// the worker forever.
+    /// </summary>
+    private T RunOnUi<T>(Func<T> func)
+    {
+        T result = default!;
+        Exception? error = null;
+        using var completed = new ManualResetEventSlim(false);
+        _post(() =>
+        {
+            try { result = func(); }
+            catch (Exception ex) { error = ex; }
+            finally { completed.Set(); }
+        });
+        if (!completed.Wait(TimeSpan.FromSeconds(30)))
+            throw new TimeoutException("UI dispatcher did not run a posted operation within 30s");
+        if (error != null) ExceptionDispatchInfo.Capture(error).Throw();
+        return result;
+    }
+
     private bool TryRouteOwnedHide(IReadOnlyList<HideTarget> targets, bool hidden)
     {
         if (_addPage == null || _additionApplier == null || targets.Count == 0) return false;
@@ -1204,7 +1242,10 @@ public sealed class MainViewModel : ObservableObject
             if (entryId != null && entryId != parsed) return false;
             entryId = parsed;
         }
-        return entryId != null && _addPage.SetEntryHidden(entryId, hidden);
+        // SetEntryHidden replaces an item in the UI-bound Entries collection
+        // (CollectionChanged → AddPage.RefreshAll → XAML), so it must run on the
+        // UI thread — ApplyPendingCore calls this from the Task.Run apply worker.
+        return entryId != null && RunOnUi(() => _addPage.SetEntryHidden(entryId, hidden));
     }
 
     private void OnRowToggled(EntryRowViewModel row, bool isHidden)
@@ -1371,8 +1412,11 @@ public sealed class MainViewModel : ObservableObject
         }
         if (_addPage != null && _additionApplier != null && _addPage.HasPendingChanges)
         {
-            Log.Info("apply", $"additions begin entries={_addPage.Entries.Count} folders={_addPage.Folders.Count}");
-            var state = _addPage.Snapshot();
+            // Snapshot enumerates the UI-bound Entries/Folders collections, and the
+            // user can still drag-reorder on the Add page while this worker runs —
+            // take the snapshot on the UI thread so it can't tear mid-edit.
+            var state = RunOnUi(_addPage.Snapshot);
+            Log.Info("apply", $"additions begin entries={state.Entries.Count} folders={state.Folders.Count}");
             try
             {
                 _additionApplier.Apply(state);
@@ -1395,7 +1439,7 @@ public sealed class MainViewModel : ObservableObject
             try
             {
                 var state = _addPage != null
-                    ? _addPage.Snapshot()
+                    ? RunOnUi(_addPage.Snapshot)   // UI-bound collections — see above
                     : new AdditionStore(AdditionStore.DefaultPath()).Load();
                 if (state.Entries.Count > 0 || state.Folders.Count > 0)
                 {
@@ -1407,7 +1451,17 @@ public sealed class MainViewModel : ObservableObject
         }
         _post(() =>
         {
-            PendingChangeIds.Clear();
+            // Un-badge only THIS batch's ids, and only when the id hasn't been
+            // re-toggled while the (multi-second) apply ran. A blanket
+            // PendingChangeIds.Clear() here erased badges for toggles made during
+            // the apply, leaving those hides queued in the dictionaries with no
+            // visual pending indication — the mirror image of the rescan-tail race.
+            lock (_pendingLock)
+            {
+                foreach (var id in pendingHide.Keys.Concat(pendingUnhide.Keys))
+                    if (!_pendingHide.ContainsKey(id) && !_pendingUnhide.ContainsKey(id))
+                        PendingChangeIds.Remove(id);
+            }
             Raise(nameof(RequiresExplorerRestart));
         });
         Log.Info("apply", "end");
