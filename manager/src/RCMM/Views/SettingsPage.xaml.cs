@@ -192,17 +192,27 @@ public sealed partial class SettingsPage : Page
                 additionsTouched = add.HasPendingChanges;
             }
 
-            if (additionsTouched)
+            if (additionsTouched && _stagedRestartOnApply) restartExplorer = true;
+
+            if (additionsTouched || restartExplorer)
             {
-                await Task.Run(() => _args.ViewModel.ApplyPending());   // writes registry + saves additions.json
-                if (_stagedRestartOnApply) restartExplorer = true;
+                // Routed through MainWindow's apply gate so this chain can't
+                // overlap the footer Apply's or the template-update dialog's
+                // (double Explorer restart, doubled rescan). Chains queue, so
+                // the settings apply is never silently dropped.
+                bool touched = additionsTouched, restart = restartExplorer;
+                Func<Task> chain = async () =>
+                {
+                    if (touched)
+                        await Task.Run(() => _args.ViewModel.ApplyPending());   // writes registry + saves additions.json
+                    if (restart)
+                        await Task.Run(() => new ExplorerRestart().Restart());
+                    if (touched)
+                        await _args.ViewModel.RescanAsync();
+                };
+                if (App.MainWindow is MainWindow mw) await mw.RunApplyChainAsync(chain);
+                else await chain();
             }
-
-            if (restartExplorer)
-                await Task.Run(() => new ExplorerRestart().Restart());
-
-            if (additionsTouched)
-                await _args.ViewModel.RescanAsync();
 
             // Re-baseline: staged is now the committed state.
             _loadedClassic = _stagedClassic;

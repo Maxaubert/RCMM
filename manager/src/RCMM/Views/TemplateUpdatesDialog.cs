@@ -126,9 +126,17 @@ public static class TemplateUpdatesDialog
             Log.Info("tplupd", $"updating {chosen.Count} entr(y/ies)");
             // Reuse the normal apply path: ReplaceEntry marked the page dirty, so
             // ApplyPending re-writes the registry; then refresh Explorer + rescan.
-            await Task.Run(() => vm.ApplyPending());
-            await Task.Run(() => new ExplorerRestart().Restart());
-            await vm.RescanAsync();
+            // Routed through MainWindow's apply gate so this multi-second chain
+            // can't overlap the footer Apply's (double Explorer restart, doubled
+            // rescan).
+            Func<Task> chain = async () =>
+            {
+                await Task.Run(() => vm.ApplyPending());
+                await Task.Run(() => new ExplorerRestart().Restart());
+                await vm.RescanAsync();
+            };
+            if (App.MainWindow is MainWindow mw) await mw.RunApplyChainAsync(chain);
+            else await chain();
         }
         else if (result == ContentDialogResult.Secondary)
         {

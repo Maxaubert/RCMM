@@ -48,11 +48,18 @@ public sealed partial class AddPage : Page
     private string? _selectedKind; // "entry" | "folder"
     private string? _selectedId;
 
-    // Drag-state — captured on DragItemsStarting; consumed in
-    // LeftRows_CollectionChanged (Move action) and MiddleRows_CollectionChanged.
+    // Drag-state — captured on grip release in Page_PointerReleased; consumed
+    // in ApplyDropResultToVm.
     private string? _dragKind;
     private string? _dragId;
     private string? _dragBucket;
+
+    // The VM outlives this page (singleton on MainViewModel) and pages are not
+    // cached, so the CollectionChanged lambdas must be detached on leave —
+    // otherwise every visit stacks another handler (N RefreshAll passes per
+    // mutation) and keeps the dead page's visual tree alive.
+    private System.Collections.Specialized.NotifyCollectionChangedEventHandler? _entriesChanged;
+    private System.Collections.Specialized.NotifyCollectionChangedEventHandler? _foldersChanged;
 
     public AddPage() { InitializeComponent(); }
 
@@ -72,35 +79,22 @@ public sealed partial class AddPage : Page
         RenderEditor();
 
         // Refresh on every VM mutation. Apply/Discard land here too.
-        _vm.Entries.CollectionChanged += (_, ev) => { Log.Info(Cat, $"vm.Entries changed: {ev.Action}"); RefreshAll(); };
-        _vm.Folders.CollectionChanged += (_, ev) => { Log.Info(Cat, $"vm.Folders changed: {ev.Action}"); RefreshAll(); };
-
-        // Detect when WinUI's CanReorderItems reorders the row collection. The
-        // framework calls Move(oldIdx, newIdx) on the ItemsSource — that's our
-        // signal that the user finished a drag, and it's far more reliable
-        // than DragItemsCompleted, which in WinUI 3 2.0.x simply doesn't fire
-        // after an internal reorder.
-        _leftRows.CollectionChanged += LeftRows_CollectionChanged;
-        _middleRows.CollectionChanged += MiddleRows_CollectionChanged;
+        _entriesChanged = (_, ev) => { Log.Info(Cat, $"vm.Entries changed: {ev.Action}"); RefreshAll(); };
+        _foldersChanged = (_, ev) => { Log.Info(Cat, $"vm.Folders changed: {ev.Action}"); RefreshAll(); };
+        _vm.Entries.CollectionChanged += _entriesChanged;
+        _vm.Folders.CollectionChanged += _foldersChanged;
     }
 
-    // CollectionChanged.Move handlers — kept as a safety net for whoever
-    // shoves a Move through the row collection. Skipped when the pointer
-    // drag is mid-flight (its many Move calls during the drag would otherwise
-    // trigger VM persistence and a RefreshAll that yanks the list out from
-    // under the user's cursor).
-    private void LeftRows_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
-        if (_suppressMovePersist) return;
-        if (e.Action != System.Collections.Specialized.NotifyCollectionChangedAction.Move) return;
-        Log.Info(Cat, $"_leftRows MOVE old={e.OldStartingIndex} new={e.NewStartingIndex} dragId={_dragId}");
-    }
-
-    private void MiddleRows_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
-    {
-        if (_suppressMovePersist) return;
-        if (e.Action != System.Collections.Specialized.NotifyCollectionChangedAction.Move) return;
-        Log.Info(Cat, $"_middleRows MOVE old={e.OldStartingIndex} new={e.NewStartingIndex} dragId={_dragId}");
+        if (_vm != null)
+        {
+            if (_entriesChanged != null) _vm.Entries.CollectionChanged -= _entriesChanged;
+            if (_foldersChanged != null) _vm.Folders.CollectionChanged -= _foldersChanged;
+        }
+        _entriesChanged = null;
+        _foldersChanged = null;
+        base.OnNavigatedFrom(e);
     }
 
     private void RefreshAll()
@@ -458,11 +452,6 @@ public sealed partial class AddPage : Page
                     bar.Visibility = sel ? Visibility.Visible : Visibility.Collapsed;
             }
         }
-        for (int i = 0; i < _middleRows.Count; i++)
-        {
-            // Middle pane has no SelBar (selection is implicit there), but we
-            // still iterate for parity in case we add one later.
-        }
         Log.Debug(Cat, $"ApplySelectionToRows: {matched} row(s) marked selected in left list");
     }
 
@@ -495,6 +484,13 @@ public sealed partial class AddPage : Page
             _middlePath.Clear();
             RebuildLeftRows();
             ApplySelectionToRows();
+            // Collapse the middle pane now, deterministically. With the entry
+            // selected there is no "current middle folder" any more, so leaving
+            // the pane visible means (a) the next VM mutation — e.g. the first
+            // keystroke of a rename — collapses it mid-edit via RefreshAll, and
+            // (b) drops onto the still-visible pane silently cancel because
+            // IntoMiddlePane requires a current folder.
+            RebuildMiddleRows();
             RenderEditor();
         }
     }
@@ -607,12 +603,15 @@ public sealed partial class AddPage : Page
         {
             NameBox.Text = folder.Name;
 
-            // Parent folder dropdown — exclude self + descendants
+            // Parent folder dropdown — offer only parents the VM will accept.
+            // CanNest is the single source of truth (self, descendants AND the
+            // depth cap); filtering with a local descendant check used to offer
+            // parents MoveFolder then refused, silently snapping the selection
+            // back.
             var parentOptions = new List<object> { TopLevelLabel };
             foreach (var f in _vm.Folders)
             {
-                if (f.Id == folder.Id) continue;
-                if (IsDescendant(f.Id, folder.Id)) continue;
+                if (!_vm.CanNest(folder.Id, f.Id)) continue;
                 parentOptions.Add(f);
             }
             ParentFolderBox.ItemsSource = parentOptions;
@@ -625,18 +624,6 @@ public sealed partial class AddPage : Page
             FolderInfoText.Text = $"Level {_vm.FolderDepth(folder.Id)} of {AddPageViewModel.MaxFolderDepth} · {CountChildren(folder.Id)} items inside";
         }
         finally { _suppressFieldChange = false; }
-    }
-
-    private bool IsDescendant(string maybeDescendant, string ancestorId)
-    {
-        var cur = _vm.Folders.FirstOrDefault(f => f.Id == maybeDescendant);
-        int hops = 0;
-        while (cur != null && ++hops < 64)
-        {
-            if (cur.ParentFolderId == ancestorId) return true;
-            cur = _vm.Folders.FirstOrDefault(f => f.Id == cur.ParentFolderId);
-        }
-        return false;
     }
 
     private void SetEntryFieldsVisibility(bool showEntryFields)
@@ -871,7 +858,6 @@ public sealed partial class AddPage : Page
     private int _gripTargetSlot = -1;                        // insertion slot (above/below)
     private AddRow? _gripTargetRow;                          // for "into folder" zone
     private FrameworkElement? _gripSourceContainer;          // dimmed during drag
-    private bool _suppressMovePersist;
 
     /// <summary>Press on a row grip. Captures the pointer on the Page so the
     /// ListView's internal ScrollViewer can't steal capture for pan detection.
@@ -1090,9 +1076,7 @@ public sealed partial class AddPage : Page
 
         Log.Info(Cat, $"release: zone={zone} srcIdx={srcIdx} slot={slot} → targetIdx={targetIdx}");
         _dragKind = row.Kind; _dragId = row.Id; _dragBucket = row.Bucket;
-        _suppressMovePersist = true;
-        try { rows.Move(srcIdx, targetIdx); }
-        finally { _suppressMovePersist = false; }
+        rows.Move(srcIdx, targetIdx);
         try { ApplyDropResultToVm(rows); }
         catch (Exception ex) { Log.Error(Cat, "ApplyDropResultToVm threw", ex); }
         finally { _dragKind = null; _dragId = null; _dragBucket = null; }
@@ -1315,9 +1299,4 @@ public sealed partial class AddPage : Page
                 beforeFolderId: next?.Kind == "folder" && (next.Bucket == "root" ? null : next.Bucket) == newBucketId ? next.Id : null);
         }
     }
-
-    // -------------------------------------------------------------------------
-    // ROW ADAPTER
-    // -------------------------------------------------------------------------
-
 }

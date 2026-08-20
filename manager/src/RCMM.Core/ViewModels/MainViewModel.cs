@@ -682,9 +682,6 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Walks <see cref="_allRows"/>, groups by case-insensitive DisplayName, and
-    /// collapses each group into a single row. The winner is the row most likely
-    /// <summary>
     /// Inject "ghost" rows: entries we persisted from a previous rescan that
     /// aren't present in the current _allRows but whose hide targets are still
     /// set in the registry. Without this pass, CommandStore-only verbs

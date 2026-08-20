@@ -103,6 +103,39 @@ public class AddPageViewModelTests
         Assert.False(vm.MoveFolder("a", "a"));
     }
 
+    // ----- CanNest — single source of truth for AddPage's parent-folder
+    // dropdown filter: the dropdown must offer exactly the parents MoveFolder
+    // will accept, or a pick silently snaps back. -----
+
+    [Fact]
+    public void CanNest_allows_top_level_and_current_parent()
+    {
+        var vm = new AddPageViewModel(new AdditionStore(TempFile()));
+        vm.AddFolder(F("a"));
+        vm.AddFolder(F("b", "a"));
+        Assert.True(vm.CanNest("b", null));   // promote to top-level always allowed
+        Assert.True(vm.CanNest("b", "a"));    // current parent stays offerable
+    }
+
+    [Fact]
+    public void CanNest_refuses_self_descendant_and_depth_cap()
+    {
+        var vm = new AddPageViewModel(new AdditionStore(TempFile()));
+        vm.AddFolder(F("L1"));
+        vm.AddFolder(F("L2", "L1"));
+        vm.AddFolder(F("L3", "L2"));
+        vm.AddFolder(F("orphan"));
+        Assert.False(vm.CanNest("L1", "L1"));      // self
+        Assert.False(vm.CanNest("L1", "L3"));      // own descendant (cycle)
+        Assert.False(vm.CanNest("orphan", "L3"));  // would exceed MaxFolderDepth
+        // A two-level subtree can't hang under a level-2 parent either — the
+        // dropdown filter must account for the moving folder's own subtree.
+        vm.AddFolder(F("M1"));
+        vm.AddFolder(F("M2", "M1"));
+        Assert.False(vm.CanNest("M1", "L2"));
+        Assert.True(vm.CanNest("orphan", "L2"));   // lands exactly at the cap
+    }
+
     // ----- ReorderEntryWithinBucket -----
 
     [Fact]

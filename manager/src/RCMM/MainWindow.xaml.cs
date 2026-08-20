@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -10,7 +11,6 @@ using RCMM.Core.Services;
 using RCMM.Core.ViewModels;
 using RCMM.Util;
 using RCMM.Views;
-using Windows.UI;
 
 namespace RCMM;
 
@@ -18,9 +18,14 @@ public sealed partial class MainWindow : Window
 {
     public MainViewModel ViewModel { get; }
 
-    private Windows.UI.ViewManagement.UISettings? _uiSettings;
     private WindowMinSize? _minSize;
     private bool _busy;
+    /// <summary>Serializes the apply → Explorer-restart → rescan orchestrations
+    /// started from the footer button, the template-update dialog and the
+    /// Settings page. MainViewModel's work gate only protects the shared VM
+    /// state; without this gate two orchestrations interleave at the step
+    /// level (two Explorer restarts, doubled rescans).</summary>
+    private readonly SemaphoreSlim _applyGate = new(1, 1);
     private bool _templateUpdatesChecked;
     private bool _settingsLeaveGuard;
 
@@ -128,7 +133,18 @@ public sealed partial class MainWindow : Window
 
     private void NavHome_Click(object sender, RoutedEventArgs e)
     {
-        while (ContentFrame.CanGoBack) ContentFrame.GoBack();
+        // Bounded walk to the back-stack root. A dirty Settings page cancels
+        // navigation synchronously (ContentFrame_Navigating sets e.Cancel before
+        // its first await), which leaves CanGoBack true — an unconditional
+        // while (CanGoBack) GoBack() would then spin forever on the UI thread.
+        // Stop as soon as a GoBack is refused (back-stack depth unchanged); the
+        // leave-guard's dialog takes over from there.
+        while (ContentFrame.CanGoBack)
+        {
+            int depth = ContentFrame.BackStack.Count;
+            ContentFrame.GoBack();
+            if (ContentFrame.BackStack.Count == depth) break;   // navigation cancelled
+        }
     }
 
     private void Settings_Click(object sender, RoutedEventArgs e)
@@ -150,20 +166,28 @@ public sealed partial class MainWindow : Window
         var mode = e.NavigationMode;
         e.Cancel = true;   // must be set before the first await
 
-        var choice = await sp.ConfirmLeaveAsync();
-        if (choice == SettingsLeaveChoice.Cancel) return;
-        if (choice == SettingsLeaveChoice.Apply)
+        // async void: an exception escaping this handler rethrows on the
+        // dispatcher and kills the process (ContentDialog.ShowAsync can throw
+        // COMException when another dialog is already open), so everything past
+        // the first await must be guarded.
+        try
         {
-            try { await sp.ApplyAsync(); }
-            catch (Exception ex) { Log.Error("settings", "apply-on-leave failed", ex); }
-        }
-        else sp.Revert();
+            var choice = await sp.ConfirmLeaveAsync();
+            if (choice == SettingsLeaveChoice.Cancel) return;
+            if (choice == SettingsLeaveChoice.Apply)
+            {
+                try { await sp.ApplyAsync(); }
+                catch (Exception ex) { Log.Error("settings", "apply-on-leave failed", ex); }
+            }
+            else sp.Revert();
 
-        _settingsLeaveGuard = true;
-        if (mode == Microsoft.UI.Xaml.Navigation.NavigationMode.Back && ContentFrame.CanGoBack)
-            ContentFrame.GoBack();
-        else if (target != null)
-            ContentFrame.Navigate(target, param);
+            _settingsLeaveGuard = true;
+            if (mode == Microsoft.UI.Xaml.Navigation.NavigationMode.Back && ContentFrame.CanGoBack)
+                ContentFrame.GoBack();
+            else if (target != null)
+                ContentFrame.Navigate(target, param);
+        }
+        catch (Exception ex) { Log.Error("settings", "leave-guard navigation failed", ex); }
     }
 
     private void UpdateFooterApplyVisibility(Type pageType)
@@ -188,34 +212,51 @@ public sealed partial class MainWindow : Window
     {
         int n = ViewModel.PendingChangeIds.Count;
         bool addDirty = ViewModel.AddPage?.HasPendingChanges == true;
-        FooterApplyButton.IsEnabled = n > 0 || addDirty;
+        // !_busy: a pending-count change mid-chain (ApplyPending clears the ids,
+        // a row toggle re-adds one) must not re-enable the button while an
+        // apply/restart/rescan orchestration is still running.
+        FooterApplyButton.IsEnabled = !_busy && (n > 0 || addDirty);
         FooterApplyButton.Content = n > 0 ? $"Apply ({n})" : "Apply";
+    }
+
+    /// <summary>Run an apply → Explorer-restart → rescan orchestration under the
+    /// shared gate. Chains queue rather than overlap, so two Explorer restarts
+    /// can never run concurrently and rescans stay sequential. The footer button
+    /// is disabled for the duration.</summary>
+    public async Task RunApplyChainAsync(Func<Task> work)
+    {
+        await _applyGate.WaitAsync();
+        _busy = true;
+        UpdateFooterApply();
+        try { await work(); }
+        finally
+        {
+            _busy = false;
+            UpdateFooterApply();
+            _applyGate.Release();
+        }
     }
 
     private async void FooterApply_Click(object sender, RoutedEventArgs e)
     {
         // _busy guards re-entry even if a click is requeued before the disabled
-        // state propagates; the FooterApplyButton.IsEnabled = false below is the
-        // visual half of the same guard.
+        // state propagates — a footer click during a running chain is dropped,
+        // not queued.
         if (_busy) return;
-        _busy = true;
-        FooterApplyButton.IsEnabled = false;
         try
         {
-            await Task.Run(() => ViewModel.ApplyPending());
-            // Honor the "Restart Explorer automatically" setting. Off = write the
-            // registry but leave Explorer alone (some changes then show only after
-            // the user restarts Explorer or signs out).
-            if (new SettingsStore().Load().RestartExplorerOnApply)
-                await Task.Run(() => new ExplorerRestart().Restart());
-            await ViewModel.RescanAsync();
+            await RunApplyChainAsync(async () =>
+            {
+                await Task.Run(() => ViewModel.ApplyPending());
+                // Honor the "Restart Explorer automatically" setting. Off = write the
+                // registry but leave Explorer alone (some changes then show only after
+                // the user restarts Explorer or signs out).
+                if (new SettingsStore().Load().RestartExplorerOnApply)
+                    await Task.Run(() => new ExplorerRestart().Restart());
+                await ViewModel.RescanAsync();
+            });
         }
         catch (Exception ex) { Log.Error("apply", "apply/rescan failed", ex); }
-        finally
-        {
-            _busy = false;
-            UpdateFooterApply();
-        }
     }
 
 private void LoadIconsForAllEntries()
@@ -335,23 +376,4 @@ private void LoadIconsForAllEntries()
         catch { }
     }
 
-    private void HookThemeChange()
-    {
-        try
-        {
-            _uiSettings = new Windows.UI.ViewManagement.UISettings();
-            _uiSettings.ColorValuesChanged += (s, a) =>
-                DispatcherQueue.TryEnqueue(UpdateForCurrentTheme);
-            UpdateForCurrentTheme();
-        }
-        catch { }
-    }
-
-    private void UpdateForCurrentTheme()
-    {
-        if (_uiSettings is null) return;
-        var bg = _uiSettings.GetColorValue(Windows.UI.ViewManagement.UIColorType.Background);
-        bool isDark = (bg.R + bg.G + bg.B) < 384;
-        RootGrid.RequestedTheme = isDark ? ElementTheme.Dark : ElementTheme.Light;
-    }
 }
