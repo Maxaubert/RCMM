@@ -190,11 +190,16 @@ internal static class ShellInterop
         public int pt_y;
     }
 
-    [DllImport("user32.dll")]
+    // CharSet.Unicode so this binds PeekMessageW. Without it the default ANSI
+    // binding retrieves messages via PeekMessageA while DispatchMessage below
+    // dispatches with the W API — a mismatched A-retrieve/W-dispatch pairing
+    // that would mangle any character-bearing message posted to a Unicode
+    // window created in this STA by a third-party shell-extension DLL.
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool PeekMessage(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax, uint wRemoveMsg);
 
-    [DllImport("user32.dll")]
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool TranslateMessage(ref MSG lpMsg);
 

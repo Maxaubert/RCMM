@@ -9,7 +9,6 @@ using Microsoft.UI.Xaml.Data;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
-using Windows.Storage.Streams;
 using RCMM.Core.Models;
 using RCMM.Core.Services;
 using RCMM.Core.ViewModels;
@@ -135,7 +134,7 @@ public sealed partial class TemplatesPage : Page
 
     private void AddTemplate(AdditionTemplates.Template t)
     {
-        var (command, icon) = ExpandTemplate(t);
+        var (command, icon) = TemplateExpansion.Expand(t);
         // Seed the configured default terminal only for templates that open a visible
         // terminal; a GUI-launch template has no meaningful terminal. (Terminal isn't a
         // hashed field, so this doesn't affect template-update tracking.) null = never
@@ -159,39 +158,6 @@ public sealed partial class TemplatesPage : Page
         entry = TemplateUpdateService.Stamp(entry, t);
         _vm.AddEntry(entry);
         if (Frame.CanGoBack) Frame.GoBack();
-    }
-
-    /// <summary>
-    /// Resolve a template's placeholders to the concrete (command, icon) used when
-    /// writing an entry. Shared by +Add and the template-update merge so both produce
-    /// identical commands:
-    ///   • <c>%bin%</c> → the resolved target binary's absolute path (or the literal
-    ///     binary name if it can't be found, so the user sees what's missing).
-    ///   • <c>%selfdir%</c> → the directory of RCMM.exe (where the shipped scripts live).
-    ///   • Icon priority: explicit template.Icon (e.g. "lib:claude") wins; else the
-    ///     resolved binary (Windows extracts its .exe icon); else null.
-    /// </summary>
-    internal static (string command, string? icon) ExpandTemplate(AdditionTemplates.Template t)
-    {
-        string command = t.Command;
-        string? icon = t.Icon;
-        if (!string.IsNullOrEmpty(t.IconBinary))
-        {
-            var resolved = BinaryResolver.Find(t.IconBinary!, t.IconBinaryFallbacks);
-            if (resolved != null)
-            {
-                if (string.IsNullOrEmpty(icon)) icon = resolved;
-                command = command.Replace("%bin%", resolved);
-            }
-            else
-            {
-                command = command.Replace("%bin%", t.IconBinary!);
-            }
-        }
-        var selfDir = System.IO.Path.GetDirectoryName(Environment.ProcessPath)
-                      ?? AppContext.BaseDirectory.TrimEnd('\\');
-        command = command.Replace("%selfdir%", selfDir);
-        return (command, icon);
     }
 
     // ---- Template row icons (lib vector, or extracted exe icon) -------------
@@ -223,39 +189,12 @@ public sealed partial class TemplatesPage : Page
         }
 
         // 2. Binary icon (editors / shells) — resolve the exe and extract its
-        //    icon off the UI thread, then paint it back if the row still matches.
+        //    icon off the UI thread, then paint it back if the row still matches
+        //    (recycle guard lives in the shared IconPainter).
         if (!string.IsNullOrEmpty(t.IconBinary))
         {
             var resolved = BinaryResolver.Find(t.IconBinary!, t.IconBinaryFallbacks);
-            if (resolved != null) _ = LoadBinaryIconAsync(g, t, resolved);
+            if (resolved != null) _ = IconPainter.PaintIntoHostAsync(g, t, "TplIcon", resolved, 18);
         }
-    }
-
-    private static async Task LoadBinaryIconAsync(Grid g, AdditionTemplates.Template t, string path)
-    {
-        var bytes = await IconHelper.LoadIconBytesAsync(path);
-        if (bytes == null || bytes.Length == 0) return;
-        // The container may have been recycled to a different template while we
-        // awaited — only paint if this row still shows the same one.
-        if (!ReferenceEquals(g.DataContext, t)) return;
-        if (g.FindName("TplIcon") is not Border host) return;
-        try
-        {
-            using var stream = new InMemoryRandomAccessStream();
-            using (var dw = new DataWriter(stream))
-            {
-                dw.WriteBytes(bytes);
-                await dw.StoreAsync();
-                await dw.FlushAsync();
-                dw.DetachStream();
-            }
-            stream.Seek(0);
-            var bmp = new BitmapImage();
-            await bmp.SetSourceAsync(stream);
-            if (!ReferenceEquals(g.DataContext, t)) return;
-            host.Child = new Image { Source = bmp, Width = 18, Height = 18 };
-            host.Visibility = Visibility.Visible;
-        }
-        catch { }
     }
 }

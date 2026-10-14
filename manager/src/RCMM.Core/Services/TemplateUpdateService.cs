@@ -17,7 +17,10 @@ namespace RCMM.Core.Services;
 /// so a template's display-name change is intentionally NOT a trigger.
 ///
 /// The originating template is identified by <see cref="AdditionEntry.SourceTemplateId"/>
-/// (the template's Name). A content hash of the tracked fields, stored on the
+/// (the template's stable <see cref="AdditionTemplates.Template.Id"/> — NOT its
+/// display Name, which we must stay free to rename without severing every
+/// existing user's update tracking; schema v6 migrated Name-keyed entries).
+/// A content hash of the tracked fields, stored on the
 /// entry as <see cref="AdditionEntry.AppliedTemplateHash"/>, decides "changed vs
 /// in-sync"; <see cref="AdditionEntry.SkippedTemplateHash"/> suppresses a prompt
 /// the user dismissed until the template moves on again.
@@ -51,7 +54,7 @@ public sealed class TemplateUpdateService
     public static AdditionTemplates.Template? TemplateFor(AdditionEntry e)
         => e.SourceTemplateId == null
             ? null
-            : AdditionTemplates.All.FirstOrDefault(t => t.Name == e.SourceTemplateId);
+            : AdditionTemplates.All.FirstOrDefault(t => t.Id == e.SourceTemplateId);
 
     /// <summary>Entries whose source template has changed since the entry was added
     /// or last updated, excluding any change the user already chose to Skip.</summary>
@@ -108,7 +111,7 @@ public sealed class TemplateUpdateService
 
     /// <summary>Stamp a freshly template-cloned entry so it starts in-sync.</summary>
     public static AdditionEntry Stamp(AdditionEntry e, AdditionTemplates.Template t)
-        => e with { SourceTemplateId = t.Name, AppliedTemplateHash = Hash(t), SkippedTemplateHash = null };
+        => e with { SourceTemplateId = t.Id, AppliedTemplateHash = Hash(t), SkippedTemplateHash = null };
 
     /// <summary>Human-readable summary of what applying an update would change.</summary>
     public static string Summarize(AdditionEntry e, AdditionTemplates.Template t)

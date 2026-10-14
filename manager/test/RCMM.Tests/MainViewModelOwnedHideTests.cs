@@ -115,7 +115,9 @@ public class MainViewModelOwnedHideTests : IDisposable
             new HideService(reg), reg, files, shellexIndex,
             registryScanner: entryScanner,
             addPage: addPage,
-            additionApplier: new AdditionApplier(reg));
+            additionApplier: new AdditionApplier(reg),
+            knownStore: new KnownEntriesStore(
+                Path.Combine(Path.GetDirectoryName(_storePath)!, "known-entries.json")));
 
         return (vm, addPage, reg);
     }

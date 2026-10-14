@@ -10,8 +10,9 @@ namespace RCMM.Core.Services;
 /// Only this single CLSID key is touched — the user's hide markers
 /// (LegacyDisable / Blocked list) and added verbs (RCMM.* keys) are left alone, so
 /// switching modes never requires re-applying Show/Hide or Add-to-menu. The change
-/// takes effect after an Explorer restart. This is the same key
-/// <see cref="CascadeProtectionService.LegacyMenuHackKey"/> consults.
+/// takes effect after an Explorer restart. <see cref="InprocKey"/> is the single
+/// definition of the hack path; <see cref="CascadeProtectionService.LegacyMenuHackKey"/>
+/// aliases it so cascade protection's skip-when-classic check can never drift.
 /// </summary>
 public sealed class ContextMenuModeService
 {

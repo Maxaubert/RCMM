@@ -6,24 +6,27 @@ namespace RCMM.Core.Services;
 
 public sealed class VerbToRegistryMapper
 {
-    private static readonly Scope[] AllScopes =
-    {
-        Scope.Files, Scope.Folders, Scope.Drives, Scope.Background,
-        Scope.AllObjects, Scope.Folder
-    };
+    private static readonly Scope[] AllScopes = ShellexHandlerWalk.StandardScopes;
 
     private readonly IRegistry _reg;
 
     public VerbToRegistryMapper(IRegistry reg) { _reg = reg; }
 
-    /// <summary>Lazily built verb → association buckets index (see
-    /// <see cref="BuildAssociationVerbIndex"/>). Rebuilt on the next MapVerb after
+    /// <summary>Per-extension association-bucket cache (see
+    /// <see cref="GetAssociationBuckets"/>). Rebuilt lazily after
     /// <see cref="InvalidateAssociationCache"/> so a rescan sees newly installed apps.</summary>
-    private Dictionary<string, List<string>>? _assocVerbIndex;
+    private Dictionary<string, IReadOnlyList<string>>? _bucketsByExtension;
 
-    public void InvalidateAssociationCache() => _assocVerbIndex = null;
+    public void InvalidateAssociationCache() => _bucketsByExtension = null;
 
-    public IEnumerable<HideTarget> MapVerb(string verb)
+    /// <summary>Maps a verb with no known source registrations: only the six scope
+    /// roots are checked. File-association and SystemFileAssociations targets need
+    /// <paramref name="sourceExtensions"/> — mapping them without knowing where the
+    /// verb was actually observed is exactly the cross-progid fan-out this class
+    /// used to have (see the overload's comment).</summary>
+    public IEnumerable<HideTarget> MapVerb(string verb) => MapVerb(verb, null);
+
+    public IEnumerable<HideTarget> MapVerb(string verb, IReadOnlyCollection<string>? sourceExtensions)
     {
         // We READ from HKCR (the merged view) to find verb registrations that exist
         // anywhere, but we WRITE into HKCU\Software\Classes — the per-user override
@@ -43,87 +46,102 @@ public sealed class VerbToRegistryMapper
         // File-association progids (VLC.mp4, txtfile, …) register per-file-type verbs
         // at <progid>\shell\<verb> — this is where most media/document app entries
         // actually live, and the association array Explorer builds for a file draws
-        // from them. They are NOT under any scope root or SystemFileAssociations, so
-        // without this branch RCMM can neither detect nor hide them: the classic
-        // failure was VLC's PlayWithVLC, whose only mapped target was the folder-scope
-        // Directory\shell key while the visible .mp4 menu item came from VLC.mp4.
-        _assocVerbIndex ??= BuildAssociationVerbIndex();
-        if (_assocVerbIndex.TryGetValue(verb, out var buckets))
+        // from them. They are NOT under any scope root, so without this branch RCMM
+        // can neither detect nor hide them: the classic failure was VLC's
+        // PlayWithVLC, whose only mapped target was the folder-scope Directory\shell
+        // key while the visible .mp4 menu item came from VLC.mp4.
+        //
+        // Crucially the fan-out is scoped to sourceExtensions — the sample-file
+        // extensions the verb was actually captured on. An earlier build indexed
+        // every bucket on the machine by bare verb name, so hiding one "Print" row
+        // wrote LegacyDisable into txtfile, batfile, jpegfile and every other progid
+        // that happened to carry a shell\print key — silently killing the verb
+        // menu-wide and breaking ShellExecute("print") for unrelated apps. Only the
+        // registrations that produced the visible row may be touched.
+        if (sourceExtensions is { Count: > 0 })
         {
-            foreach (var bucket in buckets)
+            // One verb can be observed on several extensions whose buckets overlap
+            // (a progid referenced by both .mp4's default and .m4v's OpenWithProgids)
+            // — dedupe on the final HKCR path.
+            var emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var ext in sourceExtensions)
             {
-                yield return new HideTarget(
-                    HideKind.LegacyDisable,
-                    RegistryHive.CurrentUser,
-                    @"Software\Classes\" + bucket + @"\shell\" + verb,
-                    "LegacyDisable");
-            }
-        }
+                foreach (var bucket in GetAssociationBuckets(ext))
+                {
+                    var hkcrPath = bucket + @"\shell\" + verb;
+                    if (!emitted.Add(hkcrPath)) continue;
+                    if (!_reg.KeyExists(RegistryHive.ClassesRoot, hkcrPath)) continue;
+                    yield return new HideTarget(
+                        HideKind.LegacyDisable,
+                        RegistryHive.CurrentUser,
+                        @"Software\Classes\" + hkcrPath,
+                        "LegacyDisable");
+                }
 
-        // SystemFileAssociations\<ext-or-type>\shell\<verb> registers verbs that only
-        // apply to files of a given extension or perceived type (image, audio, …).
-        // This is where things like ShareXImageEditor live. We enumerate all subkeys
-        // once and check each for the verb; for verbs not registered under any SFA
-        // bucket it's a cheap KeyExists per bucket.
-        const string sfaRoot = "SystemFileAssociations";
-        if (_reg.KeyExists(RegistryHive.ClassesRoot, sfaRoot))
-        {
-            foreach (var sfa in _reg.GetSubKeyNames(RegistryHive.ClassesRoot, sfaRoot))
-            {
-                var hkcrPath = sfaRoot + "\\" + sfa + @"\shell\" + verb;
-                if (!_reg.KeyExists(RegistryHive.ClassesRoot, hkcrPath)) continue;
-                yield return new HideTarget(
-                    HideKind.LegacyDisable,
-                    RegistryHive.CurrentUser,
-                    @"Software\Classes\" + hkcrPath,
-                    "LegacyDisable");
+                // SystemFileAssociations\<ext-or-perceived-type>\shell\<verb> registers
+                // verbs that only apply to files of a given extension or perceived type
+                // (image, audio, …) — this is where things like ShareXImageEditor live.
+                // Explorer only consults the SFA buckets for the file's own extension
+                // and its PerceivedType, so those are the only two we may map: scanning
+                // every SFA subkey for the verb name is the same cross-type fan-out as
+                // the association index above.
+                foreach (var sfa in GetSfaBuckets(ext))
+                {
+                    var hkcrPath = @"SystemFileAssociations\" + sfa + @"\shell\" + verb;
+                    if (!emitted.Add(hkcrPath)) continue;
+                    if (!_reg.KeyExists(RegistryHive.ClassesRoot, hkcrPath)) continue;
+                    yield return new HideTarget(
+                        HideKind.LegacyDisable,
+                        RegistryHive.CurrentUser,
+                        @"Software\Classes\" + hkcrPath,
+                        "LegacyDisable");
+                }
             }
         }
     }
 
     /// <summary>
-    /// Builds the verb → association-bucket index. A "bucket" is any HKCR key whose
-    /// shell\* verbs can surface in a file's context menu via the association array:
-    /// the extension key itself (.mp4) plus every progid an extension references —
-    /// its default value, its OpenWithProgids value names, and the per-user
-    /// Explorer FileExts\*\UserChoice ProgId (which overrides the default and is
-    /// exactly how "VLC is my .mp4 player" gets wired up). Buckets referenced by any
-    /// extension are included even when not currently the default: hiding a verb
-    /// should survive the user switching default apps between that vendor's progids.
+    /// The association buckets for ONE extension — the HKCR keys whose shell\*
+    /// verbs Explorer's association array actually consults for a file of that
+    /// type: the extension key itself (.mp4), the extension's default progid,
+    /// its OpenWithProgids value names, and the per-user Explorer
+    /// FileExts\&lt;ext&gt;\UserChoice ProgId (which overrides the default and is
+    /// exactly how "VLC is my .mp4 player" gets wired up). Non-default progids the
+    /// extension references are included: hiding a verb should survive the user
+    /// switching default apps among the apps registered for that extension.
     /// </summary>
-    private Dictionary<string, List<string>> BuildAssociationVerbIndex()
+    private IReadOnlyList<string> GetAssociationBuckets(string ext)
     {
-        var buckets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var name in _reg.GetSubKeyNames(RegistryHive.ClassesRoot, ""))
+        _bucketsByExtension ??= new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        if (_bucketsByExtension.TryGetValue(ext, out var cached)) return cached;
+
+        var buckets = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void Add(string? b)
         {
-            if (name.Length < 2 || name[0] != '.') continue;
-            if (_reg.KeyExists(RegistryHive.ClassesRoot, name + @"\shell"))
-                buckets.Add(name);
-            if (_reg.GetValue(RegistryHive.ClassesRoot, name, "") is string progid
-                && progid.Length > 0 && !progid.Contains('\\'))
-                buckets.Add(progid);
-            foreach (var p in _reg.GetValueNames(RegistryHive.ClassesRoot, name + @"\OpenWithProgids"))
-                if (p.Length > 0 && !p.Contains('\\'))
-                    buckets.Add(p);
+            if (!string.IsNullOrEmpty(b) && !b.Contains('\\') && seen.Add(b!)) buckets.Add(b!);
         }
 
+        Add(ext);
+        Add(_reg.GetValue(RegistryHive.ClassesRoot, ext, "") as string);
+        foreach (var p in _reg.GetValueNames(RegistryHive.ClassesRoot, ext + @"\OpenWithProgids"))
+            Add(p);
         const string fileExts = @"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts";
-        foreach (var ext in _reg.GetSubKeyNames(RegistryHive.CurrentUser, fileExts))
-            if (_reg.GetValue(RegistryHive.CurrentUser, fileExts + "\\" + ext + @"\UserChoice", "ProgId") is string chosen
-                && chosen.Length > 0 && !chosen.Contains('\\'))
-                buckets.Add(chosen);
+        Add(_reg.GetValue(RegistryHive.CurrentUser, fileExts + "\\" + ext + @"\UserChoice", "ProgId") as string);
 
-        var index = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-        foreach (var bucket in buckets)
-        {
-            foreach (var verb in _reg.GetSubKeyNames(RegistryHive.ClassesRoot, bucket + @"\shell"))
-            {
-                if (!index.TryGetValue(verb, out var list))
-                    index[verb] = list = new List<string>();
-                list.Add(bucket);
-            }
-        }
-        return index;
+        _bucketsByExtension[ext] = buckets;
+        return buckets;
+    }
+
+    /// <summary>The SystemFileAssociations buckets Explorer consults for a file of
+    /// the given extension: the extension itself and its PerceivedType (image,
+    /// audio, video, text, …).</summary>
+    private IEnumerable<string> GetSfaBuckets(string ext)
+    {
+        yield return ext;
+        if (_reg.GetValue(RegistryHive.ClassesRoot, ext, "PerceivedType") is string perceived
+            && perceived.Length > 0 && !perceived.Contains('\\'))
+            yield return perceived;
     }
 
     public IEnumerable<HideTarget> MapClsid(string clsid)
@@ -131,28 +149,25 @@ public sealed class VerbToRegistryMapper
         foreach (var scope in AllScopes)
         {
             var handlersRoot = scope.ToRegistryRoot() + @"\shellex\ContextMenuHandlers";
-            if (!_reg.KeyExists(RegistryHive.ClassesRoot, handlersRoot)) continue;
-            foreach (var name in _reg.GetSubKeyNames(RegistryHive.ClassesRoot, handlersRoot))
+            // recoverMaskedDefault: once the user has hidden a shellex, the HKCU
+            // shadow key we wrote has an empty default value, which wins in
+            // HKCR's merged view. The classic CLSID lookup then fails and
+            // ResolveHideTargets falls back to BlockedShellExt — but the
+            // *original* hide was HkcuMask, so on un-hide we'd leave the
+            // HkcuMask keys orphaned. The walk recovers the original CLSID
+            // through the user's own mask (RCMM.SavedDefault stash first, then
+            // HKLM) — without it a hidden per-user handler is unrecoverable
+            // after a rescan. See ShellexHandlerWalk.
+            foreach (var r in ShellexHandlerWalk.EnumerateHandlers(_reg, handlersRoot, recoverMaskedDefault: true))
             {
-                var defaultVal = _reg.GetValue(RegistryHive.ClassesRoot, handlersRoot + "\\" + name, "") as string;
-                // HKCU mask path: once the user has hidden a shellex, the HKCU
-                // shadow key we wrote has an empty default value, which wins
-                // in HKCR's merged view. The classic CLSID lookup then fails
-                // and ResolveHideTargets falls back to BlockedShellExt — but
-                // the *original* hide was HkcuMask, so on un-hide we'd leave
-                // the HkcuMask keys orphaned. Fall back to HKLM to recover
-                // the original CLSID through the user's own mask.
-                if (string.IsNullOrEmpty(defaultVal))
-                    defaultVal = _reg.GetValue(RegistryHive.LocalMachine,
-                        "Software\\Classes\\" + handlersRoot + "\\" + name, "") as string;
-                var match = (defaultVal != null && string.Equals(defaultVal, clsid, StringComparison.OrdinalIgnoreCase))
-                            || string.Equals(name, clsid, StringComparison.OrdinalIgnoreCase);
+                var match = (r.RawDefault != null && string.Equals(r.RawDefault, clsid, StringComparison.OrdinalIgnoreCase))
+                            || string.Equals(r.KeyName, clsid, StringComparison.OrdinalIgnoreCase);
                 if (match)
                 {
                     yield return new HideTarget(
                         HideKind.HkcuMask,
                         RegistryHive.CurrentUser,
-                        @"Software\Classes\" + scope.ToRegistryRoot() + @"\shellex\ContextMenuHandlers\" + name,
+                        @"Software\Classes\" + scope.ToRegistryRoot() + @"\shellex\ContextMenuHandlers\" + r.KeyName,
                         null);
                 }
             }

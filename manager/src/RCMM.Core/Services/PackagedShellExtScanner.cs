@@ -62,7 +62,7 @@ public sealed class PackagedShellExtScanner
                 if (!string.IsNullOrEmpty(executable)) continue;
 
                 var clsid = _reg.GetValue(RegistryHive.LocalMachine, serverPath, "SurrogateAppId") as string;
-                if (string.IsNullOrWhiteSpace(clsid) || !LooksLikeClsid(clsid)) continue;
+                if (string.IsNullOrWhiteSpace(clsid) || !RegistryHeuristics.LooksLikeClsid(clsid)) continue;
 
                 var displayName = ResolveString((_reg.GetValue(RegistryHive.LocalMachine, serverPath, "DisplayName") as string)?.Trim());
                 var appDisplayName = ResolveString((_reg.GetValue(RegistryHive.LocalMachine, serverPath, "ApplicationDisplayName") as string)?.Trim());
@@ -348,8 +348,6 @@ public sealed class PackagedShellExtScanner
         return null;
     }
 
-    private static bool LooksLikeClsid(string s)
-        => s.Length >= 38 && s.StartsWith('{') && s.EndsWith('}');
 
     /// <summary>
     /// PackagedCom Server values can be raw text ("WinRAR") or MUI indirect strings

@@ -58,6 +58,7 @@ public sealed class KnownEntriesStore
             if (entries == null)
             {
                 Log.Warn(Cat, "deserialize returned null — empty list");
+                BackupUnreadable();
                 return Array.Empty<MenuEntry>();
             }
             Log.Info(Cat, $"loaded knownEntries={entries.Count}");
@@ -66,8 +67,19 @@ public sealed class KnownEntriesStore
         catch (Exception ex)
         {
             Log.Error(Cat, $"failed to read {_path} — returning empty list", ex);
+            BackupUnreadable();
             return Array.Empty<MenuEntry>();
         }
+    }
+
+    // Unreadable ≠ absent. The very next successful rescan saves through this
+    // store and overwrites the file, which would make a transient read failure
+    // (AV lock, backup tool) permanent — and this file is the only recovery
+    // record for hidden CommandStore-only verbs. Park a copy beside it first.
+    private void BackupUnreadable()
+    {
+        try { File.Copy(_path, _path + ".bad", overwrite: true); Log.Warn(Cat, $"backed up unreadable file to {_path}.bad"); }
+        catch (Exception ex) { Log.Error(Cat, "backup of unreadable file failed", ex); }
     }
 
     public void Save(IEnumerable<MenuEntry> entries)

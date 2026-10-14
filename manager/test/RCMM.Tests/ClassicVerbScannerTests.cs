@@ -31,30 +31,49 @@ public class ClassicVerbScannerTests
         Assert.Equal("Open with…", entries[0].DisplayName);
         Assert.Equal(EntryKind.ShellVerb, entries[0].Kind);
         Assert.Equal(Scope.Files, entries[0].Scope);
-        Assert.False(entries[0].IsHidden);
         Assert.Equal(@"openwithhelper.exe ""%1""", entries[0].CommandLine);
     }
 
     [Fact]
-    public void Scan_drops_verb_when_no_display_name()
+    public void Scan_falls_back_to_key_name_when_no_display_value_at_all()
     {
         var reg = new FakeRegistry();
         reg.CreateKey(RegistryHive.ClassesRoot, @"*\shell\runme");
         var sut = MakeSut(reg);
 
-        // No default value and no MUIVerb => entry is dropped rather than using key name as fallback.
-        Assert.Empty(sut.Scan(Scope.Files));
+        // No default value and no MUIVerb: Explorer renders the key name, so the
+        // scanner must too — dropping the verb made one that was pre-hidden by
+        // another tool unrecoverable from RCMM (review b04, finding 34).
+        var entry = sut.Scan(Scope.Files).Single();
+        Assert.Equal("runme", entry.DisplayName);
+        Assert.Equal(EntryKind.ShellVerb, entry.Kind);
     }
 
     [Fact]
-    public void Scan_detects_LegacyDisable_as_hidden()
+    public void Scan_discovers_pre_hidden_key_name_only_verb()
+    {
+        var reg = new FakeRegistry();
+        // A tweak script wrote LegacyDisable on a verb that has no display value.
+        // The scan must still yield it — this is the only discovery path for a
+        // verb the live capture can't see; hidden-state is computed downstream
+        // by MainViewModel.AllTargetsHidden, not by the scanner.
+        reg.SetValue(RegistryHive.ClassesRoot, @"Directory\shell\OpenWithVSCode", "LegacyDisable", "");
+        var sut = MakeSut(reg);
+
+        var entry = sut.Scan(Scope.Folders).Single();
+        Assert.Equal("OpenWithVSCode", entry.DisplayName);
+    }
+
+    [Fact]
+    public void Scan_still_yields_verb_carrying_LegacyDisable()
     {
         var reg = new FakeRegistry();
         reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\thing", "", "Thing");
         reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\thing", "LegacyDisable", "");
         var sut = MakeSut(reg);
 
-        Assert.True(sut.Scan(Scope.Files).Single().IsHidden);
+        // Disabled verbs must stay discoverable so RCMM can offer un-hiding them.
+        Assert.Equal("Thing", sut.Scan(Scope.Files).Single().DisplayName);
     }
 
     [Fact]
@@ -130,55 +149,8 @@ public class ClassicVerbScannerTests
         Assert.Equal("R&D", sut.Scan(Scope.Files).Single().DisplayName);
     }
 
-    [Fact]
-    public void Scan_marks_verb_as_builtin_when_command_lives_under_SystemRoot()
-    {
-        var reg = new FakeRegistry();
-        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\sysfoo", "", "System Foo");
-        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\sysfoo\command", "", @"%SystemRoot%\System32\sysfoo.exe /run");
-        var sut = MakeSut(reg);
-
-        var entry = sut.Scan(Scope.Files).Single();
-        Assert.True(entry.IsBuiltIn);
-        Assert.Equal("Windows", entry.Source);
-    }
-
-    [Fact]
-    public void Scan_leaves_thirdparty_verb_unbuilted()
-    {
-        var reg = new FakeRegistry();
-        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\thirdparty", "", "Third Party");
-        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\thirdparty\command", "", @"C:\Program Files\Vendor\app.exe ""%1""");
-        var sut = MakeSut(reg);
-
-        var entry = sut.Scan(Scope.Files).Single();
-        Assert.False(entry.IsBuiltIn);
-    }
-
-    [Fact]
-    public void Scan_marks_verb_as_builtin_when_MUIVerb_references_a_bare_system_dll()
-    {
-        var reg = new FakeRegistry();
-        var mui = new FakeMuiStringResolver();
-        mui.Map["@efscore.dll,-101"] = "File ownership";
-        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\UpdateEncryptionSettingsWork", "MUIVerb", "@efscore.dll,-101");
-        var sut = MakeSut(reg, mui);
-
-        var entry = sut.Scan(Scope.Files).Single();
-        Assert.True(entry.IsBuiltIn);
-        Assert.Equal("Windows", entry.Source);
-    }
-
-    [Fact]
-    public void Scan_does_not_mark_thirdparty_full_path_MUIVerb_as_builtin()
-    {
-        var reg = new FakeRegistry();
-        var mui = new FakeMuiStringResolver();
-        mui.Map[@"@C:\Program Files\Vendor\res.dll,-1"] = "Vendor Action";
-        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\Vendor", "MUIVerb", @"@C:\Program Files\Vendor\res.dll,-1");
-        var sut = MakeSut(reg, mui);
-
-        var entry = sut.Scan(Scope.Files).Single();
-        Assert.False(entry.IsBuiltIn);
-    }
+    // NB: the scanner no longer computes IsBuiltIn/Source — production always
+    // classified rows in MainViewModel.ResolveSourceAndBuiltIn and discarded
+    // the scanner's fields, so the heuristics (and their tests) moved to
+    // RegistryHeuristics / RegistryHeuristicsTests.
 }

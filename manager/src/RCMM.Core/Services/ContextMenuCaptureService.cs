@@ -16,9 +16,28 @@ public sealed class ContextMenuCaptureService : IContextMenuCaptureService
     private const string Cat = "capture";
 
     public IReadOnlyList<CapturedItem> CaptureAll(IReadOnlyList<string> targetPaths)
+        => CaptureAll(targetPaths, CaptureOne, TimeSpan.FromSeconds(30));
+
+    // Internal seam: the per-target capture body and the timeout are injectable
+    // so the timeout/publication protocol below is unit-testable without COM.
+    internal static IReadOnlyList<CapturedItem> CaptureAll(
+        IReadOnlyList<string> targetPaths,
+        Action<string, List<CapturedItem>> captureOne,
+        TimeSpan timeout,
+        ManualResetEventSlim? workerExited = null)
     {
         Log.Info(Cat, $"CaptureAll start, targets={targetPaths.Count}");
-        var result = new List<CapturedItem>();
+        // Publication protocol: the STA worker captures each target into its own
+        // private list and merges it into `published` under `gate` — but only
+        // while the caller is still waiting. On timeout the caller flips
+        // `abandoned` and walks away with a snapshot copy, so the list it
+        // returns is never mutated behind the rescan's back by the abandoned
+        // worker (RescanCore AddRange-enumerates it immediately). The worker
+        // sees `abandoned` at its next merge and stops instead of probing
+        // targets nobody will read.
+        var published = new List<CapturedItem>();
+        var gate = new object();
+        bool abandoned = false;
         var done = new ManualResetEventSlim(false);
 
         var t = new Thread(() =>
@@ -30,10 +49,16 @@ public sealed class ContextMenuCaptureService : IContextMenuCaptureService
                 foreach (var path in targetPaths)
                 {
                     PumpMessages();
-                    try { CaptureOne(path, result); }
+                    var local = new List<CapturedItem>();
+                    try { captureOne(path, local); }
                     catch (Exception ex)
                     {
                         Log.Error(Cat, $"target={path} unhandled", ex);
+                    }
+                    lock (gate)
+                    {
+                        if (abandoned) break;
+                        published.AddRange(local);
                     }
                 }
             }
@@ -41,16 +66,26 @@ public sealed class ContextMenuCaptureService : IContextMenuCaptureService
             {
                 if (initHr >= 0) CoUninitialize();
                 done.Set();
+                workerExited?.Set();
             }
         })
         { IsBackground = true };
         t.SetApartmentState(ApartmentState.STA);
         t.Start();
-        if (!done.Wait(TimeSpan.FromSeconds(30)))
-            Log.Warn(Cat, "STA worker exceeded 30s timeout; returning partial results");
 
-        Log.Info(Cat, $"CaptureAll done, items={result.Count}");
-        return result;
+        if (done.Wait(timeout))
+        {
+            // Worker finished: no writer remains, the live list is safe to hand out.
+            Log.Info(Cat, $"CaptureAll done, items={published.Count}");
+            return published;
+        }
+        lock (gate)
+        {
+            abandoned = true;
+            var snapshot = new List<CapturedItem>(published);
+            Log.Warn(Cat, $"STA worker exceeded {timeout.TotalSeconds:0}s timeout; returning partial results ({snapshot.Count} items)");
+            return snapshot;
+        }
     }
 
     private static void PumpMessages()

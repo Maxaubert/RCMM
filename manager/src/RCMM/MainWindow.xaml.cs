@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -10,7 +11,6 @@ using RCMM.Core.Services;
 using RCMM.Core.ViewModels;
 using RCMM.Util;
 using RCMM.Views;
-using Windows.UI;
 
 namespace RCMM;
 
@@ -18,9 +18,14 @@ public sealed partial class MainWindow : Window
 {
     public MainViewModel ViewModel { get; }
 
-    private Windows.UI.ViewManagement.UISettings? _uiSettings;
     private WindowMinSize? _minSize;
     private bool _busy;
+    /// <summary>Serializes the apply → Explorer-restart → rescan orchestrations
+    /// started from the footer button, the template-update dialog and the
+    /// Settings page. MainViewModel's work gate only protects the shared VM
+    /// state; without this gate two orchestrations interleave at the step
+    /// level (two Explorer restarts, doubled rescans).</summary>
+    private readonly SemaphoreSlim _applyGate = new(1, 1);
     private bool _templateUpdatesChecked;
     private bool _settingsLeaveGuard;
 
@@ -110,6 +115,33 @@ public sealed partial class MainWindow : Window
         {
             if (_templateUpdatesChecked) return;
             _templateUpdatesChecked = true;
+            // additions.json unreadable at startup: warn before anything else. The
+            // Add page shows a stub, and Apply refuses additions until a restart
+            // reloads the file — the user must hear that from us, not discover it
+            // after their edits appear to vanish.
+            if (ViewModel.AddPage?.LoadFailed == true)
+            {
+                try
+                {
+                    await new ContentDialog
+                    {
+                        Title = "Your added entries could not be loaded",
+                        Content = new TextBlock
+                        {
+                            Text = "additions.json exists but could not be read, so the Add page looks empty. "
+                                 + "Your data is untouched (a backup copy was saved as additions.json.bad), and "
+                                 + "Apply will refuse to write added entries this session to protect it.\n\n"
+                                 + "Restart RCMM to retry loading.",
+                            TextWrapping = TextWrapping.Wrap,
+                        },
+                        CloseButtonText = "OK",
+                        XamlRoot = RootGrid.XamlRoot,
+                        RequestedTheme = ElementTheme.Dark,
+                    }.ShowAsync();
+                }
+                catch (Exception ex) { Log.Error("addstore", "load-failure warning dialog failed", ex); }
+                return;   // skip the template-update offer — its Apply path is refused anyway
+            }
             try { await TemplateUpdatesDialog.RunAsync(ViewModel, RootGrid.XamlRoot, manual: false); }
             catch (Exception ex) { Log.Error("tplupd", "startup template-update check failed", ex); }
         };
@@ -128,7 +160,18 @@ public sealed partial class MainWindow : Window
 
     private void NavHome_Click(object sender, RoutedEventArgs e)
     {
-        while (ContentFrame.CanGoBack) ContentFrame.GoBack();
+        // Bounded walk to the back-stack root. A dirty Settings page cancels
+        // navigation synchronously (ContentFrame_Navigating sets e.Cancel before
+        // its first await), which leaves CanGoBack true — an unconditional
+        // while (CanGoBack) GoBack() would then spin forever on the UI thread.
+        // Stop as soon as a GoBack is refused (back-stack depth unchanged); the
+        // leave-guard's dialog takes over from there.
+        while (ContentFrame.CanGoBack)
+        {
+            int depth = ContentFrame.BackStack.Count;
+            ContentFrame.GoBack();
+            if (ContentFrame.BackStack.Count == depth) break;   // navigation cancelled
+        }
     }
 
     private void Settings_Click(object sender, RoutedEventArgs e)
@@ -150,20 +193,28 @@ public sealed partial class MainWindow : Window
         var mode = e.NavigationMode;
         e.Cancel = true;   // must be set before the first await
 
-        var choice = await sp.ConfirmLeaveAsync();
-        if (choice == SettingsLeaveChoice.Cancel) return;
-        if (choice == SettingsLeaveChoice.Apply)
+        // async void: an exception escaping this handler rethrows on the
+        // dispatcher and kills the process (ContentDialog.ShowAsync can throw
+        // COMException when another dialog is already open), so everything past
+        // the first await must be guarded.
+        try
         {
-            try { await sp.ApplyAsync(); }
-            catch (Exception ex) { Log.Error("settings", "apply-on-leave failed", ex); }
-        }
-        else sp.Revert();
+            var choice = await sp.ConfirmLeaveAsync();
+            if (choice == SettingsLeaveChoice.Cancel) return;
+            if (choice == SettingsLeaveChoice.Apply)
+            {
+                try { await sp.ApplyAsync(); }
+                catch (Exception ex) { Log.Error("settings", "apply-on-leave failed", ex); }
+            }
+            else sp.Revert();
 
-        _settingsLeaveGuard = true;
-        if (mode == Microsoft.UI.Xaml.Navigation.NavigationMode.Back && ContentFrame.CanGoBack)
-            ContentFrame.GoBack();
-        else if (target != null)
-            ContentFrame.Navigate(target, param);
+            _settingsLeaveGuard = true;
+            if (mode == Microsoft.UI.Xaml.Navigation.NavigationMode.Back && ContentFrame.CanGoBack)
+                ContentFrame.GoBack();
+            else if (target != null)
+                ContentFrame.Navigate(target, param);
+        }
+        catch (Exception ex) { Log.Error("settings", "leave-guard navigation failed", ex); }
     }
 
     private void UpdateFooterApplyVisibility(Type pageType)
@@ -188,34 +239,77 @@ public sealed partial class MainWindow : Window
     {
         int n = ViewModel.PendingChangeIds.Count;
         bool addDirty = ViewModel.AddPage?.HasPendingChanges == true;
-        FooterApplyButton.IsEnabled = n > 0 || addDirty;
+        // !_busy: a pending-count change mid-chain (ApplyPending clears the ids,
+        // a row toggle re-adds one) must not re-enable the button while an
+        // apply/restart/rescan orchestration is still running.
+        FooterApplyButton.IsEnabled = !_busy && (n > 0 || addDirty);
         FooterApplyButton.Content = n > 0 ? $"Apply ({n})" : "Apply";
+    }
+
+    /// <summary>Run an apply → Explorer-restart → rescan orchestration under the
+    /// shared gate. Chains queue rather than overlap, so two Explorer restarts
+    /// can never run concurrently and rescans stay sequential. The footer button
+    /// is disabled for the duration.</summary>
+    public async Task RunApplyChainAsync(Func<Task> work)
+    {
+        await _applyGate.WaitAsync();
+        _busy = true;
+        UpdateFooterApply();
+        try { await work(); }
+        finally
+        {
+            _busy = false;
+            UpdateFooterApply();
+            _applyGate.Release();
+        }
     }
 
     private async void FooterApply_Click(object sender, RoutedEventArgs e)
     {
         // _busy guards re-entry even if a click is requeued before the disabled
-        // state propagates; the FooterApplyButton.IsEnabled = false below is the
-        // visual half of the same guard.
+        // state propagates — a footer click during a running chain is dropped,
+        // not queued.
         if (_busy) return;
-        _busy = true;
-        FooterApplyButton.IsEnabled = false;
         try
         {
-            await Task.Run(() => ViewModel.ApplyPending());
-            // Honor the "Restart Explorer automatically" setting. Off = write the
-            // registry but leave Explorer alone (some changes then show only after
-            // the user restarts Explorer or signs out).
-            if (new SettingsStore().Load().RestartExplorerOnApply)
-                await Task.Run(() => new ExplorerRestart().Restart());
-            await ViewModel.RescanAsync();
+            System.Collections.Generic.IReadOnlyList<string> errors = System.Array.Empty<string>();
+            await RunApplyChainAsync(async () =>
+            {
+                errors = await Task.Run(() => ViewModel.ApplyPending());
+                // Honor the "Restart Explorer automatically" setting. Off = write the
+                // registry but leave Explorer alone (some changes then show only after
+                // the user restarts Explorer or signs out).
+                if (new SettingsStore().Load().RestartExplorerOnApply)
+                    await Task.Run(() => new ExplorerRestart().Restart());
+                await ViewModel.RescanAsync();
+            });
+            // After the chain (never inside it — the gate must release first):
+            // a failed write used to vanish into rcmm.log while Explorer restarted
+            // and the UI looked freshly applied.
+            await ShowApplyErrorsAsync(errors);
         }
         catch (Exception ex) { Log.Error("apply", "apply/rescan failed", ex); }
-        finally
+    }
+
+    /// <summary>Tell the user which apply operations failed. No-op on success.</summary>
+    public async Task ShowApplyErrorsAsync(System.Collections.Generic.IReadOnlyList<string> errors)
+    {
+        if (errors.Count == 0) return;
+        try
         {
-            _busy = false;
-            UpdateFooterApply();
+            var dialog = new ContentDialog
+            {
+                Title = "Some changes were not applied",
+                Content = new TextBlock { Text = string.Join("\n\n", errors), TextWrapping = TextWrapping.Wrap },
+                CloseButtonText = "OK",
+                XamlRoot = RootGrid.XamlRoot,
+                RequestedTheme = ElementTheme.Dark,
+            };
+            await dialog.ShowAsync();
         }
+        // ShowAsync throws COMException when another dialog is already open; the
+        // errors are still in rcmm.log, so degrade to logging rather than crashing.
+        catch (Exception ex) { Log.Error("apply", "apply-error dialog failed", ex); }
     }
 
 private void LoadIconsForAllEntries()
@@ -228,14 +322,8 @@ private void LoadIconsForAllEntries()
             {
                 DispatcherQueue.TryEnqueue(async () =>
                 {
-                    try
-                    {
-                        using var ms = new System.IO.MemoryStream(bytes);
-                        var bmp = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage();
-                        await bmp.SetSourceAsync(ms.AsRandomAccessStream());
-                        rowRef.Icon = bmp;
-                    }
-                    catch { }
+                    var bmp = await IconPainter.DecodeAsync(bytes);
+                    if (bmp != null) rowRef.Icon = bmp;
                 });
                 continue;
             }
@@ -247,20 +335,11 @@ private void LoadIconsForAllEntries()
                 var pngBytes = await IconHelper.LoadIconBytesAsync(path);
                 if (pngBytes == null) return;
                 // BitmapImage is COM-tied to the dispatcher that created it; build
-                // it on the UI thread to avoid silent cross-thread marshalling errors.
+                // it on the UI thread (IconPainter logs decode failures).
                 DispatcherQueue.TryEnqueue(async () =>
                 {
-                    try
-                    {
-                        using var ms = new System.IO.MemoryStream(pngBytes);
-                        var bmp = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage();
-                        await bmp.SetSourceAsync(ms.AsRandomAccessStream());
-                        rowRef.Icon = bmp;
-                    }
-                    catch (Exception ex)
-                    {
-                        Log.Debug("ui", $"icon load failed for {rowRef.Entry.DisplayName}: {ex.Message}");
-                    }
+                    var bmp = await IconPainter.DecodeAsync(pngBytes);
+                    if (bmp != null) rowRef.Icon = bmp;
                 });
             });
         }
@@ -335,23 +414,4 @@ private void LoadIconsForAllEntries()
         catch { }
     }
 
-    private void HookThemeChange()
-    {
-        try
-        {
-            _uiSettings = new Windows.UI.ViewManagement.UISettings();
-            _uiSettings.ColorValuesChanged += (s, a) =>
-                DispatcherQueue.TryEnqueue(UpdateForCurrentTheme);
-            UpdateForCurrentTheme();
-        }
-        catch { }
-    }
-
-    private void UpdateForCurrentTheme()
-    {
-        if (_uiSettings is null) return;
-        var bg = _uiSettings.GetColorValue(Windows.UI.ViewManagement.UIColorType.Background);
-        bool isDark = (bg.R + bg.G + bg.B) < 384;
-        RootGrid.RequestedTheme = isDark ? ElementTheme.Dark : ElementTheme.Light;
-    }
 }

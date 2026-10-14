@@ -22,7 +22,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly PackagedShellExtScanner? _packagedScanner;
     private readonly CommandStoreVerbIndex? _commandStore;
     private readonly ShellexKeyNameIndex? _shellexKey;
-    private readonly ShellexInvoker? _shellexInvoker;
+    private readonly IShellexInvoker? _shellexInvoker;
 
     // Posts an action to the UI thread. Defaults to inline execution so tests
     // and headless callers run synchronously; the app injects a DispatcherQueue
@@ -40,24 +40,26 @@ public sealed class MainViewModel : ObservableObject
         new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _observedClsids =
         new(StringComparer.OrdinalIgnoreCase);
-    // CLSIDs whose technical DisplayName the rename pass successfully replaced
-    // with a friendly one. Treated like "observed" by FilterIntoAllEntries so
+    // Which sample-file extensions each live-captured verb was observed on.
+    // MapVerb uses this to scope file-association hide targets to the
+    // registrations that actually produced the visible row — hiding a "Print"
+    // row captured on the .txt sample must not fan out to every progid on the
+    // machine that happens to carry a shell\print key. Rebuilt per rescan.
+    private readonly Dictionary<string, HashSet<string>> _verbSourceExtensions =
+        new(StringComparer.OrdinalIgnoreCase);
+    // CLSIDs whose technical DisplayName the rename pass replaced via a TRUSTED
+    // source — IExplorerCommand::GetTitle, CommandStore derivation, or the
+    // static override table. Treated like "observed" by FilterIntoAllEntries so
     // the unrelated unobserved-CLSID filter doesn't immediately re-hide the
     // row we just made readable (Modern Share, Defender Scan, NVIDIA, ...).
+    // Renames sourced ONLY from probe emissions are deliberately NOT added:
+    // conditional/informational handlers (Work Folders, Launches Sync Center,
+    // …) emit plausible menu text during a probe without ever contributing to
+    // a real menu, and exempting them resurrected exactly the phantom rows the
+    // unobserved-CLSID filter exists to remove — an effect the old
+    // English-literal suppression list could only patch on English Windows.
     private readonly HashSet<string> _renamedClsids =
         new(StringComparer.OrdinalIgnoreCase);
-
-    // Last-resort DisplayName overrides for shellex handlers whose menu text
-    // we can't recover from the registry or COM probes — typically because
-    // the handler refuses to populate IContextMenu without admin/admin-elevated
-    // context, and it doesn't implement IExplorerCommand. Keyed by the
-    // FileDescription that ClassicShellexScanner picks up.
-    private static readonly Dictionary<string, string> _technicalDisplayNameOverrides
-        = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["Microsoft Security Client Shell Extension"] = "Scan with Microsoft Defender",
-        ["NVIDIA Display Shell Extension"] = "NVIDIA Control Panel",
-    };
 
     // CLSID → icon-path overrides for shellexes whose registered DLL is
     // empty of icon resources (Windows renders the menu icon via an HBITMAP
@@ -104,12 +106,21 @@ public sealed class MainViewModel : ObservableObject
 
     private readonly AddPageViewModel? _addPage;
     private readonly AdditionApplier? _additionApplier;
-    private readonly KnownEntriesStore _knownStore = new(KnownEntriesStore.DefaultPath());
+    // Injectable so tests never write to the real %LOCALAPPDATA%\RCMM\
+    // known-entries.json — RescanCore unconditionally saves through this store,
+    // and overwriting the real file with test rows destroys the only recovery
+    // record for hidden CommandStore-only verbs (see KnownEntriesStore).
+    private readonly KnownEntriesStore _knownStore;
 
     /// <summary>View-model backing the Add page (templates / custom entries / folders).</summary>
     public AddPageViewModel? AddPage => _addPage;
 
     private readonly CascadeProtectionService? _cascadeProtector;
+    // Rescan's attach+rename stage and ApplyPending's sequencing, extracted
+    // into collaborators so each has one owner (see RenamePipeline /
+    // ApplyOrchestrator). Both are pure delegations — no behavior lives here.
+    private readonly RenamePipeline _renamePipeline;
+    private readonly ApplyOrchestrator _applyOrchestrator;
     // Background-scoped packaged-COM extensions, keyed by CLSID. Populated by
     // Rescan from the PackagedShellExtScanner output. ApplyPending consults
     // this to decide whether to install cascade-protection verbs before
@@ -129,10 +140,11 @@ public sealed class MainViewModel : ObservableObject
         PackagedShellExtScanner? packagedScanner = null,
         CommandStoreVerbIndex? commandStore = null,
         ShellexKeyNameIndex? shellexKey = null,
-        ShellexInvoker? shellexInvoker = null,
+        IShellexInvoker? shellexInvoker = null,
         AddPageViewModel? addPage = null,
         AdditionApplier? additionApplier = null,
         CascadeProtectionService? cascadeProtector = null,
+        KnownEntriesStore? knownStore = null,
         Action<Action>? postToUi = null)
     {
         _capture = capture;
@@ -150,17 +162,23 @@ public sealed class MainViewModel : ObservableObject
         _addPage = addPage;
         _additionApplier = additionApplier;
         _cascadeProtector = cascadeProtector;
+        _knownStore = knownStore ?? new KnownEntriesStore(KnownEntriesStore.DefaultPath());
         _post = postToUi ?? (a => a());
+        _renamePipeline = new RenamePipeline(_shellexIndex, _shellexInvoker, _commandStore);
+        _applyOrchestrator = new ApplyOrchestrator(_hideService, _reg, _cascadeProtector,
+            _additionApplier, _addPage, _post);
     }
 
     public bool RequiresExplorerRestart
     {
         get
         {
+            // HideService owns the single restart predicate — this property
+            // used to inline an identical copy, which could silently drift if
+            // a new restart-requiring HideKind was added to only one of them.
             lock (_pendingLock)
                 return _pendingHide.Values.Concat(_pendingUnhide.Values)
-                               .SelectMany(t => t)
-                               .Any(t => t.Kind == HideKind.HkcuMask || t.Kind == HideKind.BlockedShellExt);
+                               .Any(HideService.RequiresExplorerRestart);
         }
     }
 
@@ -203,6 +221,20 @@ public sealed class MainViewModel : ObservableObject
         allItems.AddRange(_capture.CaptureAll(targets));
         int liveCount = allItems.Count;
 
+        // Attribute each live-captured verb to the sample-file extensions it was
+        // seen on (container targets and registry-derived rows have none — their
+        // verbs live under scope roots, which MapVerb always checks).
+        _verbSourceExtensions.Clear();
+        foreach (var item in allItems)
+        {
+            if (string.IsNullOrEmpty(item.Verb) || item.TargetPath.StartsWith("<")) continue;
+            var ext = System.IO.Path.GetExtension(item.TargetPath);
+            if (string.IsNullOrEmpty(ext)) continue;
+            if (!_verbSourceExtensions.TryGetValue(item.Verb!, out var exts))
+                _verbSourceExtensions[item.Verb!] = exts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            exts.Add(ext);
+        }
+
         _packagedClsids.Clear();
         _packagedPublishers.Clear();
         _packagedDllByClsid.Clear();
@@ -241,11 +273,11 @@ public sealed class MainViewModel : ObservableObject
             foreach (var captured in allItems)
             {
                 if (string.IsNullOrEmpty(captured.Verb)) continue;
-                foreach (var t in _mapper.MapVerb(captured.Verb!))
+                foreach (var t in _mapper.MapVerb(captured.Verb!, SourceExtensionsFor(captured.Verb!)))
                 {
                     var hkcrPath = HkcrPathFor(t) ?? t.Path;
-                    foreach (var field in new[] { "ExplorerCommandHandler", "VerbHandler", "CommandStateHandler", "CanonicalName" })
-                        if (_reg.GetValue(RegistryHive.ClassesRoot, hkcrPath, field) is string c && LooksLikeClsid(c))
+                    foreach (var field in RegistryHeuristics.VerbHandlerValueNames)
+                        if (_reg.GetValue(RegistryHive.ClassesRoot, hkcrPath, field) is string c && RegistryHeuristics.LooksLikeClsid(c))
                             _shellexInvoker.RegisterExtraClsid(c);
                 }
             }
@@ -278,8 +310,9 @@ public sealed class MainViewModel : ObservableObject
             //      "WindowsTerminalShellExt").
             //   3. Registry-reported DisplayName as a last resort.
             var liveTitle = _shellexInvoker?.LookupTitle(pkg.Clsid);
-            var display = !string.IsNullOrWhiteSpace(liveTitle) ? liveTitle!
-                        : LooksTechnical(pkg.DisplayName) ? pkg.PublisherDisplayName
+            bool titleIsMenuText = !string.IsNullOrWhiteSpace(liveTitle);
+            var display = titleIsMenuText ? liveTitle!
+                        : RenamePipeline.LooksTechnical(pkg.DisplayName) ? pkg.PublisherDisplayName
                         : pkg.DisplayName;
 
             allItems.Add(new CapturedItem
@@ -287,6 +320,10 @@ public sealed class MainViewModel : ObservableObject
                 TargetPath = $"<packaged:{pkg.PackageFullName}>",
                 Position = pos++,
                 DisplayName = display,
+                // GetTitle is the exact string the shell renders, so the
+                // technical-name filter must not judge it — "PowerRename"
+                // reads like a class identifier but IS the menu entry.
+                DisplayNameIsMenuText = titleIsMenuText,
                 OwnerClsid = pkg.Clsid,
                 IsSeparator = false,
                 IsSubmenu = false
@@ -310,86 +347,10 @@ public sealed class MainViewModel : ObservableObject
         // Work Folders, Client Side Caching UI, etc.).
         _observedClsids.Clear();
 
-        // Pre-merge pass:
-        //   (a) Attach OwnerClsid to live captures so the merge's clsid-key dedup
-        //       collapses a live "Scan for deleted files" with the registry-derived
-        //       "Recuva shell extensions" row (same CLSID).
-        //   (b) For any item whose DisplayName is a technical FileDescription
-        //       label and whose CLSID was probed, replace DisplayName with the
-        //       first emitted menu text. "Microsoft Security Client Shell
-        //       Extension" → "Scan with Microsoft Defender…" when Defender's
-        //       handler emitted that text during the invoker run.
-        for (int i = 0; i < allItems.Count; i++)
-        {
-            var item = allItems[i];
-            if (string.IsNullOrEmpty(item.OwnerClsid))
-            {
-                if (nameIndex.TryGetValue(item.DisplayName, out var nameClsid))
-                    item = item with { OwnerClsid = nameClsid };
-                else
-                {
-                    var fuzzy = _shellexIndex.FuzzyMatch(item.DisplayName, wordIndex);
-                    if (fuzzy != null) item = item with { OwnerClsid = fuzzy };
-                    else
-                    {
-                        var invMap = _shellexInvoker?.BuildDisplayNameToClsidMap();
-                        if (invMap != null && invMap.TryGetValue(item.DisplayName, out var invClsid))
-                            item = item with { OwnerClsid = invClsid };
-                    }
-                }
-            }
-
-            if (!string.IsNullOrEmpty(item.OwnerClsid) && LooksTechnical(item.DisplayName))
-            {
-                // Fallback chain — first one with a non-technical, non-empty title wins.
-                //   (1) IShellExtInit+IContextMenu probe results ("Scan for deleted files"
-                //       for Recuva's CLSID once it emitted that string during probing).
-                //   (2) IExplorerCommand::GetTitle — Modern Share's CLSID returns "Share"
-                //       here even though the registry only has the COM ProgID
-                //       "Ribbon Modern Share Verb".
-                //   (3) CommandStore verb-name derivation — covers any OS modern verb
-                //       whose handler is registered in CommandStore but doesn't
-                //       implement IExplorerCommand.
-                //   (4) Static override table for well-known third-party handlers
-                //       (Defender, NVIDIA) that don't probe and have no CommandStore
-                //       entry; their menu text is well-known and stable enough to
-                //       hardcode rather than leave the row hidden.
-                string? renamed = _shellexInvoker?.LookupEmittedNames(item.OwnerClsid)
-                    .FirstOrDefault(n => !string.IsNullOrWhiteSpace(n) && !LooksTechnical(n));
-                if (string.IsNullOrWhiteSpace(renamed))
-                {
-                    var title = _shellexInvoker?.LookupTitle(item.OwnerClsid);
-                    if (!string.IsNullOrWhiteSpace(title) && !LooksTechnical(title!))
-                        renamed = title;
-                }
-                if (string.IsNullOrWhiteSpace(renamed))
-                {
-                    var cs = _commandStore?.FriendlyTitleForClsid(item.OwnerClsid);
-                    if (!string.IsNullOrWhiteSpace(cs) && !LooksTechnical(cs!))
-                        renamed = cs;
-                }
-                if (string.IsNullOrWhiteSpace(renamed)
-                    && _technicalDisplayNameOverrides.TryGetValue(item.DisplayName, out var hardcoded))
-                    renamed = hardcoded;
-
-                if (!string.IsNullOrWhiteSpace(renamed))
-                {
-                    item = item with { DisplayName = renamed! };
-                    _renamedClsids.Add(item.OwnerClsid!);
-                }
-            }
-
-            // A CLSID counts as "observed" only when it's attached to a *live*
-            // captured menu item (TargetPath is a real path, not a "<registry:..>"
-            // or "<packaged:..>" placeholder). Invoker emissions don't qualify
-            // because some shellexes (Work Folders, Client Side Caching UI,
-            // Launches Sync Center, …) emit informational items during a probe
-            // but never contribute to the actual right-click menu the user sees.
-            if (!string.IsNullOrEmpty(item.OwnerClsid) && !item.TargetPath.StartsWith("<"))
-                _observedClsids.Add(item.OwnerClsid!);
-
-            allItems[i] = item;
-        }
+        // Pre-merge attach + rename pass — see RenamePipeline for the full
+        // trust-ordered chain. Populates _renamedClsids / _observedClsids,
+        // which FilterIntoAllEntries reads after the merge.
+        _renamePipeline.Run(allItems, nameIndex, wordIndex, _renamedClsids, _observedClsids);
 
         var merged = MergeCaptures(allItems).ToList();
         Log.Info("rescan", $"captured={allItems.Count} mergedUnique={merged.Count}");
@@ -413,7 +374,11 @@ public sealed class MainViewModel : ObservableObject
             // "Create shortcut" ships in shell32 but its hide-target classification
             // doesn't always resolve to a Windows DLL probe (the verb's CLSID handler
             // may live elsewhere), so force it into the Windows-specific bucket.
-            if (string.Equals(effectiveItem.DisplayName, "Create shortcut", StringComparison.OrdinalIgnoreCase))
+            // Match the canonical verb id ("link") first — the menu text is
+            // localized, so the English literal only fires on English Windows.
+            // A non-match on both is harmless: the row just isn't force-bucketed.
+            if (string.Equals(effectiveItem.Verb, "link", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(effectiveItem.DisplayName, "Create shortcut", StringComparison.OrdinalIgnoreCase))
                 isBuiltIn = true;
             var entry = new MenuEntry
             {
@@ -425,7 +390,8 @@ public sealed class MainViewModel : ObservableObject
                 HideTargets = hideTargets,
                 IsBuiltIn = isBuiltIn,
                 IsHidden = isHidden,
-                IsSubmenu = effectiveItem.IsSubmenu
+                IsSubmenu = effectiveItem.IsSubmenu,
+                DisplayNameIsMenuText = effectiveItem.DisplayNameIsMenuText
             };
             var row = new EntryRowViewModel(entry) { HiddenChanged = OnRowToggled };
             _allRows.Add(row);
@@ -450,11 +416,6 @@ public sealed class MainViewModel : ObservableObject
         // entry vanishes from RCMM and the user can't un-toggle it.
         RestoreGhostEntries();
 
-        lock (_pendingLock)
-        {
-            _pendingHide.Clear();
-            _pendingUnhide.Clear();
-        }
         // Persist the current snapshot so the next rescan can recover ghosts.
         _knownStore.Save(_allRows.ConvertAll(r => r.Entry));
         for (int i = 0; i < _allRows.Count; i++)
@@ -463,19 +424,37 @@ public sealed class MainViewModel : ObservableObject
             var src = string.IsNullOrEmpty(r.Entry.Source) ? "Unknown" : r.Entry.Source;
             Log.Debug("dump", $"#{i:D2} '{r.Entry.DisplayName}' src='{src}' sub={r.Entry.IsSubmenu} hideTargets={r.Entry.HideTargets.Count} icon='{r.Entry.IconPath ?? ""}'");
         }
-        // UI tail: FilterIntoAllEntries (mutates AllEntries), PendingChangeIds.Clear,
+        // UI tail: FilterIntoAllEntries (mutates AllEntries), the pending clears,
         // and the PropertyChanged raises are all bound-collection / UI-thread ops, so
         // they run together as the single UI-thread hand-off for a completed rescan.
         _post(() =>
         {
             FilterIntoAllEntries();
-            PendingChangeIds.Clear();
+            // The pending dictionaries and the PendingChangeIds badge list must be
+            // cleared in ONE block under the pending lock. Clearing the dictionaries
+            // earlier on the worker (the old shape) left a window where a UI-thread
+            // toggle landed after the worker's clear but before this posted clear:
+            // the badge got wiped while the dictionary entry survived, producing an
+            // invisible pending change silently applied by whatever Apply ran next.
+            lock (_pendingLock)
+            {
+                _pendingHide.Clear();
+                _pendingUnhide.Clear();
+                PendingChangeIds.Clear();
+            }
             Raise(nameof(RequiresExplorerRestart));
             RescanComplete?.Invoke();
             Log.Info("rescan", $"end rows={_allRows.Count} withHideTargets={rowsWithHide} builtIn={rowsBuiltIn} visible={AllEntries.Count}");
         });
     }
 
+    // English-literal belt-and-braces for informational rows that reach the
+    // list WITHOUT a CLSID key (live-captured or name-keyed), where the
+    // structural unobserved-CLSID filter below can't act. For CLSID-keyed rows
+    // the structural condition — emission-only rename, never observed live —
+    // is what removes these handlers, and it works in every locale; a
+    // non-match here on non-English Windows is therefore tolerable, not a
+    // phantom-row hole.
     private static readonly string[] _suppressedDisplayNames =
     {
         "File ownership",
@@ -485,13 +464,28 @@ public sealed class MainViewModel : ObservableObject
         "App Resolver",
     };
 
-    // Verbs that must never be offered for hiding because disabling them breaks
-    // core navigation. "open" is the double-click / Enter action for folders,
-    // drives and files — hiding it would make the user unable to open anything,
-    // so it has no business being a toggle. Ids are "verb:" + lowercased verb.
+    // Verbs that must never be offered for hiding. "open" is the double-click /
+    // Enter action for files, folders and drives — hiding it would make the user
+    // unable to open anything. The rest are Windows' other canonical generic
+    // verbs (per the shell's verb documentation): they are registered under scope
+    // roots and shared by many unrelated progids, so a LegacyDisable on any of
+    // them reaches far past the single menu row shown here and also breaks apps
+    // that invoke the verb programmatically via ShellExecute (printing being the
+    // classic case). None of them has any business being a toggle. Ids are
+    // "verb:" + lowercased verb.
     private static readonly string[] _suppressedEntryIds =
     {
         "verb:open",
+        "verb:opennew",
+        "verb:openas",
+        "verb:edit",
+        "verb:explore",
+        "verb:find",
+        "verb:print",
+        "verb:printto",
+        "verb:properties",
+        "verb:runas",
+        "verb:runasuser",
     };
 
     private void FilterIntoAllEntries()
@@ -508,7 +502,18 @@ public sealed class MainViewModel : ObservableObject
             // Hide rows whose DisplayName is a technical class label — those are
             // FileDescriptions like "Windows Shell Common Dll" / "Microsoft Security
             // Client Shell Extension" that don't correspond to a real menu option.
-            if (LooksTechnical(row.Entry.DisplayName)) continue;
+            // Two exemptions:
+            //   (a) names with menu-text provenance (live capture, GetTitle,
+            //       probe emissions) — a CamelCase brand name ("TeraCopy...",
+            //       "PowerRename") trips the heuristic but is exactly what the
+            //       user sees in Explorer, and dropping it made the entry
+            //       silently unmanageable;
+            //   (b) currently-hidden rows — this list is the only recovery path
+            //       for a verb hidden before RCMM ever saw it (key-name-only
+            //       verbs disabled by a tweak script), mirroring the IsHidden
+            //       clause in the CLSID branch below.
+            if (!row.Entry.DisplayNameIsMenuText && !row.Entry.IsHidden
+                && RenamePipeline.LooksTechnical(row.Entry.DisplayName)) continue;
             // Hide CLSID-keyed rows that are neither packaged nor "observed" — i.e.,
             // shellexes whose handler wasn't attached to any live capture AND didn't
             // emit anything during invoker probing. These are conditional handlers
@@ -537,9 +542,6 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>
-    /// Walks <see cref="_allRows"/>, groups by case-insensitive DisplayName, and
-    /// collapses each group into a single row. The winner is the row most likely
     /// <summary>
     /// Inject "ghost" rows: entries we persisted from a previous rescan that
     /// aren't present in the current _allRows but whose hide targets are still
@@ -641,7 +643,10 @@ public sealed class MainViewModel : ObservableObject
     /// Hardcoded display names for CommandStore verbs whose menu text is
     /// localised by Windows and not derivable from the verb key. Keeps the
     /// recovered ghost entry's label close to what the user actually saw in
-    /// their right-click menu before they hid it.
+    /// their right-click menu before they hid it. Keyed by the stable verb
+    /// key, so lookups never depend on locale; on non-English Windows the
+    /// label is merely English (cosmetic) — the ghost row itself still
+    /// appears and its un-hide toggle still works.
     /// </summary>
     private static readonly Dictionary<string, string> _wellKnownVerbDisplayNames
         = new(StringComparer.OrdinalIgnoreCase)
@@ -687,11 +692,16 @@ public sealed class MainViewModel : ObservableObject
             }
 
             // Rebuild the winner's MenuEntry with merged hide targets so the toggle
-            // semantics (CanHide, IsHidden) reflect the combined state.
+            // semantics (CanHide, IsHidden) reflect the combined state. The group
+            // shares one display name, so if ANY member carries menu-text
+            // provenance the merged row does too — otherwise collapsing a
+            // flagged live row into an unflagged registry twin would re-expose
+            // the name to the technical filter.
             var newEntry = winner.Entry with
             {
                 HideTargets = unionTargets,
-                IsHidden = AllTargetsHidden(unionTargets)
+                IsHidden = AllTargetsHidden(unionTargets),
+                DisplayNameIsMenuText = group.Any(r => r.Entry.DisplayNameIsMenuText)
             };
             var idx = _allRows.IndexOf(winner);
             var rebuilt = new EntryRowViewModel(newEntry) { HiddenChanged = OnRowToggled };
@@ -733,12 +743,15 @@ public sealed class MainViewModel : ObservableObject
 
     private static string ComputeId(CapturedItem item) => MergeKey(item);
 
+    private IReadOnlyCollection<string>? SourceExtensionsFor(string verb)
+        => _verbSourceExtensions.TryGetValue(verb, out var exts) ? exts : null;
+
     private IReadOnlyList<HideTarget> ResolveHideTargets(CapturedItem item)
     {
         var result = new List<HideTarget>();
         if (!string.IsNullOrEmpty(item.Verb))
         {
-            result.AddRange(_mapper.MapVerb(item.Verb!));
+            result.AddRange(_mapper.MapVerb(item.Verb!, SourceExtensionsFor(item.Verb!)));
 
             // Windows' built-in verbs (Share, Open with, Copy as path, …) live in
             // CommandStore — they don't have a per-scope <scope>\shell\<verb> key so
@@ -802,9 +815,9 @@ public sealed class MainViewModel : ObservableObject
                 {
                     if (t.Kind != HideKind.LegacyDisable) continue;
                     var hkcrPath = HkcrPathFor(t) ?? t.Path;
-                    foreach (var field in new[] { "ExplorerCommandHandler", "VerbHandler", "CommandStateHandler", "CanonicalName" })
+                    foreach (var field in RegistryHeuristics.VerbHandlerValueNames)
                     {
-                        if (_reg.GetValue(RegistryHive.ClassesRoot, hkcrPath, field) is string c && LooksLikeClsid(c))
+                        if (_reg.GetValue(RegistryHive.ClassesRoot, hkcrPath, field) is string c && RegistryHeuristics.LooksLikeClsid(c))
                         {
                             var icon = _shellexInvoker.LookupIconPath(c);
                             if (!string.IsNullOrWhiteSpace(icon)) return icon;
@@ -842,20 +855,20 @@ public sealed class MainViewModel : ObservableObject
             // contain hundreds of icons and the first one is almost always a
             // generic placeholder; the shell uses an HBITMAP the handler emits at
             // runtime, which we can't read from the registry.
-            foreach (var field in new[] { "ExplorerCommandHandler", "VerbHandler", "CommandStateHandler", "CanonicalName" })
+            foreach (var field in RegistryHeuristics.VerbHandlerValueNames)
             {
                 if (_reg.GetValue(RegistryHive.ClassesRoot, hkcrPath, field) is string handlerClsid
-                    && LooksLikeClsid(handlerClsid))
+                    && RegistryHeuristics.LooksLikeClsid(handlerClsid))
                 {
                     var dll = _reg.GetValue(RegistryHive.ClassesRoot, $@"CLSID\{handlerClsid}\InprocServer32", "") as string;
-                    if (!IsGenericIconLibrary(dll) && !string.IsNullOrWhiteSpace(dll)) return dll;
+                    if (!RegistryHeuristics.IsGenericIconLibrary(dll) && !string.IsNullOrWhiteSpace(dll)) return dll;
                 }
             }
             if (_reg.GetValue(RegistryHive.ClassesRoot, hkcrPath + @"\command", "DelegateExecute") is string delegateClsid
-                && LooksLikeClsid(delegateClsid))
+                && RegistryHeuristics.LooksLikeClsid(delegateClsid))
             {
                 var dll = _reg.GetValue(RegistryHive.ClassesRoot, $@"CLSID\{delegateClsid}\InprocServer32", "") as string;
-                if (!IsGenericIconLibrary(dll) && !string.IsNullOrWhiteSpace(dll)) return dll;
+                if (!RegistryHeuristics.IsGenericIconLibrary(dll) && !string.IsNullOrWhiteSpace(dll)) return dll;
             }
         }
 
@@ -878,7 +891,7 @@ public sealed class MainViewModel : ObservableObject
             var defaultIcon = _reg.GetValue(RegistryHive.ClassesRoot, clsidPath + @"\DefaultIcon", "") as string;
             if (!string.IsNullOrWhiteSpace(defaultIcon)) return defaultIcon;
             var dll = _reg.GetValue(RegistryHive.ClassesRoot, clsidPath + @"\InprocServer32", "") as string;
-            if (!string.IsNullOrWhiteSpace(dll) && !IsGenericIconLibrary(dll)) return dll;
+            if (!string.IsNullOrWhiteSpace(dll) && !RegistryHeuristics.IsGenericIconLibrary(dll)) return dll;
 
             // Packaged COM extensions aren't in classic HKCR\CLSID; their DLL lives
             // under C:\Program Files\WindowsApps\<package>\… resolved from the AppX
@@ -901,42 +914,10 @@ public sealed class MainViewModel : ObservableObject
         // path is the cheapest valid icon source when steps 0-3 returned nothing
         // (e.g. the scanner used a resolution route — Shell key, alternate
         // server registration — that the HKCR\CLSID lookup at step 3 misses).
-        if (!string.IsNullOrWhiteSpace(item.IconHint) && !IsGenericIconLibrary(item.IconHint))
+        if (!string.IsNullOrWhiteSpace(item.IconHint) && !RegistryHeuristics.IsGenericIconLibrary(item.IconHint))
             return item.IconHint;
 
         return null;
-    }
-
-    /// <summary>
-    /// True for the handful of generic-icon Windows libraries whose index-0
-    /// resource is a placeholder (the shell uses an HBITMAP the handler emits
-    /// at runtime, not a resource we can read here). Used as a last-mile filter
-    /// in ResolveIconPath so we don't return a generic key/folder/document icon.
-    ///
-    /// Match is by *filename* not "path is anywhere under System32" — that
-    /// earlier rule misfiled third-party DLLs like NVIDIA's
-    /// System32\DriverStore\...\nvshext.dll as generic and stripped a perfectly
-    /// good icon source, leaving "NVIDIA Control Panel" with no icon in the UI.
-    /// </summary>
-    private static bool IsGenericIconLibrary(string? path)
-    {
-        if (string.IsNullOrEmpty(path)) return false;
-        try
-        {
-            var s = Environment.ExpandEnvironmentVariables(path).ToLowerInvariant();
-            if (s.StartsWith('"'))
-            {
-                var end = s.IndexOf('"', 1);
-                if (end > 1) s = s[1..end];
-            }
-            var comma = s.LastIndexOf(',');
-            if (comma > 0 && comma > s.LastIndexOf('\\') && comma > s.LastIndexOf('/'))
-                s = s[..comma];
-            var fileName = System.IO.Path.GetFileName(s.Trim());
-            return fileName is "shell32.dll" or "imageres.dll" or "windows.storage.dll"
-                            or "ntshrui.dll" or "ddores.dll" or "explorer.exe";
-        }
-        catch { return false; }
     }
 
     private bool AllTargetsHidden(IReadOnlyList<HideTarget> targets)
@@ -955,7 +936,15 @@ public sealed class MainViewModel : ObservableObject
                     if (_reg.GetValue(t.Hive, t.Path, t.ValueName ?? "LegacyDisable") == null) return false;
                     break;
                 case HideKind.HkcuMask:
+                    // Hidden means the mask is IN EFFECT: the HKCU key exists AND its
+                    // default value is empty — that's what suppresses the handler. A
+                    // per-user-installed handler's real registration lives at exactly
+                    // this key with its CLSID as the default: it is active, not hidden.
+                    // Treating mere key-existence as hidden mislabeled such handlers
+                    // and made both toggles dead (hide looked like a no-change; unhide
+                    // was a no-op). Mirrors ClassicShellexScanner / HideService.
                     if (!_reg.KeyExists(t.Hive, t.Path)) return false;
+                    if (!string.IsNullOrEmpty(_reg.GetValue(t.Hive, t.Path, "") as string)) return false;
                     break;
                 case HideKind.BlockedShellExt:
                     if (_reg.GetValue(t.Hive, t.Path, t.ValueName!) == null) return false;
@@ -963,38 +952,6 @@ public sealed class MainViewModel : ObservableObject
             }
         }
         return true;
-    }
-
-    private static bool LooksLikeClsid(string s)
-        => !string.IsNullOrEmpty(s) && s.Length >= 38 && s.StartsWith('{') && s.EndsWith('}');
-
-    /// <summary>
-    /// Heuristic for a "technical" DisplayName the user wouldn't recognise as a menu item:
-    /// CamelCase identifiers with no spaces, or substrings like "Shell Extension" /
-    /// "Common Dll" / "Property Page" / "Context Menu extension" / "verb handler".
-    /// Used to decide whether to swap in the publisher's friendly product name.
-    /// </summary>
-    private static bool LooksTechnical(string s)
-    {
-        if (string.IsNullOrEmpty(s)) return true;
-        var lower = s.ToLowerInvariant();
-        if (lower.Contains("shell extension") || lower.Contains("shellext")
-            || lower.Contains("shell common dll") || lower.Contains("common dll")
-            || lower.Contains("property page") || lower.Contains("context menu extension")
-            || lower.Contains("verb handler") || lower.Contains("context menu verb handler"))
-            return true;
-        // CamelCase identifier (one token, mixed case)
-        if (!s.Contains(' ') && s.Length >= 8)
-        {
-            bool hasLower = false, hasUpper = false;
-            foreach (var c in s)
-            {
-                if (char.IsLower(c)) hasLower = true;
-                else if (char.IsUpper(c)) hasUpper = true;
-            }
-            if (hasLower && hasUpper) return true;
-        }
-        return false;
     }
 
     /// <summary>
@@ -1009,34 +966,6 @@ public sealed class MainViewModel : ObservableObject
             return t.Path.Substring(@"Software\Classes\".Length);
         }
         return null;
-    }
-
-    /// <summary>
-    /// A hide for one of RCMM's own added entries cannot be written as a registry
-    /// marker. The addition re-assert later in this same ApplyPending calls
-    /// AdditionApplier.Apply → PurgeOwnedKeys, which deletes every RCMM.-prefixed
-    /// verb key and rewrites it from additions.json — erasing any LegacyDisable we
-    /// just wrote. So the intent has to live in the store, where the rewrite can
-    /// reproduce it. Returns false for foreign verbs (Tabby, WinRAR, Defender…),
-    /// which take the normal HideService path unchanged. See issue #10.
-    /// </summary>
-    private bool TryRouteOwnedHide(IReadOnlyList<HideTarget> targets, bool hidden)
-    {
-        if (_addPage == null || _additionApplier == null || targets.Count == 0) return false;
-
-        // Every target must resolve to the same owned entry. A File-scope entry
-        // fans out to one target per extension, so multiple targets are normal —
-        // but a mixed or non-LegacyDisable set means this isn't a plain owned verb.
-        string? entryId = null;
-        foreach (var t in targets)
-        {
-            if (t.Kind != HideKind.LegacyDisable) return false;
-            var keyName = t.Path[(t.Path.LastIndexOf('\\') + 1)..];
-            if (!AdditionApplier.TryParseOwnedVerb(keyName, out var parsed)) return false;
-            if (entryId != null && entryId != parsed) return false;
-            entryId = parsed;
-        }
-        return entryId != null && _addPage.SetEntryHidden(entryId, hidden);
     }
 
     private void OnRowToggled(EntryRowViewModel row, bool isHidden)
@@ -1068,14 +997,22 @@ public sealed class MainViewModel : ObservableObject
         Raise(nameof(RequiresExplorerRestart));
     }
 
-    public void ApplyPending()
+    /// <summary>
+    /// Apply all pending changes. Returns user-facing error lines, one per failed
+    /// operation (empty = everything applied). Failures used to die in rcmm.log
+    /// while the UI cleared its pending badges and restarted Explorer as if the
+    /// apply had succeeded — callers must now show these to the user. A failed
+    /// hide/unhide stays queued (badge intact, retried by the next Apply); a
+    /// failed additions apply keeps HasPendingChanges lit.
+    /// </summary>
+    public IReadOnlyList<string> ApplyPending()
     {
         // Serialize against Rescan (see _workGate) so the two never run concurrently.
         lock (_workGate)
-            ApplyPendingCore();
+            return ApplyPendingCore();
     }
 
-    private void ApplyPendingCore()
+    private IReadOnlyList<string> ApplyPendingCore()
     {
         // Detach the pending sets from the live dictionaries under the lock, then
         // work only on these snapshots. The user can keep toggling rows during the
@@ -1094,136 +1031,45 @@ public sealed class MainViewModel : ObservableObject
         }
         Log.Info("apply", $"begin hide={pendingHide.Count} unhide={pendingUnhide.Count}");
 
-        // Cascade-protection pass — runs BEFORE any HKCU\…\Shell Extensions\Blocked
-        // write so the protective classic verbs exist by the time Windows decides
-        // whether to silently de-list other Directory\Background packaged-COM
-        // extensions. We only act when (a) the protection service is wired AND
-        // (b) the current hide batch actually adds a Background-scoped packaged
-        // CLSID to Blocked. See CLAUDE.md "packaged-COM Directory\Background
-        // cascade" for the underlying Windows behaviour we're guarding against.
-        if (_cascadeProtector != null && _backgroundExtsByClsid.Count > 0)
-        {
-            foreach (var targets in pendingHide.Values)
-            {
-                foreach (var t in targets)
-                {
-                    if (t.Kind != HideKind.BlockedShellExt) continue;
-                    if (string.IsNullOrEmpty(t.ValueName)) continue;
-                    if (!_backgroundExtsByClsid.ContainsKey(t.ValueName!)) continue;
-                    var plans = _cascadeProtector.PlanProtections(t.ValueName!, _backgroundExtsByClsid.Values);
-                    if (plans.Count > 0)
-                    {
-                        Log.Info("apply", $"cascade-protection: installing {plans.Count} classic-verb fallbacks for hide of {t.ValueName}");
-                        try { _cascadeProtector.Install(plans); }
-                        catch (Exception ex) { Log.Error("apply", $"cascade-protection install failed for {t.ValueName}", ex); }
-                    }
-                }
-            }
-        }
-
-        foreach (var (id, targets) in pendingHide)
-        {
-            if (TryRouteOwnedHide(targets, hidden: true))
-            {
-                Log.Debug("apply", $"hide id='{id}' routed to additions store (RCMM-owned entry)");
-                continue;
-            }
-            Log.Debug("apply", $"hide id='{id}' targets={targets.Count}");
-            foreach (var t in targets)
-                Log.Debug("apply", $"  hide  kind={t.Kind} hive={t.Hive} path='{t.Path}' value='{t.ValueName}'");
-            try { _hideService.Hide(targets); }
-            catch (Exception ex) { Log.Error("apply", $"hide id={id} failed", ex); }
-        }
-        foreach (var (id, targets) in pendingUnhide)
-        {
-            if (TryRouteOwnedHide(targets, hidden: false))
-            {
-                Log.Debug("apply", $"unhide id='{id}' routed to additions store (RCMM-owned entry)");
-                continue;
-            }
-            Log.Debug("apply", $"unhide id='{id}' targets={targets.Count}");
-            foreach (var t in targets)
-                Log.Debug("apply", $"  unhide kind={t.Kind} hive={t.Hive} path='{t.Path}' value='{t.ValueName}'");
-            try { _hideService.Unhide(targets); }
-            catch (Exception ex) { Log.Error("apply", $"unhide id={id} failed", ex); }
-        }
-
-        // Post-unhide cleanup: when no Background-scoped packaged CLSID remains in
-        // HKCU Blocked, the cascade can't trigger, so we can sweep the protective
-        // verbs back out. The sweep is namespace-scoped (RcmmProtect_ prefix only)
-        // so user-authored classic verbs are untouched.
-        if (_cascadeProtector != null && pendingUnhide.Count > 0 && _backgroundExtsByClsid.Count > 0)
-        {
-            try
-            {
-                bool anyBgStillBlocked = _backgroundExtsByClsid.Keys.Any(clsid =>
-                    _reg.GetValue(RegistryHive.CurrentUser, HideService.BlockedListPath, clsid) != null);
-                if (!anyBgStillBlocked)
-                {
-                    var removed = _cascadeProtector.UninstallAll();
-                    if (removed > 0)
-                        Log.Info("apply", $"cascade-protection: removed {removed} protection verbs (no Background ext remains blocked)");
-                }
-            }
-            catch (Exception ex) { Log.Error("apply", "cascade-protection sweep failed", ex); }
-        }
-
-        // Always purge any Directory\shell\RcmmProtect_* verbs left behind by
-        // earlier builds that protected the folder-selected scope too. Those
-        // produced a duplicate "Open in Terminal" / "AMD Software" row on
-        // right-click of a selected folder. Cheap and idempotent.
-        if (_cascadeProtector != null)
-        {
-            try
-            {
-                var stale = _cascadeProtector.PurgeStaleDirectoryScopeProtections();
-                if (stale > 0)
-                    Log.Info("apply", $"cascade-protection: purged {stale} stale Directory-scope protection verbs");
-            }
-            catch (Exception ex) { Log.Error("apply", "cascade-protection Directory purge failed", ex); }
-        }
-        if (_addPage != null && _additionApplier != null && _addPage.HasPendingChanges)
-        {
-            Log.Info("apply", $"additions begin entries={_addPage.Entries.Count} folders={_addPage.Folders.Count}");
-            var state = _addPage.Snapshot();
-            try
-            {
-                _additionApplier.Apply(state);
-                // Persist only after registry write succeeds so a failed Apply leaves the JSON on the previous state.
-                _addPage.Save(state);
-                _post(() => _addPage.MarkClean());
-            }
-            catch (Exception ex) { Log.Error("apply", "additions failed", ex); }
-        }
-        else if (_additionApplier != null && (pendingHide.Count > 0 || pendingUnhide.Count > 0))
-        {
-            // A hide/unhide batch ran with no addition edits of its own. Re-assert
-            // the user's existing added entries as part of the same Apply: after a
-            // large Blocked-list hide + Explorer restart, Explorer can stop rendering
-            // user-added Directory\Background verbs even though their keys are intact
-            // (RCMM still captures them on rescan). A fresh registry write under
-            // …\shell is what forces the classic menu to rebuild — exactly the manual
-            // "re-apply additions" workaround, now automatic. Idempotent purge+rewrite;
-            // nothing is dirtied or persisted because the state is unchanged.
-            try
-            {
-                var state = _addPage != null
-                    ? _addPage.Snapshot()
-                    : new AdditionStore(AdditionStore.DefaultPath()).Load();
-                if (state.Entries.Count > 0 || state.Folders.Count > 0)
-                {
-                    Log.Info("apply", $"re-asserting {state.Entries.Count} added entries after hide change (menu-cache refresh)");
-                    _additionApplier.Apply(state);
-                }
-            }
-            catch (Exception ex) { Log.Error("apply", "additions re-assert failed", ex); }
-        }
+        // The cascade-protection / hide / unhide / additions sequencing lives in
+        // ApplyOrchestrator. Failed operations come back as error lines AND are
+        // handed to the requeue callbacks so their badges survive and the next
+        // Apply retries them - the pending state itself never leaves this class.
+        var errors = _applyOrchestrator.Run(pendingHide, pendingUnhide, _backgroundExtsByClsid,
+            (id, targets) => RequeuePending(_pendingHide, id, targets),
+            (id, targets) => RequeuePending(_pendingUnhide, id, targets));
         _post(() =>
         {
-            PendingChangeIds.Clear();
+            // Un-badge only THIS batch's ids, and only when the id hasn't been
+            // re-toggled while the (multi-second) apply ran. A blanket
+            // PendingChangeIds.Clear() here erased badges for toggles made during
+            // the apply, leaving those hides queued in the dictionaries with no
+            // visual pending indication — the mirror image of the rescan-tail race.
+            lock (_pendingLock)
+            {
+                foreach (var id in pendingHide.Keys.Concat(pendingUnhide.Keys))
+                    if (!_pendingHide.ContainsKey(id) && !_pendingUnhide.ContainsKey(id))
+                        PendingChangeIds.Remove(id);
+            }
             Raise(nameof(RequiresExplorerRestart));
         });
-        Log.Info("apply", "end");
+        Log.Info("apply", $"end errors={errors.Count}");
+        return errors;
+    }
+
+    /// <summary>
+    /// Put a failed hide/unhide back in its pending queue so its badge survives
+    /// (the un-badge pass above skips ids still present in the dictionaries) and
+    /// the next Apply retries it — unless the user re-toggled the row while this
+    /// apply ran, in which case their newer intent wins.
+    /// </summary>
+    private void RequeuePending(Dictionary<string, IReadOnlyList<HideTarget>> queue, string id, IReadOnlyList<HideTarget> targets)
+    {
+        lock (_pendingLock)
+        {
+            if (!_pendingHide.ContainsKey(id) && !_pendingUnhide.ContainsKey(id))
+                queue[id] = targets;
+        }
     }
 
     private (string? source, bool isBuiltIn) ResolveSourceAndBuiltIn(CapturedItem item, IReadOnlyList<HideTarget> targets, string? iconPath)
@@ -1258,13 +1104,18 @@ public sealed class MainViewModel : ObservableObject
                     var cmd = _reg.GetValue(RegistryHive.ClassesRoot, hkcrPath + @"\command", "") as string;
                     if (!string.IsNullOrWhiteSpace(cmd))
                     {
-                        var exe = ExtractExe(cmd);
+                        var exe = RegistryHeuristics.ExtractExe(cmd);
                         if (!string.IsNullOrEmpty(exe)) probes.Add(exe);
                     }
-                    foreach (var field in new[] { "ExplorerCommandHandler", "VerbHandler", "CommandStateHandler" })
+                    // The shared field list includes CanonicalName — this copy
+                    // used to omit it (drift). Harmless here: a classic verb's
+                    // CanonicalName is a command GUID with no HKCR\CLSID
+                    // registration, so the extra probe is a no-op, and now all
+                    // four call sites agree on what "a handler field" is.
+                    foreach (var field in RegistryHeuristics.VerbHandlerValueNames)
                     {
                         if (_reg.GetValue(RegistryHive.ClassesRoot, hkcrPath, field) is string handlerClsid
-                            && LooksLikeClsid(handlerClsid))
+                            && RegistryHeuristics.LooksLikeClsid(handlerClsid))
                         {
                             var dll = _reg.GetValue(RegistryHive.ClassesRoot,
                                 $@"CLSID\{handlerClsid}\InprocServer32", "") as string;
@@ -1273,7 +1124,7 @@ public sealed class MainViewModel : ObservableObject
                     }
                     break;
                 case HideKind.BlockedShellExt:
-                    if (LooksLikeClsid(t.ValueName))
+                    if (RegistryHeuristics.LooksLikeClsid(t.ValueName))
                     {
                         var dll = _reg.GetValue(RegistryHive.ClassesRoot,
                             $@"CLSID\{t.ValueName}\InprocServer32", "") as string;
@@ -1287,7 +1138,7 @@ public sealed class MainViewModel : ObservableObject
                     {
                         var hkcrShellex = t.Path.Substring(classes.Length);
                         var clsidStr = _reg.GetValue(RegistryHive.ClassesRoot, hkcrShellex, "") as string;
-                        if (clsidStr != null && LooksLikeClsid(clsidStr))
+                        if (clsidStr != null && RegistryHeuristics.LooksLikeClsid(clsidStr))
                         {
                             var dll = _reg.GetValue(RegistryHive.ClassesRoot,
                                 $@"CLSID\{clsidStr}\InprocServer32", "") as string;
@@ -1302,7 +1153,7 @@ public sealed class MainViewModel : ObservableObject
         {
             var info = _files.Read(probe);
             var company = info.CompanyName;
-            if (!string.IsNullOrEmpty(company) || LooksWindowsPath(probe))
+            if (!string.IsNullOrEmpty(company) || RegistryHeuristics.LooksWindowsPath(probe))
             {
                 // IsBuiltIn means "Windows component, not a third-party app". DLL in
                 // a Windows folder is the necessary signal but not sufficient: NVIDIA,
@@ -1314,7 +1165,7 @@ public sealed class MainViewModel : ObservableObject
                 // to flag the row as built-in. Conversely, "Microsoft app in
                 // Program Files / WindowsApps" (VS Code, Clipchamp, PowerToys)
                 // still stays third-party because they live outside Windows folder.
-                bool inWindowsFolder = LooksWindowsPath(probe);
+                bool inWindowsFolder = RegistryHeuristics.LooksWindowsPath(probe);
                 bool publishedByMicrosoft = string.IsNullOrEmpty(company)
                     || company!.IndexOf("Microsoft", StringComparison.OrdinalIgnoreCase) >= 0;
                 return (company, inWindowsFolder && publishedByMicrosoft);
@@ -1329,42 +1180,4 @@ public sealed class MainViewModel : ObservableObject
         return (null, false);
     }
 
-    private static string? ExtractExe(string cmd)
-    {
-        cmd = cmd.Trim();
-        if (cmd.StartsWith('"'))
-        {
-            var end = cmd.IndexOf('"', 1);
-            if (end > 1) return cmd[1..end];
-        }
-        var space = cmd.IndexOf(' ');
-        return space > 0 ? cmd[..space] : cmd;
-    }
-
-    private static bool LooksWindowsPath(string raw)
-    {
-        try
-        {
-            var s = Environment.ExpandEnvironmentVariables(raw).ToLowerInvariant();
-            // Strip optional trailing icon index ",-NNNN" and surrounding quotes.
-            if (s.StartsWith('"')) { var e = s.IndexOf('"', 1); if (e > 1) s = s[1..e]; }
-            var comma = s.LastIndexOf(',');
-            if (comma > 0 && comma > s.LastIndexOf('\\') && comma > s.LastIndexOf('/'))
-                s = s[..comma].Trim();
-
-            var winDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows).ToLowerInvariant();
-            if (winDir.Length > 0 && s.StartsWith(winDir + "\\")) return true;
-            if (s.Contains(@"\windows\system32\") || s.Contains(@"\windows\syswow64\")) return true;
-            // Bare filenames like "shell32.dll" or "imageres.dll" resolve to System32
-            // via Windows' DLL search path. Treat them as Windows binaries.
-            if (!s.Contains('\\') && !s.Contains('/')
-                && (s.EndsWith(".dll") || s.EndsWith(".exe") || s.EndsWith(".mui")))
-            {
-                var sys32 = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), s);
-                if (System.IO.File.Exists(sys32)) return true;
-            }
-            return false;
-        }
-        catch { return false; }
-    }
 }

@@ -17,12 +17,21 @@ namespace RCMM.Core.Models;
 ///   v5 — templates-only Add page: hand-authored entries (null
 ///        <see cref="AdditionEntry.SourceTemplateId"/>) can no longer be created
 ///        or edited, so they are dropped on load. Folders always survive.
+///   v6 — <see cref="AdditionEntry.SourceTemplateId"/> switches from the
+///        template's display Name to its stable slug Id
+///        (<see cref="Services.AdditionTemplates.Template.Id"/>), so renaming a
+///        catalogue template no longer severs update tracking.
 /// AdditionStore.Load migrates older schemas transparently.
 /// </summary>
 public sealed record AdditionState
 {
-    public const int CurrentSchemaVersion = 5;
-    public int SchemaVersion { get; init; } = CurrentSchemaVersion;
+    public const int CurrentSchemaVersion = 6;
+    // Deserialization default is the OLDEST schema, not the current one: a
+    // document with no schemaVersion field (hand-edited by this app's regedit-
+    // level audience, or hand-restored) must run through every migration, not
+    // be waved past them as already-current. Writers always stamp the current
+    // version explicitly (Snapshot / the migrator / the fresh-state paths).
+    public int SchemaVersion { get; init; } = 1;
     public IReadOnlyList<AdditionFolder> Folders { get; init; } = new List<AdditionFolder>();
     public IReadOnlyList<AdditionEntry> Entries { get; init; } = new List<AdditionEntry>();
 }

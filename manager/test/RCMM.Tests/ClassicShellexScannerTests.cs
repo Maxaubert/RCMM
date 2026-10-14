@@ -70,15 +70,27 @@ public class ClassicShellexScannerTests
     }
 
     [Fact]
-    public void Scan_detects_hidden_via_HKCU_mask()
+    public void Scan_recovers_masked_per_user_only_handler_via_SavedDefault_stash()
     {
+        // A hidden per-user-only handler: no HKLM twin, key name not a CLSID, the
+        // merged HKCR default is the mask's empty string. The CLSID only survives
+        // in the RCMM.SavedDefault stash Hide wrote — without reading it the row
+        // is dropped (no display name) and the user can never un-hide the handler.
         var reg = new FakeRegistry();
-        reg.SetValue(RegistryHive.ClassesRoot, @"*\shellex\ContextMenuHandlers\Foo", "", "{ABC}");
-        // Give the handler a resolvable name so it isn't dropped before the hidden check.
-        reg.SetValue(RegistryHive.ClassesRoot, @"CLSID\{ABC}", "", "Foo Extension");
-        reg.SetValue(RegistryHive.CurrentUser, @"Software\Classes\*\shellex\ContextMenuHandlers\Foo", "", "");
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shellex\ContextMenuHandlers\MyTool", "", "");
+        reg.SetValue(RegistryHive.CurrentUser,
+            @"Software\Classes\*\shellex\ContextMenuHandlers\MyTool", "", "");
+        reg.SetValue(RegistryHive.CurrentUser,
+            @"Software\Classes\*\shellex\ContextMenuHandlers\MyTool",
+            HideService.SavedDefaultValueName, "{ABC}");
+        reg.SetValue(RegistryHive.ClassesRoot, @"CLSID\{ABC}", "", "My Tool Extension");
         var sut = new ClassicShellexScanner(reg, new ClsidResolver(reg), new FakeFileVersionReader());
 
-        Assert.True(sut.Scan(Scope.Files).Single().IsHidden);
+        // Hidden-state itself is computed downstream by MainViewModel's
+        // AllTargetsHidden — the scanner's job is only to keep the row (and its
+        // CLSID) discoverable so the user can still un-hide it.
+        var entry = sut.Scan(Scope.Files).Single();
+        Assert.Equal("{ABC}", entry.Clsid);
+        Assert.Equal("My Tool Extension", entry.DisplayName);
     }
 }

@@ -279,9 +279,12 @@ public sealed class AdditionApplier
         // applies, and we only get called for the correct scope from WriteBucketInternal.
         foreach (var scopePrefix in EntryScopePaths(entry))
         {
-            if (entry.Scope == AdditionScope.File && !string.Equals(scopePrefix, scope, StringComparison.OrdinalIgnoreCase))
-                continue;
-            if (entry.Scope != AdditionScope.File && !string.Equals(scopePrefix, scope, StringComparison.OrdinalIgnoreCase))
+            // One filter for both File-scope (per-extension fan-out) and
+            // non-File entries: only the path matching the scope being written
+            // participates. This used to be two byte-identical branches split
+            // on entry.Scope, inviting an edit to one that silently diverged
+            // the other.
+            if (!string.Equals(scopePrefix, scope, StringComparison.OrdinalIgnoreCase))
                 continue;
             var path = $"{ClassesRoot}\\{scopePrefix}\\shell\\{verbName}";
             _reg.SetValue(RegistryHive.CurrentUser, path, "", entry.Name);

@@ -72,12 +72,36 @@ public class TemplateUpdateServiceTests
     }
 
     [Fact]
-    public void Stamp_sets_source_id_and_applied_hash()
+    public void Stamp_sets_stable_source_id_and_applied_hash()
     {
-        var t = Tpl(name: "Z", fts: new[] { "png" });
-        var s = TemplateUpdateService.Stamp(Ent(name: "Z"), t);
-        Assert.Equal("Z", s.SourceTemplateId);
+        var t = Tpl(name: "My Template", fts: new[] { "png" });
+        var s = TemplateUpdateService.Stamp(Ent(name: "My Template"), t);
+        // Identity is the stable slug Id, NOT the renameable display Name.
+        Assert.Equal("my-template", s.SourceTemplateId);
+        Assert.Equal(t.Id, s.SourceTemplateId);
         Assert.Equal(TemplateUpdateService.Hash(t), s.AppliedTemplateHash);
+    }
+
+    [Fact]
+    public void TemplateFor_resolves_by_stable_Id_not_display_Name()
+    {
+        // TemplateFor matches the live catalogue by Id, so an entry keyed with the
+        // slug resolves while one keyed with the display Name (the pre-v6 scheme,
+        // rewritten by migration) no longer does.
+        var byId = TemplateUpdateService.TemplateFor(Ent(src: "git-pull"));
+        Assert.NotNull(byId);
+        Assert.Equal("git pull", byId!.Name);
+        Assert.Null(TemplateUpdateService.TemplateFor(Ent(src: "git pull")));
+    }
+
+    [Fact]
+    public void Template_Id_defaults_to_slug_and_can_be_pinned_across_a_rename()
+    {
+        Assert.Equal("powershell-here", Tpl(name: "PowerShell here").Id);
+        // Renaming with the Id pinned to the previous slug keeps existing
+        // entries' SourceTemplateId resolving — the reason Id exists at all.
+        var renamed = Tpl(name: "PowerShell 7 here") with { Id = "powershell-here" };
+        Assert.Equal("powershell-here", renamed.Id);
     }
 
     [Fact]
@@ -86,9 +110,9 @@ public class TemplateUpdateServiceTests
         var t = AdditionTemplates.All.First(x => x.Name == "Change format");
         var live = TemplateUpdateService.Hash(t);
 
-        var inSync = Ent(id: "sync", name: "Change format", src: "Change format", applied: live);
-        var stale = Ent(id: "stale", name: "Change format", src: "Change format", applied: "OLD");
-        var skipped = Ent(id: "skip", name: "Change format", src: "Change format", applied: "OLD", skipped: live);
+        var inSync = Ent(id: "sync", name: "Change format", src: t.Id, applied: live);
+        var stale = Ent(id: "stale", name: "Change format", src: t.Id, applied: "OLD");
+        var skipped = Ent(id: "skip", name: "Change format", src: t.Id, applied: "OLD", skipped: live);
         var untracked = Ent(id: "hand", name: "hand-authored", src: null);
 
         var ups = new TemplateUpdateService().FindUpdates(
@@ -120,7 +144,7 @@ public class TemplateUpdateServiceTests
         Assert.Equal(AdditionState.CurrentSchemaVersion, migrated.SchemaVersion);
         // v5 drops the hand-authored entries (b and c), so only a survives
         var a = migrated.Entries.Single(e => e.Id == "a");
-        Assert.Equal("Change format", a.SourceTemplateId);
+        Assert.Equal(cf.Id, a.SourceTemplateId);   // stamped with the stable slug (v6 scheme)
         Assert.Equal(TemplateUpdateService.Hash(cf), a.AppliedTemplateHash);      // in sync
 
         // v5 drops unstamped entries, so absence is the proof v3 left these

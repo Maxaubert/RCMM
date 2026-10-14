@@ -17,8 +17,16 @@ namespace RCMM.Tests;
 /// InvalidOperationException (collection modified during enumeration) or corrupts
 /// the dictionary. This exercises that interleaving. See issue in the audit.
 /// </summary>
-public class MainViewModelToggleRaceTests
+public class MainViewModelToggleRaceTests : IDisposable
 {
+    private readonly string _tempDir =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"rcmm-race-{Guid.NewGuid():N}");
+
+    public void Dispose()
+    {
+        try { System.IO.Directory.Delete(_tempDir, recursive: true); } catch { }
+    }
+
     [Fact]
     public void Concurrent_toggles_during_ApplyPending_and_Rescan_do_not_throw()
     {
@@ -62,7 +70,7 @@ public class MainViewModelToggleRaceTests
         Assert.Null(captured);
     }
 
-    private static MainViewModel BuildWithRows(out FakeRegistry reg, int rowCount)
+    private MainViewModel BuildWithRows(out FakeRegistry reg, int rowCount)
     {
         reg = new FakeRegistry();
         var files = new FakeFileVersionReader();
@@ -80,6 +88,8 @@ public class MainViewModelToggleRaceTests
         return new MainViewModel(
             new FakeContextMenuCaptureService(), new TargetProvider(), new VerbToRegistryMapper(reg),
             new HideService(reg), reg, files, shellexIndex,
-            registryScanner: entryScanner);
+            registryScanner: entryScanner,
+            knownStore: new KnownEntriesStore(
+                System.IO.Path.Combine(_tempDir, "known-entries.json")));
     }
 }

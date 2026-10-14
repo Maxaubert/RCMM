@@ -13,6 +13,10 @@ public sealed record MenuEntry
     public bool IsBuiltIn { get; init; }
     public bool IsHidden { get; init; }
     public bool IsSubmenu { get; init; }
+    // DisplayName provenance (see CapturedItem.DisplayNameIsMenuText): true when
+    // the name is real rendered menu text, which exempts the row from the
+    // technical-name filter regardless of how identifier-like it looks.
+    public bool DisplayNameIsMenuText { get; init; }
 
     public bool CanHide => HideTargets.Count > 0;
 }

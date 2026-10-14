@@ -33,9 +33,14 @@ public class MainViewModelTests : System.IDisposable
         var files = new FakeFileVersionReader();
         var resolver = new ClsidResolver(reg);
         var shellexIndex = new ShellexNameIndex(reg, resolver, files);
-        var vm = new MainViewModel(cap, _targets, mapper, hide, reg, files, shellexIndex);
+        // Temp-backed store: Rescan persists known entries unconditionally, and the
+        // default path is the developer's real %LOCALAPPDATA%\RCMM\known-entries.json.
+        var vm = new MainViewModel(cap, _targets, mapper, hide, reg, files, shellexIndex,
+            knownStore: new KnownEntriesStore(KnownStorePath()));
         return (vm, reg, cap);
     }
+
+    private string KnownStorePath() => Path.Combine(_tempRoot, "known-entries.json");
 
     private string FirstFileTarget() => _targets.GetTargets().First(p => p.EndsWith(".txt"));
 
@@ -59,19 +64,40 @@ public class MainViewModelTests : System.IDisposable
     }
 
     [Fact]
+    public void Rescan_persists_known_entries_to_the_injected_store_path()
+    {
+        // Regression guard for the test-isolation fix: MainViewModel used to
+        // hard-wire KnownEntriesStore.DefaultPath(), so every test Rescan()
+        // overwrote the developer's real known-entries.json with fake rows.
+        var (vm, reg, cap) = BuildSut();
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\git_shell", "", "Open Git Bash here");
+        var target = FirstFileTarget();
+        cap.Map[target] = new List<CapturedItem>
+        {
+            new() { TargetPath = target, Position = 0, DisplayName = "Open Git Bash here", Verb = "git_shell" }
+        };
+
+        vm.Rescan();
+
+        Assert.True(File.Exists(KnownStorePath()), "Rescan should save through the injected store");
+        Assert.Contains("Open Git Bash here", File.ReadAllText(KnownStorePath()));
+    }
+
+    [Fact]
     public void Rescan_dedupes_same_verb_across_multiple_targets()
     {
-        // Uses "edit" rather than "open": the generic "open" verb is intentionally
-        // suppressed from the list (hiding it would break opening files/folders).
+        // Uses a vendor-style verb: the generic system verbs (open, edit, print, …)
+        // are intentionally suppressed from the list — hiding them fans out far
+        // beyond the single row and breaks core shell behavior.
         var (vm, reg, cap) = BuildSut();
-        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\edit", "", "Edit");
-        reg.SetValue(RegistryHive.ClassesRoot, @"Directory\shell\edit", "", "Edit");
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shell\vendortool", "", "Vendor Tool");
+        reg.SetValue(RegistryHive.ClassesRoot, @"Directory\shell\vendortool", "", "Vendor Tool");
 
         foreach (var target in _targets.GetTargets())
         {
             cap.Map[target] = new List<CapturedItem>
             {
-                new() { TargetPath = target, Position = 0, DisplayName = "Edit", Verb = "edit" }
+                new() { TargetPath = target, Position = 0, DisplayName = "Vendor Tool", Verb = "vendortool" }
             };
         }
 
@@ -96,6 +122,93 @@ public class MainViewModelTests : System.IDisposable
         vm.Rescan();
 
         Assert.DoesNotContain(vm.AllEntries, r => r.Entry.Id == "verb:open");
+    }
+
+    [Theory]
+    [InlineData("print")]
+    [InlineData("edit")]
+    [InlineData("explore")]
+    [InlineData("runas")]
+    [InlineData("printto")]
+    [InlineData("openas")]
+    public void Rescan_suppresses_generic_system_verbs(string verb)
+    {
+        // Generic system verbs are shared by many unrelated progids and invoked
+        // programmatically via ShellExecute — a LegacyDisable on them reaches far
+        // past the single visible row, so they are never offered as toggles.
+        var (vm, reg, cap) = BuildSut();
+        reg.SetValue(RegistryHive.ClassesRoot, $@"*\shell\{verb}", "", verb);
+        var target = FirstFileTarget();
+        cap.Map[target] = new List<CapturedItem>
+        {
+            new() { TargetPath = target, Position = 0, DisplayName = verb, Verb = verb }
+        };
+
+        vm.Rescan();
+
+        Assert.DoesNotContain(vm.AllEntries, r => r.Entry.Id == "verb:" + verb);
+    }
+
+    [Fact]
+    public void Hiding_a_verb_only_touches_the_file_types_it_was_captured_on()
+    {
+        // "vendorprint" is registered by two unrelated apps: under txtfile (the
+        // .txt default progid) and under batfile. The row was captured on the
+        // .txt sample only, so applying the hide must write LegacyDisable into
+        // txtfile — and never into batfile (the old bare-verb-name association
+        // index fanned out to every progid sharing the name).
+        var (vm, reg, cap) = BuildSut();
+        reg.SetValue(RegistryHive.ClassesRoot, ".txt", "", "txtfile");
+        reg.SetValue(RegistryHive.ClassesRoot, @"txtfile\shell\vendorprint", "", "Vendor Print");
+        reg.SetValue(RegistryHive.ClassesRoot, ".bat", "", "batfile");
+        reg.SetValue(RegistryHive.ClassesRoot, @"batfile\shell\vendorprint", "", "Vendor Print");
+
+        var target = FirstFileTarget();
+        cap.Map[target] = new List<CapturedItem>
+        {
+            new() { TargetPath = target, Position = 0, DisplayName = "Vendor Print", Verb = "vendorprint" }
+        };
+
+        vm.Rescan();
+        var row = vm.AllEntries.Single(r => r.Entry.Id == "verb:vendorprint");
+        row.IsHidden = true;
+        vm.ApplyPending();
+
+        Assert.Equal("", reg.GetValue(RegistryHive.CurrentUser,
+            @"Software\Classes\txtfile\shell\vendorprint", "LegacyDisable"));
+        Assert.Null(reg.GetValue(RegistryHive.CurrentUser,
+            @"Software\Classes\batfile\shell\vendorprint", "LegacyDisable"));
+        Assert.False(reg.KeyExists(RegistryHive.CurrentUser, @"Software\Classes\batfile\shell\vendorprint"));
+    }
+
+    [Fact]
+    public void Active_per_user_shellex_is_not_mislabeled_as_hidden_and_can_be_toggled()
+    {
+        // A per-user-installed handler's REAL registration lives at the exact
+        // HKCU path RCMM uses as its mask key, with the CLSID as default value.
+        // Key existence alone must not count as "hidden": the handler is active,
+        // and mislabeling it made both hide and unhide toggles dead.
+        var (vm, reg, cap) = BuildSut();
+        var clsid = "{11111111-2222-3333-4444-555555555555}";
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shellex\ContextMenuHandlers\PerUserHandler", "", clsid);
+        reg.SetValue(RegistryHive.CurrentUser,
+            @"Software\Classes\*\shellex\ContextMenuHandlers\PerUserHandler", "", clsid);
+
+        var target = FirstFileTarget();
+        cap.Map[target] = new List<CapturedItem>
+        {
+            new() { TargetPath = target, Position = 0, DisplayName = "Per User Handler", OwnerClsid = clsid }
+        };
+
+        vm.Rescan();
+
+        var row = vm.AllEntries.Single();
+        Assert.False(row.Entry.IsHidden);
+
+        // Toggling hidden must register a pending change (previously it looked
+        // like a no-change because AllTargetsHidden already reported hidden).
+        row.IsHidden = true;
+        Assert.Contains(row.Entry.Id, vm.PendingChangeIds);
     }
 
     [Fact]
@@ -177,9 +290,12 @@ public class MainViewModelTests : System.IDisposable
     [Fact]
     public void Shellex_item_without_Verb_is_hideable_when_DisplayName_matches_a_registered_handler()
     {
+        // Full-length CLSID: the name index only admits real CLSID-shaped
+        // registrations (strict shared LooksLikeClsid, review b10).
+        var clsid = "{AABBCCDD-1111-2222-3333-444455556666}";
         var (vm, reg, cap) = BuildSut();
-        reg.SetValue(RegistryHive.ClassesRoot, @"*\shellex\ContextMenuHandlers\WinRAR", "", "{ABC}");
-        reg.SetValue(RegistryHive.ClassesRoot, @"CLSID\{ABC}", "", "WinRAR Shell");
+        reg.SetValue(RegistryHive.ClassesRoot, @"*\shellex\ContextMenuHandlers\WinRAR", "", clsid);
+        reg.SetValue(RegistryHive.ClassesRoot, $@"CLSID\{clsid}", "", "WinRAR Shell");
 
         var target = FirstFileTarget();
         cap.Map[target] = new List<CapturedItem>

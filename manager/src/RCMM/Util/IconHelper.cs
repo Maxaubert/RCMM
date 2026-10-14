@@ -187,10 +187,22 @@ internal static class IconHelper
                 var large = new IntPtr[1];
                 got = ExtractIconEx(path, index, large, null, 1);
                 if (got <= 0 || large[0] == IntPtr.Zero) return null;
-                try { return (System.Drawing.Icon)System.Drawing.Icon.FromHandle(large[0]).Clone(); }
+                // FromHandle doesn't own the HICON, so disposing the wrapper is
+                // purely to keep one dead finalizable Icon per extraction off the
+                // finalizer queue — Clone() gives an independent handle, and the
+                // original is still ours to free via DestroyIcon in the finally.
+                try
+                {
+                    using var wrapper = System.Drawing.Icon.FromHandle(large[0]);
+                    return (System.Drawing.Icon)wrapper.Clone();
+                }
                 finally { DestroyIcon(large[0]); }
             }
-            try { return (System.Drawing.Icon)System.Drawing.Icon.FromHandle(small[0]).Clone(); }
+            try
+            {
+                using var wrapper = System.Drawing.Icon.FromHandle(small[0]);
+                return (System.Drawing.Icon)wrapper.Clone();
+            }
             finally { DestroyIcon(small[0]); }
         }
         catch

@@ -27,21 +27,41 @@ namespace RCMM.Core.Services;
 /// Runs on its own STA worker with a per-handler try/catch and a global cap on
 /// the batch. Failures are logged and the handler is just left out of the index.
 /// </summary>
-public sealed class ShellexInvoker
+public sealed class ShellexInvoker : IShellexInvoker
 {
     private const string Cat = "shellexinvoker";
 
     private readonly IRegistry _reg;
     private readonly TargetProvider _targets;
-    private readonly Dictionary<string, HashSet<string>> _emittedByClsid =
+    // Published probe snapshots. The STA build worker never mutates these in
+    // place: it accumulates into worker-private dictionaries and, after each
+    // registration, swaps in fresh deep copies under _publishGate. Readers
+    // therefore always enumerate an immutable snapshot, even when the 45s
+    // timeout fired and the abandoned worker is still probing in the background.
+    private Dictionary<string, HashSet<string>> _emittedByClsid =
         new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, string> _iconByClsid =
+    private Dictionary<string, string> _iconByClsid =
         new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, string> _titleByClsid =
+    private Dictionary<string, string> _titleByClsid =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _publishGate = new();
     private readonly HashSet<string> _extraClsids =
         new(StringComparer.OrdinalIgnoreCase);
+    // True only after a build that ran to completion (or threw); a timed-out
+    // build instead records its worker's done-event in _abandonedBuild so a
+    // later call can retry once that worker has actually exited.
     private bool _built;
+    private ManualResetEventSlim? _abandonedBuild;
+
+    // Test seams — production code leaves these untouched. ProbeOverride
+    // stands in for the per-registration COM work (InvokeOne + GetIcon/GetTitle)
+    // so the timeout/publication protocol can be exercised without real shell
+    // extensions; BuildTimeout shortens the 45s cap to keep such tests fast.
+    internal Action<string, string,
+        Dictionary<string, HashSet<string>>,
+        Dictionary<string, string>,
+        Dictionary<string, string>>? ProbeOverride { get; set; }
+    internal TimeSpan BuildTimeout { get; set; } = TimeSpan.FromSeconds(45);
 
     public ShellexInvoker(IRegistry reg, TargetProvider targets)
     {
@@ -63,8 +83,8 @@ public sealed class ShellexInvoker
     public string? LookupIconPath(string? clsid)
     {
         if (string.IsNullOrEmpty(clsid)) return null;
-        BuildDisplayNameToClsidMap();
-        return _iconByClsid.TryGetValue(clsid, out var icon) ? icon : null;
+        EnsureBuilt();
+        return ReadPublished().Icons.TryGetValue(clsid, out var icon) ? icon : null;
     }
 
     /// <summary>
@@ -76,8 +96,8 @@ public sealed class ShellexInvoker
     public string? LookupTitle(string? clsid)
     {
         if (string.IsNullOrEmpty(clsid)) return null;
-        BuildDisplayNameToClsidMap();
-        return _titleByClsid.TryGetValue(clsid, out var title) ? title : null;
+        EnsureBuilt();
+        return ReadPublished().Titles.TryGetValue(clsid, out var title) ? title : null;
     }
 
     /// <summary>
@@ -89,8 +109,10 @@ public sealed class ShellexInvoker
     public IEnumerable<string> LookupEmittedNames(string? clsid)
     {
         if (string.IsNullOrEmpty(clsid)) return Array.Empty<string>();
-        BuildDisplayNameToClsidMap();
-        return _emittedByClsid.TryGetValue(clsid, out var names) ? (IEnumerable<string>)names : Array.Empty<string>();
+        EnsureBuilt();
+        // Returning the set by reference is safe: published snapshots are
+        // immutable once swapped in (see the field comment).
+        return ReadPublished().Emitted.TryGetValue(clsid, out var names) ? (IEnumerable<string>)names : Array.Empty<string>();
     }
 
     /// <summary>
@@ -99,21 +121,56 @@ public sealed class ShellexInvoker
     /// </summary>
     public IReadOnlyDictionary<string, string> BuildDisplayNameToClsidMap()
     {
-        if (!_built)
-        {
-            try { BuildOnce(); }
-            catch (Exception ex) { Log.Error(Cat, "BuildOnce threw", ex); }
-            _built = true;
-        }
-
+        EnsureBuilt();
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (clsid, names) in _emittedByClsid)
+        foreach (var (clsid, names) in ReadPublished().Emitted)
             foreach (var n in names)
                 if (!result.ContainsKey(n)) result[n] = clsid;
         return result;
     }
 
-    private void BuildOnce()
+    // All callers of EnsureBuilt run on the single rescan worker (serialized by
+    // MainViewModel's work gate), so it needs no locking of its own — only the
+    // published-dictionary handoff with the STA build worker is synchronized.
+    private void EnsureBuilt()
+    {
+        if (_built) return;
+        if (_abandonedBuild != null)
+        {
+            // A previous build timed out. While its worker is still probing,
+            // don't stack a second STA worker (or a second 45s wait) on top —
+            // keep serving the partial snapshot, exactly like the old cached
+            // behaviour. Once that worker has actually exited we allow one
+            // fresh build, so a merely-slow machine eventually gets complete
+            // data instead of caching partial state for the process lifetime;
+            // a permanently hung handler means the event never sets and we
+            // never wait again.
+            if (!_abandonedBuild.IsSet) return;
+            // Deliberately not Dispose()d: IsSet can be observed a hair before
+            // the worker's Set() call has fully unwound, and disposing under it
+            // would throw inside the worker. The rare abandoned event is left
+            // to the finalizer instead.
+            _abandonedBuild = null;
+        }
+        try { _built = BuildOnce(); }
+        catch (Exception ex)
+        {
+            Log.Error(Cat, "BuildOnce threw", ex);
+            _built = true;   // an exception (not a timeout) never retries — unchanged
+        }
+    }
+
+    private (Dictionary<string, HashSet<string>> Emitted,
+             Dictionary<string, string> Icons,
+             Dictionary<string, string> Titles) ReadPublished()
+    {
+        lock (_publishGate) return (_emittedByClsid, _iconByClsid, _titleByClsid);
+    }
+
+    /// <summary>Runs the probe worker. Returns true when it completed within the
+    /// timeout (result may legitimately be empty); false when the timeout fired
+    /// and the worker was abandoned with partial results published.</summary>
+    private bool BuildOnce()
     {
         var registrations = CollectRegistrations();
         // Also probe every "extra" CLSID for IExplorerCommand::GetIcon — these come
@@ -128,21 +185,45 @@ public sealed class ShellexInvoker
         if (registrations.Count == 0)
         {
             Log.Info(Cat, "no shellex registrations to probe");
-            return;
+            return true;
         }
 
         var done = new ManualResetEventSlim(false);
+        bool abandoned = false;   // guarded by _publishGate
         var t = new Thread(() =>
         {
             int initHr = CoInitializeEx(IntPtr.Zero, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+            // Worker-private accumulators — the worker never touches the
+            // published fields directly. After each registration it publishes
+            // deep copies under the gate, unless the caller already timed out
+            // and abandoned this build, in which case late results are
+            // discarded and the worker stops probing.
+            var emitted = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            var icons = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var titles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             try
             {
                 foreach (var reg in registrations)
                 {
-                    try { InvokeOne(reg.Clsid, reg.TargetPath); }
-                    catch (Exception ex) { Log.Debug(Cat, $"invoke {reg.Clsid} target={reg.TargetPath} ex={ex.Message}"); }
-                    try { TryGetIconFromExplorerCommand(reg.Clsid); }
-                    catch (Exception ex) { Log.Debug(Cat, $"GetIcon {reg.Clsid} ex={ex.Message}"); }
+                    if (ProbeOverride != null)
+                    {
+                        try { ProbeOverride(reg.Clsid, reg.TargetPath, emitted, icons, titles); }
+                        catch (Exception ex) { Log.Debug(Cat, $"probe override {reg.Clsid} ex={ex.Message}"); }
+                    }
+                    else
+                    {
+                        try { InvokeOne(reg.Clsid, reg.TargetPath, emitted); }
+                        catch (Exception ex) { Log.Debug(Cat, $"invoke {reg.Clsid} target={reg.TargetPath} ex={ex.Message}"); }
+                        try { TryGetIconFromExplorerCommand(reg.Clsid, icons, titles); }
+                        catch (Exception ex) { Log.Debug(Cat, $"GetIcon {reg.Clsid} ex={ex.Message}"); }
+                    }
+                    lock (_publishGate)
+                    {
+                        if (abandoned) break;
+                        _emittedByClsid = CopyEmitted(emitted);
+                        _iconByClsid = new Dictionary<string, string>(icons, StringComparer.OrdinalIgnoreCase);
+                        _titleByClsid = new Dictionary<string, string>(titles, StringComparer.OrdinalIgnoreCase);
+                    }
                 }
             }
             finally
@@ -154,10 +235,25 @@ public sealed class ShellexInvoker
         { IsBackground = true };
         t.SetApartmentState(ApartmentState.STA);
         t.Start();
-        if (!done.Wait(TimeSpan.FromSeconds(45)))
-            Log.Warn(Cat, "STA invoker exceeded 45s; using partial results");
+        if (!done.Wait(BuildTimeout))
+        {
+            lock (_publishGate) abandoned = true;
+            _abandonedBuild = done;
+            Log.Warn(Cat, $"STA invoker exceeded {BuildTimeout.TotalSeconds:0}s; using partial results");
+            return false;
+        }
 
-        Log.Info(Cat, $"ShellexInvoker probed registrations clsids={_emittedByClsid.Count} iconPaths={_iconByClsid.Count} titles={_titleByClsid.Count}");
+        var published = ReadPublished();
+        Log.Info(Cat, $"ShellexInvoker probed registrations clsids={published.Emitted.Count} iconPaths={published.Icons.Count} titles={published.Titles.Count}");
+        return true;
+    }
+
+    private static Dictionary<string, HashSet<string>> CopyEmitted(Dictionary<string, HashSet<string>> src)
+    {
+        var copy = new Dictionary<string, HashSet<string>>(src.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var (clsid, names) in src)
+            copy[clsid] = new HashSet<string>(names, StringComparer.OrdinalIgnoreCase);
+        return copy;
     }
 
     /// <summary>
@@ -165,10 +261,11 @@ public sealed class ShellexInvoker
     /// shellexes return something like "C:\\Program Files\\Notepad++\\notepad++.exe,0"
     /// even when the registry has no Icon / DefaultIcon hint pointing to that exe.
     /// </summary>
-    private void TryGetIconFromExplorerCommand(string clsid)
+    private static void TryGetIconFromExplorerCommand(string clsid,
+        Dictionary<string, string> icons, Dictionary<string, string> titles)
     {
         var key = clsid.Trim().ToUpperInvariant();
-        if (_iconByClsid.ContainsKey(key)) return;
+        if (icons.ContainsKey(key)) return;
 
         IntPtr pCmd = IntPtr.Zero;
         IExplorerCommand? cmd = null;
@@ -186,7 +283,7 @@ public sealed class ShellexInvoker
                 try
                 {
                     var iconPath = Marshal.PtrToStringUni(pIcon);
-                    if (!string.IsNullOrWhiteSpace(iconPath)) _iconByClsid[key] = iconPath!;
+                    if (!string.IsNullOrWhiteSpace(iconPath)) icons[key] = iconPath!;
                 }
                 finally { Marshal.FreeCoTaskMem(pIcon); }
             }
@@ -198,7 +295,7 @@ public sealed class ShellexInvoker
                 {
                     var title = Marshal.PtrToStringUni(pTitle);
                     if (!string.IsNullOrWhiteSpace(title))
-                        _titleByClsid[key] = StripAccelerator(title!);
+                        titles[key] = StripAccelerator(title!);
                 }
                 finally { Marshal.FreeCoTaskMem(pTitle); }
             }
@@ -224,8 +321,7 @@ public sealed class ShellexInvoker
         var defaultTarget = folderTarget ?? fileTarget ?? driveTarget ?? targets[0];
 
         // Standard six scopes.
-        foreach (var scope in new[] { Scope.Files, Scope.Folders, Scope.Drives,
-                                       Scope.Background, Scope.AllObjects, Scope.Folder })
+        foreach (var scope in ShellexHandlerWalk.StandardScopes)
         {
             var handlersRoot = scope.ToRegistryRoot() + @"\shellex\ContextMenuHandlers";
             var picked = TargetForScope(scope, fileTarget, pngTarget, folderTarget, driveTarget) ?? defaultTarget;
@@ -272,15 +368,16 @@ public sealed class ShellexInvoker
     private void EnumerateHandlersUnder(string handlersRoot, string targetPath,
                                         HashSet<string> seen, List<(string, string)> result)
     {
-        if (!_reg.KeyExists(RegistryHive.ClassesRoot, handlersRoot)) return;
-        foreach (var name in _reg.GetSubKeyNames(RegistryHive.ClassesRoot, handlersRoot))
+        // recoverMaskedDefault deliberately FALSE: the probe set is for
+        // handlers the shell can currently load; a handler masked by RCMM's
+        // HkcuMask still gets probed anyway because MainViewModel registers
+        // every registry-scan-recovered CLSID via RegisterExtraClsid before
+        // BuildDisplayNameToClsidMap runs.
+        foreach (var r in ShellexHandlerWalk.EnumerateHandlers(_reg, handlersRoot, recoverMaskedDefault: false))
         {
-            var defaultVal = _reg.GetValue(RegistryHive.ClassesRoot, handlersRoot + "\\" + name, "") as string;
-            var clsid = LooksLikeClsid(defaultVal) ? defaultVal! :
-                        LooksLikeClsid(name) ? name : null;
-            if (clsid == null) continue;
-            if (!seen.Add(clsid)) continue;
-            result.Add((clsid, targetPath));
+            if (r.Clsid == null) continue;
+            if (!seen.Add(r.Clsid)) continue;
+            result.Add((r.Clsid, targetPath));
         }
     }
 
@@ -302,7 +399,8 @@ public sealed class ShellexInvoker
         return null;
     }
 
-    private void InvokeOne(string clsid, string targetPath)
+    private static void InvokeOne(string clsid, string targetPath,
+        Dictionary<string, HashSet<string>> emittedByClsid)
     {
         IntPtr pInit = IntPtr.Zero;
         IShellExtInit? init = null;
@@ -353,8 +451,8 @@ public sealed class ShellexInvoker
             if (emitted.Count > 0)
             {
                 var key = clsid.Trim().ToUpperInvariant();
-                if (!_emittedByClsid.TryGetValue(key, out var set))
-                    _emittedByClsid[key] = set = new(StringComparer.OrdinalIgnoreCase);
+                if (!emittedByClsid.TryGetValue(key, out var set))
+                    emittedByClsid[key] = set = new(StringComparer.OrdinalIgnoreCase);
                 foreach (var n in emitted) set.Add(n);
             }
         }
@@ -398,9 +496,6 @@ public sealed class ShellexInvoker
         if (string.IsNullOrEmpty(s)) return null;
         try { return new Guid(s); } catch { return null; }
     }
-
-    private static bool LooksLikeClsid(string? s)
-        => !string.IsNullOrEmpty(s) && s.StartsWith('{') && s.EndsWith('}');
 
     private static string StripAccelerator(string s)
         => s.Replace("&&", "￾").Replace("&", "").Replace("￾", "&");

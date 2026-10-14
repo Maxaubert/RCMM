@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using RCMM.Core.Diagnostics;
@@ -26,11 +27,19 @@ public sealed class AddPageViewModel : ObservableObject
         private set => SetField(ref _hasPendingChanges, value);
     }
 
+    /// <summary>True when additions.json exists but could not be read at
+    /// <see cref="Load"/> time — the buffer then holds a stub, NOT the user's real
+    /// data (which is parked at additions.json.bad). While up, the additions apply
+    /// path refuses to run: an Apply would purge every RCMM verb and rewrite the
+    /// registry + JSON from the stub, permanently destroying the real entries.</summary>
+    public bool LoadFailed { get; private set; }
+
     public AddPageViewModel(AdditionStore store) { _store = store; }
 
     public void Load()
     {
-        var state = _store.Load(out var dropped);
+        var state = _store.Load(out var dropped, out var loadFailed);
+        LoadFailed = loadFailed;
         Entries.Clear();
         Folders.Clear();
         foreach (var e in state.Entries) Entries.Add(e);
@@ -151,6 +160,29 @@ public sealed class AddPageViewModel : ObservableObject
 
     /// <summary>Called by the apply flow after AdditionStore.Save + AdditionApplier.Apply succeed.</summary>
     public void MarkClean() => HasPendingChanges = false;
+
+    /// <summary>
+    /// The template-updates dialog's "Skip all": record a skip marker on every
+    /// offered entry so this template version stops prompting. Skips change only
+    /// tracking metadata — no registry write is needed — so when they are the ONLY
+    /// pending change we persist immediately and mark the page clean. But when
+    /// something else already set HasPendingChanges (unapplied user edits, or the
+    /// v4 → v5 migration's cleanup re-arm), we must not Save + MarkClean over it:
+    /// that would persist edits the registry never received and darken the Apply
+    /// that the migration armed to purge orphaned keys. In that case the skip
+    /// markers simply ride along as pending changes and land with the next Apply.
+    /// </summary>
+    public void SkipTemplateUpdates(IReadOnlyList<TemplateUpdateService.Update> updates)
+    {
+        var hadForeignPending = HasPendingChanges;
+        foreach (var u in updates)
+            ReplaceEntry(TemplateUpdateService.MarkSkipped(u.Entry, u.Template));
+        if (!hadForeignPending)
+        {
+            Save(Snapshot());
+            MarkClean();
+        }
+    }
 
     /// <summary>
     /// Maximum visible nesting depth of folders, per the design spec. The

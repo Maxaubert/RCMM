@@ -90,6 +90,32 @@ public class KnownEntriesStoreTests
             var store = new KnownEntriesStore(path);
             Assert.Empty(store.Load());
         }
-        finally { if (File.Exists(path)) File.Delete(path); }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+            if (File.Exists(path + ".bad")) File.Delete(path + ".bad");
+        }
+    }
+
+    [Fact]
+    public void Load_with_corrupt_json_backs_up_the_file_before_it_can_be_overwritten()
+    {
+        // The next rescan saves through this store, so without a backup a
+        // transient read failure becomes permanent loss of the ghost-entry
+        // recovery record.
+        var path = TempFile();
+        try
+        {
+            File.WriteAllText(path, "{not valid json");
+            new KnownEntriesStore(path).Load();
+
+            Assert.True(File.Exists(path + ".bad"));
+            Assert.Equal("{not valid json", File.ReadAllText(path + ".bad"));
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+            if (File.Exists(path + ".bad")) File.Delete(path + ".bad");
+        }
     }
 }

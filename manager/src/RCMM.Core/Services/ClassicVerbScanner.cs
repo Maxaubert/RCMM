@@ -6,9 +6,6 @@ namespace RCMM.Core.Services;
 
 public sealed class ClassicVerbScanner
 {
-    private static readonly string WindowsDir =
-        Environment.GetFolderPath(Environment.SpecialFolder.Windows).ToLowerInvariant();
-
     private readonly IRegistry _reg;
     private readonly IMuiStringResolver _mui;
 
@@ -31,31 +28,35 @@ public sealed class ClassicVerbScanner
 
             var resolved = _mui.Resolve(muiVerb) ?? _mui.Resolve(rawDisplay);
             if (string.IsNullOrWhiteSpace(resolved))
-                continue;  // no friendly display; drop
+            {
+                // A verb with neither a default value nor MUIVerb still renders
+                // in Explorer — as the key name itself (a common hand-written
+                // registry-tweak pattern). Dropping it here made a verb that was
+                // pre-hidden by another tool (LegacyDisable written before RCMM
+                // ever scanned) unrecoverable from the UI: the live capture
+                // can't see a disabled verb, and this scan was its only other
+                // discovery path. Fall back to the key name; the visible-list
+                // filter still applies its normal rules to the result. A verb
+                // whose display value merely failed MUI resolution stays
+                // dropped — the author intended a localized label we can't
+                // reproduce, and guessing the key name would mislabel it.
+                if (!string.IsNullOrWhiteSpace(muiVerb) || !string.IsNullOrWhiteSpace(rawDisplay))
+                    continue;
+                resolved = name;
+            }
 
             var display = StripAccelerator(resolved);
-            var hidden = _reg.GetValue(RegistryHive.ClassesRoot, path, "LegacyDisable") != null;
             var commandLine = _reg.GetValue(RegistryHive.ClassesRoot, path + @"\command", "") as string;
             var icon = _reg.GetValue(RegistryHive.ClassesRoot, path, "Icon") as string;
-            var muiVerbHint = _reg.GetValue(RegistryHive.ClassesRoot, path, "MUIVerb") as string;
-
-            var isBuiltIn = LooksWindowsPath(commandLine)
-                            || LooksWindowsPath(icon)
-                            || LooksWindowsPath(muiVerbHint)
-                            || LooksBareSystemMuiReference(muiVerbHint)
-                            || LooksBareSystemMuiReference(rawDisplay);
 
             yield return new ContextMenuEntry
             {
                 Id = $"{scope}/shell/{name}",
                 DisplayName = display,
-                Source = isBuiltIn ? "Windows" : "Unknown",
                 Scope = scope,
                 Kind = EntryKind.ShellVerb,
                 RegistryPath = path,
                 OriginalKeyName = name,
-                IsBuiltIn = isBuiltIn,
-                IsHidden = hidden,
                 CommandLine = commandLine,
                 IconPath = icon
             };
@@ -64,52 +65,4 @@ public sealed class ClassicVerbScanner
 
     private static string StripAccelerator(string s)
         => s.Replace("&&", "￾").Replace("&", "").Replace("￾", "&");
-
-    /// <summary>
-    /// True when the value is an MUI indirect-string reference whose DLL is a bare
-    /// filename (no path). Bare DLL names only resolve via Windows' system search
-    /// path (System32/SysWOW64/PATH), so a successful registration here almost
-    /// always points at a Windows system component (e.g. "@efscore.dll,-101").
-    /// </summary>
-    private static bool LooksBareSystemMuiReference(string? raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw) || raw[0] != '@') return false;
-        var s = raw[1..].Trim();
-        var comma = s.LastIndexOf(',');
-        if (comma > 0 && comma > s.LastIndexOf('\\')) s = s[..comma];
-        if (s.Contains('\\') || s.Contains('/')) return false;
-        if (s.IndexOf('%') >= 0) return false;
-        return s.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
-            || s.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
-            || s.EndsWith(".mui", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool LooksWindowsPath(string? raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw)) return false;
-        try
-        {
-            var s = Environment.ExpandEnvironmentVariables(raw).ToLowerInvariant();
-            if (s.Length > 0 && s[0] == '@') s = s[1..];
-            if (s.StartsWith('"'))
-            {
-                var end = s.IndexOf('"', 1);
-                if (end > 1) s = s[1..end];
-            }
-            else
-            {
-                var space = s.IndexOf(' ');
-                if (space > 0) s = s[..space];
-            }
-            var comma = s.LastIndexOf(',');
-            if (comma > 0 && comma > s.LastIndexOf('\\')) s = s[..comma];
-
-            if (WindowsDir.Length > 0 && s.StartsWith(WindowsDir + "\\")) return true;
-            return s.Contains(@"\windows\system32\") || s.Contains(@"\windows\syswow64\");
-        }
-        catch
-        {
-            return false;
-        }
-    }
 }

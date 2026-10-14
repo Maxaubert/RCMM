@@ -11,12 +11,6 @@ namespace RCMM.Core.Services;
 /// </summary>
 public sealed class ShellexNameIndex
 {
-    private static readonly Scope[] AllScopes =
-    {
-        Scope.Files, Scope.Folders, Scope.Drives, Scope.Background,
-        Scope.AllObjects, Scope.Folder
-    };
-
     // Words that appear so often in shellex FileDescriptions or captured menu text
     // that letting them count as a "match" produces false positives.
     private static readonly HashSet<string> StopWords = new(StringComparer.OrdinalIgnoreCase)
@@ -98,15 +92,18 @@ public sealed class ShellexNameIndex
 
     private IEnumerable<(string Display, string Clsid)> EnumerateRegistrations()
     {
-        foreach (var scope in AllScopes)
+        foreach (var scope in ShellexHandlerWalk.StandardScopes)
         {
             var root = scope.ToRegistryRoot() + @"\shellex\ContextMenuHandlers";
-            if (!_reg.KeyExists(RegistryHive.ClassesRoot, root)) continue;
-            foreach (var name in _reg.GetSubKeyNames(RegistryHive.ClassesRoot, root))
+            // recoverMaskedDefault deliberately FALSE: this index exists to
+            // attach an OwnerClsid to live-captured menu items, and a handler
+            // masked by RCMM's HkcuMask contributes no live capture to attach —
+            // its recovery path is ClassicShellexScanner's, which does recover
+            // the CLSID and keeps the hidden row toggleable.
+            foreach (var r in ShellexHandlerWalk.EnumerateHandlers(_reg, root, recoverMaskedDefault: false))
             {
-                var defaultVal = _reg.GetValue(RegistryHive.ClassesRoot, root + "\\" + name, "") as string;
-                var clsid = LooksLikeClsid(defaultVal) ? defaultVal! :
-                            LooksLikeClsid(name) ? name : null;
+                var name = r.KeyName;
+                var clsid = r.Clsid;
                 if (clsid == null) continue;
                 var resolved = _clsids.Resolve(clsid);
                 var version = resolved?.DllPath is { } dll ? _files.Read(dll) : new FileVersion(null, null, null);
@@ -138,7 +135,4 @@ public sealed class ShellexNameIndex
         }
         return result;
     }
-
-    private static bool LooksLikeClsid(string? s)
-        => !string.IsNullOrEmpty(s) && s.StartsWith('{') && s.EndsWith('}');
 }

@@ -21,19 +21,6 @@ public sealed class CommandStoreVerbIndex
         @"Software\Microsoft\Windows\CurrentVersion\Explorer\CommandStore\shell";
     private const string Cat = "cmdstore";
 
-    // CommandStore entries can route the verb through any of these CLSID-shaped fields.
-    // Different verbs use different ones (Windows.share → ExplorerCommandHandler;
-    // Windows.copyaspath → VerbHandler), so we index whichever are present and
-    // include every one of them when the caller looks up hide targets — blocking the
-    // wrong CLSID is harmless, missing the right one is the bug we hit on copyaspath.
-    private static readonly string[] HandlerValueNames =
-    {
-        "ExplorerCommandHandler",
-        "VerbHandler",
-        "CommandStateHandler",
-        "CanonicalName"
-    };
-
     private readonly IRegistry _reg;
     private Dictionary<string, HashSet<string>>? _byNormalisedName;
     private Dictionary<string, string>? _iconByNormalisedName;
@@ -61,10 +48,10 @@ public sealed class CommandStoreVerbIndex
         {
             var path = CommandStoreRoot + "\\" + name;
             var clsids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var valueName in HandlerValueNames)
+            foreach (var valueName in RegistryHeuristics.VerbHandlerValueNames)
             {
                 if (_reg.GetValue(RegistryHive.LocalMachine, path, valueName) is string raw
-                    && LooksLikeClsid(raw))
+                    && RegistryHeuristics.LooksLikeClsid(raw))
                 {
                     var clsid = raw.Trim().ToUpperInvariant();
                     clsids.Add(clsid);
@@ -263,6 +250,4 @@ public sealed class CommandStoreVerbIndex
         return sb.Length == 0 ? null : sb.ToString();
     }
 
-    private static bool LooksLikeClsid(string s)
-        => s.Length >= 38 && s.StartsWith('{') && s.EndsWith('}');
 }

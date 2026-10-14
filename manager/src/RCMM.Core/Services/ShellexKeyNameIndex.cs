@@ -13,12 +13,6 @@ namespace RCMM.Core.Services;
 /// </summary>
 public sealed class ShellexKeyNameIndex
 {
-    private static readonly Scope[] AllScopes =
-    {
-        Scope.Files, Scope.Folders, Scope.Drives, Scope.Background,
-        Scope.AllObjects, Scope.Folder
-    };
-
     private readonly IRegistry _reg;
     private Dictionary<string, List<(Scope scope, string keyName)>>? _byNormalisedName;
 
@@ -30,12 +24,15 @@ public sealed class ShellexKeyNameIndex
 
         var map = new Dictionary<string, List<(Scope, string)>>(StringComparer.OrdinalIgnoreCase);
         int entryCount = 0;
-        foreach (var scope in AllScopes)
+        foreach (var scope in ShellexHandlerWalk.StandardScopes)
         {
             var handlersRoot = scope.ToRegistryRoot() + @"\shellex\ContextMenuHandlers";
-            if (!_reg.KeyExists(RegistryHive.ClassesRoot, handlersRoot)) continue;
-            foreach (var name in _reg.GetSubKeyNames(RegistryHive.ClassesRoot, handlersRoot))
+            // recoverMaskedDefault FALSE (and the registration's CLSID unused):
+            // this index maps key NAMES to hide targets, so the default value
+            // never matters — a masked key still has its name.
+            foreach (var r in ShellexHandlerWalk.EnumerateHandlers(_reg, handlersRoot, recoverMaskedDefault: false))
             {
+                var name = r.KeyName;
                 var norm = Normalise(name);
                 if (norm == null) continue;
                 if (!map.TryGetValue(norm, out var list)) map[norm] = list = new();
@@ -73,7 +70,7 @@ public sealed class ShellexKeyNameIndex
     {
         if (string.IsNullOrEmpty(s)) return null;
         // Skip CLSID-style key names — those aren't friendly-text matches.
-        if (s.Length >= 38 && s.StartsWith('{') && s.EndsWith('}')) return null;
+        if (RegistryHeuristics.LooksLikeClsid(s)) return null;
         var sb = new System.Text.StringBuilder(s.Length);
         foreach (var ch in s)
             if (char.IsLetterOrDigit(ch)) sb.Append(char.ToLowerInvariant(ch));

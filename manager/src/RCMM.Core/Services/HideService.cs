@@ -98,6 +98,7 @@ public sealed class HideService
                                 $"({ex.GetType().Name}); un-hide will not take effect until it is removed elevated");
                         }
                     }
+                    PruneEmptyHideKeyChain(t.Hive, t.Path);
                     break;
                 case HideKind.HkcuMask:
                     // Mirror of Hide. If we stashed a real per-user registration, restore
@@ -120,6 +121,36 @@ public sealed class HideService
                     _reg.DeleteValue(t.Hive, t.Path, t.ValueName!);
                     break;
             }
+        }
+    }
+
+    /// <summary>
+    /// Hide's SetValue goes through CreateSubKey, silently creating the whole
+    /// HKCU\Software\Classes\&lt;progid&gt;\shell\&lt;verb&gt; chain when the verb's real
+    /// registration lives only in HKLM — the normal case for association verbs. A
+    /// value-only delete on un-hide would therefore leave empty shadow keys under
+    /// progids RCMM does not own; they outlive the owning app's uninstall and keep
+    /// a ghost shell\&lt;verb&gt; key alive in the merged HKCR view. Walk up from the
+    /// target key deleting keys that are completely empty (no values, no subkeys —
+    /// i.e. the ones Hide implicitly created), stop at the first key holding
+    /// anything else, and never touch Software\Classes itself.
+    /// </summary>
+    private void PruneEmptyHideKeyChain(RegistryHive hive, string path)
+    {
+        if (hive != RegistryHive.CurrentUser) return;
+        const string root = @"Software\Classes";
+        var current = path;
+        while (current.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase))
+        {
+            if (_reg.KeyExists(hive, current))
+            {
+                if (_reg.GetSubKeyNames(hive, current).Count > 0) break;
+                if (_reg.GetValueNames(hive, current).Count > 0) break;
+                _reg.DeleteKey(hive, current);
+            }
+            var cut = current.LastIndexOf('\\');
+            if (cut < 0) break;
+            current = current[..cut];
         }
     }
 
