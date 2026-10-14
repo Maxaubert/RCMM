@@ -380,7 +380,19 @@ public sealed class AdditionApplier
             var dotted = NormaliseExtension(ext);
             return new[] { dotted, "SystemFileAssociations\\" + dotted };
         });
-        var roots = _staticScopeRoots.Concat(extRoots)
+        // The caller-supplied extensions come from the CURRENT state, which cannot
+        // name an extension whose last entry was just deleted — purging only those
+        // leaked every RCMM.* verb under that extension's root and the menu kept
+        // showing entries the UI no longer managed (#23). The applier only ever
+        // writes HKCU, so enumerating HKCU's own extension keys (both locations)
+        // recovers every root we could ever have written to, past or present, and
+        // makes Apply self-healing for leaks from older builds.
+        var observedExtRoots = new List<string>();
+        foreach (var name in _reg.GetSubKeyNames(RegistryHive.CurrentUser, ClassesRoot + "\\SystemFileAssociations"))
+            observedExtRoots.Add("SystemFileAssociations\\" + name);
+        foreach (var name in _reg.GetSubKeyNames(RegistryHive.CurrentUser, ClassesRoot))
+            if (name.StartsWith('.')) observedExtRoots.Add(name);
+        var roots = _staticScopeRoots.Concat(extRoots).Concat(observedExtRoots)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 

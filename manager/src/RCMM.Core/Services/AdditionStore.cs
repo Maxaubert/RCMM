@@ -132,13 +132,11 @@ public sealed class AdditionStore
         // created or edited, so drop them here rather than carrying dead weight the
         // UI can't manage. Must run AFTER the v3 stamping pass — v3 is what decides
         // which pre-v3 entries count as template-derived and therefore survive.
-        // Registry cleanup is NOT automatic: standard-scope roots are purged and
-        // rewritten from the surviving state on the next Apply (droppedHandAuthored
-        // below is what makes that Apply reachable when everything was dropped — see
-        // AddPageViewModel.Load), but AdditionApplier derives per-extension purge
-        // roots from the SURVIVOR list, so a dropped File-scope entry whose extensions
-        // no survivor uses leaks its SystemFileAssociations\<ext>\shell\RCMM.* keys
-        // until issue #23 is fixed.
+        // Registry cleanup happens on the next Apply: all roots — including
+        // per-extension ones, which PurgeOwnedKeys discovers by enumerating HKCU's
+        // own extension keys (#23) — are purged and rewritten from the surviving
+        // state (droppedHandAuthored below is what makes that Apply reachable when
+        // everything was dropped — see AddPageViewModel.Load).
         if (state.SchemaVersion < 5)
         {
             var kept = new List<AdditionEntry>(state.Entries.Count);
